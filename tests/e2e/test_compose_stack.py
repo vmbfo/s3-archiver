@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import subprocess
+import time
 
 import pytest
+
+_COMPOSE_RETRY_DELAY_SECONDS = 1.0
+_COMPOSE_RUN_RETRIES = 2
 
 
 @pytest.mark.e2e()
@@ -41,10 +45,29 @@ def test_compose_app_writes_persisted_logs(
 
 
 def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["docker", "compose", "--profile", "test", *args],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    command = ["docker", "compose", "--profile", "test", *args]
+    for attempt in range(_COMPOSE_RUN_RETRIES + 1):
+        result = subprocess.run(
+            command,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result
+        if attempt == _COMPOSE_RUN_RETRIES or _is_non_retryable_compose_error(result):
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                command,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        time.sleep(_COMPOSE_RETRY_DELAY_SECONDS)
+    raise AssertionError("compose retry loop exhausted without returning")
+
+
+def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
+    if result.returncode == 137 or "No such container" in result.stderr:
+        return False
+    return "HeadBucket operation: Not Found" not in result.stdout
