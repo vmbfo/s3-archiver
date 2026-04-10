@@ -11,7 +11,8 @@
 - Package responsibilities: `s3_archiver_core` owns settings, validation, OCI/LocalStack endpoint logic, boto3 session/client construction, health checks, and logging setup. `s3_archiver_cli` owns the Typer CLI, console entrypoint, and exit-code mapping.
 - CLI surface:
   - `s3-archiver check` validates config, bucket reachability, and log sink health.
-  - `s3-archiver check --json` returns machine-readable health output for container/ops use.
+  - `s3-archiver check` emits machine-readable JSON by default for container and ops use.
+  - `s3-archiver check` maps `ConfigError`, `LoggingError`, and `HealthCheckError` to distinct non-zero exit codes so automation can distinguish failure classes.
 - `.env` contract for OCI runtime:
   - `S3_PROVIDER=oci`
   - `S3_ACCESS_KEY_ID`
