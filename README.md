@@ -44,6 +44,7 @@ Run the host-native smoke check:
 ```bash
 cp .env.example .env
 $EDITOR .env
+./scripts/run.sh
 make run
 ```
 
@@ -51,10 +52,11 @@ If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
 docker compose --profile test up -d localstack
+ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 ./scripts/run.sh
 ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
 ```
 
-`make run` sources `ENV_FILE` with `set -a`, so the default path is `.env` and LocalStack/dev overrides can be passed inline. Host-native runs write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
+`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` now just delegates to it. Both honor `ENV_FILE` and inline overrides like `S3_ENDPOINT_URL=...`. Host-native runs write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
 
 Run checks:
 

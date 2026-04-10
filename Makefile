@@ -10,8 +10,7 @@ bootstrap:
 	$(UV) run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
 
 run:
-	@test -f "$(ENV_FILE)" || { echo "missing env file: $(ENV_FILE)" >&2; exit 1; }
-	@bash -lc 'set -a; source "$(ENV_FILE)"; set +a; if [ -n "$(S3_ENDPOINT_URL)" ]; then export S3_ENDPOINT_URL="$(S3_ENDPOINT_URL)"; fi; $(UV) run s3-archiver check'
+	@ENV_FILE="$(ENV_FILE)" UV="$(UV)" S3_ENDPOINT_URL="$(S3_ENDPOINT_URL)" ./scripts/run.sh
 
 format-check:
 	$(UV) run ruff format --check .
