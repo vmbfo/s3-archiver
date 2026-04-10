@@ -70,6 +70,7 @@ def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess
 def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
     retryable_messages = (
         "No such container",
+        "marked for removal",
         "HeadBucket operation: Not Found",
         'Could not connect to the endpoint URL: "http://localstack:4566/',
     )
