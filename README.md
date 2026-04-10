@@ -47,7 +47,7 @@ $EDITOR .env
 set -a
 source .env
 set +a
-uv run s3-archiver check --json
+uv run s3-archiver check
 ```
 
 If you want to run against LocalStack instead of OCI credentials:
@@ -58,7 +58,7 @@ set -a
 source .env.e2e
 set +a
 export S3_ENDPOINT_URL=http://127.0.0.1:4566
-uv run s3-archiver check --json
+uv run s3-archiver check
 ```
 
 The host-native commands above write logs under `.local/logs/s3-archiver/`. Docker Compose still overrides `LOG_DIR` inside the container back to `/var/log/s3-archiver` so the named volume behavior is unchanged.
