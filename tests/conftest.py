@@ -58,7 +58,14 @@ def compose_env() -> dict[str, str]:
 def localstack_service(compose_env: dict[str, str]) -> Generator[None, None, None]:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
-        _ = _run_compose(compose_env, "up", "-d", "localstack")
+        _ = _run_compose(
+            compose_env,
+            "up",
+            "-d",
+            "--wait",
+            "localstack",
+            retries=_COMPOSE_UP_RETRIES,
+        )
         _wait_for_localstack_readiness()
         yield
     finally:
@@ -69,24 +76,31 @@ def _run_compose(
     env: dict[str, str],
     *args: str,
     check: bool = True,
+    retries: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     command = ["docker", "compose", "--profile", "test", *args]
-    result = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode,
+    for attempt in range(retries + 1):
+        result = subprocess.run(
             command,
-            output=result.stdout,
-            stderr=result.stderr,
+            cwd=REPO_ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
         )
-    return result
+        if result.returncode == 0:
+            return result
+        if not check:
+            return result
+        if attempt == retries or _is_non_retryable_compose_error(result):
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                command,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        time.sleep(_COMPOSE_RETRY_DELAY_SECONDS)
+    raise AssertionError("compose retry loop exhausted without returning")
 
 
 def _wait_for_localstack_readiness(timeout_seconds: float = 90.0) -> None:
@@ -147,3 +161,8 @@ def _bucket_is_ready(settings: AppSettings) -> bool:
         except (BotoCoreError, ClientError):
             return False
     return True
+
+
+def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
+    retryable_messages = ("No such container", "marked for removal")
+    return not any(message in result.stderr for message in retryable_messages)
