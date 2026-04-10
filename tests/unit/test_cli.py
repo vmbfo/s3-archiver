@@ -9,7 +9,7 @@ from typing import TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
-from s3_archiver_core.errors import ConfigError, HealthCheckError, LoggingError
+from s3_archiver_core.errors import ConfigError, HealthCheckError, LoggingError, S3ArchiverError
 from s3_archiver_core.health import HealthReport
 from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
@@ -111,6 +111,29 @@ def test_check_command_uses_health_exit_code(
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
     assert payload["message"] == "bucket unavailable"
+
+
+@pytest.mark.unit()
+def test_check_command_uses_generic_exit_code_for_unknown_domain_error(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    class UnknownDomainError(S3ArchiverError):
+        """Test-only domain error to exercise fallback exit handling."""
+
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def raise_error(_: AppSettings) -> Path:
+        raise UnknownDomainError("unexpected failure")
+
+    monkeypatch.setattr(cli_module, "configure_logging", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == 1
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "unexpected failure"
 
 
 @pytest.mark.unit()
