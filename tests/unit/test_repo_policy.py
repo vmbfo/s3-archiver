@@ -8,22 +8,33 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AUTHORED_PYTHON_ROOTS = (
+AUTHORED_SOURCE_ROOTS = (
     REPO_ROOT / "packages",
     REPO_ROOT / "tests",
     REPO_ROOT / "scripts",
 )
+AUTHORED_PYTHON_ROOTS = AUTHORED_SOURCE_ROOTS
 
 
 def _authored_python_files() -> list[Path]:
     return [python_file for root in AUTHORED_PYTHON_ROOTS for python_file in root.rglob("*.py")]
 
 
+def _authored_source_files() -> list[Path]:
+    source_files = [
+        file_path
+        for root in AUTHORED_SOURCE_ROOTS
+        for pattern in ("*.py", "*.sh")
+        for file_path in root.rglob(pattern)
+    ]
+    return sorted(source_files)
+
+
 @pytest.mark.unit()
-def test_authored_python_files_do_not_exceed_300_lines() -> None:
-    for python_file in REPO_ROOT.joinpath("packages").rglob("*.py"):
-        line_count = len(python_file.read_text(encoding="utf-8").splitlines())
-        assert line_count <= 300, f"{python_file} exceeds 300 lines with {line_count}"
+def test_authored_source_files_do_not_exceed_300_lines() -> None:
+    for source_file in _authored_source_files():
+        line_count = len(source_file.read_text(encoding="utf-8").splitlines())
+        assert line_count <= 300, f"{source_file} exceeds 300 lines with {line_count}"
 
 
 @pytest.mark.unit()
