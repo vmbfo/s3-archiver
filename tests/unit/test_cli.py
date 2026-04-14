@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import Callable, NotRequired, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -15,6 +15,8 @@ from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
+PARSE_ENV_FILE = cast(Callable[[Path], dict[str, str]], getattr(cli_module, "_parse_env_file"))
+LOAD_RUNTIME_ENV = cast(Callable[[], dict[str, str]], getattr(cli_module, "_load_runtime_env"))
 
 
 class HealthPayload(TypedDict):
@@ -128,6 +130,53 @@ def test_check_command_prefers_process_env_over_env_file(
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
     assert payload.get("bucket") == "bucket-from-process-env"
+
+
+@pytest.mark.unit()
+def test_parse_env_file_supports_comments_exports_and_quotes(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    _ = env_file.write_text(
+        "\n".join(
+            (
+                "",
+                "# comment",
+                "export S3_BUCKET=archive-bucket",
+                'LOG_DIR="/var/log/s3-archiver"',
+                "LOG_LEVEL='INFO'",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = PARSE_ENV_FILE(env_file)
+
+    assert parsed == {
+        "S3_BUCKET": "archive-bucket",
+        "LOG_DIR": "/var/log/s3-archiver",
+        "LOG_LEVEL": "INFO",
+    }
+
+
+@pytest.mark.unit()
+def test_parse_env_file_rejects_invalid_assignment(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    _ = env_file.write_text("export =broken", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="Invalid env assignment"):
+        _ = PARSE_ENV_FILE(env_file)
+
+
+@pytest.mark.unit()
+def test_load_runtime_env_returns_process_env_when_env_file_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    missing_file = tmp_path / ".missing.env"
+    monkeypatch.setattr(os, "environ", {"ENV_FILE": str(missing_file), "S3_BUCKET": "from-process"})
+
+    loaded = LOAD_RUNTIME_ENV()
+
+    assert loaded["S3_BUCKET"] == "from-process"
 
 
 @pytest.mark.unit()
