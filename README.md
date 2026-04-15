@@ -11,47 +11,41 @@ Strictly typed Python `uv` monorepo for an S3 archiver bootstrap, with OCI S3-co
 
 ## Quickstart
 
-Copy and paste this on a Docker Compose host after cloning the repo:
-
-```bash
-cp .env.example .env
-$EDITOR .env
-docker compose build app
-docker compose run --rm app s3-archiver check
-```
-
-The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
-The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
-
-Start the compose-backed LocalStack test stack and run the health check directly:
-
-```bash
-docker compose --profile test up -d localstack
-APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
-docker compose --profile test down -v
-```
-
-## Local Development
-
-Install `uv` once:
+Install `uv` once and sync the workspace after cloning the repo:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Bootstrap the workspace:
-
-```bash
 uv python install 3.12
 uv sync --all-packages --all-groups
 uv run pre-commit install --install-hooks --hook-type commit-msg --hook-type pre-push
 ```
 
-Run the host-native smoke check:
+Run the canonical compose-backed health check flow:
+
+```bash
+docker compose build app
+docker compose --profile test up -d localstack
+APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
+docker compose --profile test down -v
+```
+
+The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
+
+Use `.env.example` for OCI-backed runs and `.env.e2e` for the LocalStack compose flow shown above.
+
+## Local Development
+
+For host-native OCI smoke checks, create a local env file first:
 
 ```bash
 cp .env.example .env
 $EDITOR .env
+```
+
+Run the host-native smoke check:
+
+```bash
 ./scripts/run.sh
 make run
 ```
