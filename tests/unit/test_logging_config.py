@@ -33,13 +33,39 @@ def test_configure_logging_creates_file_and_handlers(base_env: dict[str, str]) -
     assert payload["trace_id"] is None
     assert payload["span_id"] is None
     handlers = logging.getLogger("s3_archiver").handlers
+    assert any(
+        isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, TimedRotatingFileHandler)
+        for handler in handlers
+    )
     file_handler = next(
         handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
     )
     assert file_handler.backupCount == 30
     assert file_handler.when == "MIDNIGHT"
-    for handler in logging.getLogger("s3_archiver").handlers:
-        handler.close()
+    _close_logging_handlers()
+
+
+@pytest.mark.unit()
+def test_configure_logging_applies_log_level_to_stdout_and_file(
+    capsys: pytest.CaptureFixture[str],
+    base_env: dict[str, str],
+) -> None:
+    base_env["LOG_LEVEL"] = "WARNING"
+    settings = AppSettings.from_env(base_env)
+
+    log_file = configure_logging(settings)
+    logger = logging.getLogger("s3_archiver.test")
+    _ = logger.info("ignore me", extra={"event": "unit.filtered"})
+    _ = logger.warning("keep me", extra={"event": "unit.kept"})
+    captured = capsys.readouterr()
+
+    assert '"event": "unit.filtered"' not in captured.out
+    assert '"event": "unit.kept"' in captured.out
+    log_contents = log_file.read_text(encoding="utf-8")
+    assert '"event": "unit.filtered"' not in log_contents
+    assert '"event": "unit.kept"' in log_contents
+    _close_logging_handlers()
 
 
 @pytest.mark.unit()
@@ -99,8 +125,7 @@ def test_configure_logging_keeps_only_latest_backup_count(base_env: dict[str, st
         "s3-archiver.log.2026-01-01",
         "s3-archiver.log.2026-01-02",
     ]
-    for handler in logging.getLogger("s3_archiver").handlers:
-        handler.close()
+    _close_logging_handlers()
 
 
 @pytest.mark.unit()
@@ -190,3 +215,8 @@ def _log_records(log_file: Path) -> list[dict[str, object]]:
         cast(dict[str, object], json.loads(line))
         for line in log_file.read_text(encoding="utf-8").splitlines()
     ]
+
+
+def _close_logging_handlers() -> None:
+    for handler in logging.getLogger("s3_archiver").handlers:
+        handler.close()

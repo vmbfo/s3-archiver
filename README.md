@@ -17,11 +17,19 @@ Copy and paste this on a Docker Compose host after cloning the repo:
 cp .env.example .env
 $EDITOR .env
 docker compose build app
-docker compose run --rm app
+docker compose run --rm app s3-archiver check
 ```
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
+
+Start the compose-backed LocalStack test stack and run the health check directly:
+
+```bash
+docker compose --profile test up -d localstack
+APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
+docker compose --profile test down -v
+```
 
 ## Local Development
 
@@ -59,6 +67,13 @@ ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
 ```
 
 `./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
+
+Run the health check directly without the wrapper:
+
+```bash
+uv run s3-archiver check
+ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 uv run s3-archiver check
+```
 
 Run checks:
 
