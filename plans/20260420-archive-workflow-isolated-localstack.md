@@ -5,12 +5,13 @@
 - Standardize runtime config on separate source and destination S3 connection settings so the two buckets can use entirely different credentials, users, and endpoints.
 - Add `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP=false`, and `ARCHIVER_MAX_WORKERS=16`.
 - Freeze one `run_started_at_utc` timestamp at the beginning of every archive invocation and use that same timestamp for eligibility, verification, and cleanup decisions for the entire run.
+- Support large objects, including objects up to at least `50 GiB`, by automatically choosing the appropriate transfer strategy: single-request copy for smaller objects and multipart or streamed multipart transfer for larger objects.
 - Implement the archive job as strict phases: `list -> copy -> verify -> cleanup`. Each phase may run bounded parallel workers, but the next phase never starts until the previous one completed successfully for every eligible object.
 - Treat cleanup as globally gated: unset or `false` means cleanup code must not run at all, and even when `true`, any copy or verify failure blocks all deletes.
 - Run the archive job from a daily task scheduler. Each daily run takes a fresh frozen timestamp and retries from the start if the previous day failed.
 
 ## Runtime And Safety Contract
-- `check` verifies access to both buckets and emits JSON with both bucket names.
+- `check` remains a first-class command and must continue to verify startup configuration, logging, and bucket access for both sides. It must work with LocalStack in tests and with mixed multi-provider source/destination setups in real deployments.
 - Source and destination S3 settings are independent. Each side must support its own provider, credentials, region, bucket, endpoint override, and addressing style so the archive job can bridge between different S3 users or even different S3-compatible systems.
 - All env vars must be parsed and validated at startup before any archive work begins. Type checks, enum validation, and numeric range checks must happen there so runtime invariants are established once and relied on afterwards.
 - The runtime contract uses separate env groups for source and destination:
@@ -32,19 +33,22 @@
 - Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
 - `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
 - Source and destination keys are preserved `1:1`.
-- Copy must stay S3-to-S3 only. The app must never download object payloads into the container.
+- The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
+- Object payloads must never be staged to local disk as temp files. Streaming fallback is allowed in memory or chunked pipe form so unrelated S3 systems can still interoperate.
 - The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
 - Cleanup verification gate compares source and destination via S3 metadata only:
   - size must match
-  - checksum fields must match when both sides expose them
-  - otherwise ETag must match
-  - any missing required signal or mismatch is a hard failure
+  - provider-native checksum fields are the preferred verification signal when both sides expose compatible checksum data
+  - ETag may be used only when the transfer mode and provider semantics make it a reliable equality signal for that object
+  - multipart or provider-specific ETags must not be treated as sufficient proof of equality unless the implementation can prove they are comparable for that exact transfer
+  - if no acceptable verification signal is available for an object, verification fails hard and cleanup remains blocked
 - Every failure must be surfaced in stdout/stderr JSON and structured logs with phase, key, source bucket, destination bucket, and mismatch details.
 - Reject identical source and destination buckets.
 - Listing must use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`.
 - If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - Any failure at any stage must terminate the current invocation cleanly with a non-zero result, stop all further progress for that run, and leave retry to the next scheduled daily invocation.
+- Retries must be idempotent. If the destination already contains an object from a prior partial run or from external writers, the next run must not assume it is safe to delete the source. It must re-evaluate the destination object through the same verification rules and only treat it as copied when the destination matches the current source object under the accepted verification policy.
 
 ## Test Isolation And LocalStack Guard Rails
 - Integration and e2e tests must create fresh UUID-named source and destination buckets for every test case, not per session.
@@ -59,14 +63,22 @@
 - The LocalStack-only timestamp seeding path must be mounted only into the LocalStack test service and must never be part of the app runtime image.
 
 ## Implementation Changes
-- Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, copy orchestration, verification, cleanup, and structured archive reporting.
+- Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, transfer orchestration, verification, cleanup, and structured archive reporting.
 - Add a dedicated env decoding layer that validates every variable up front and models parse results in a pureenv/result-style boundary so defaults and hard failures are handled explicitly and consistently.
-- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, `copy_object`, `head_object`, `delete_object`, and any checksum-capable metadata lookups needed for verification.
+- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, and any checksum-capable metadata lookups needed for verification.
 - Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
 - Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
 - Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
-- If direct server-side copy across the two configured clients is not supported by the backing S3 systems, fail fast with a clear configuration/runtime error rather than silently falling back to downloading object payloads through the container.
+- Select transfer strategy automatically per object size and provider capability:
+  - use simple native copy for smaller objects when the backing systems support it
+  - use multipart native copy when supported for larger objects
+  - use multipart streaming transfer when native copy is unavailable or unsuitable, while still avoiding local disk staging
+- Define explicit idempotency behavior for reruns:
+  - if destination is missing, copy it
+  - if destination exists and verifies against source, treat it as already copied
+  - if destination exists but does not verify, fail the run rather than overwriting silently or progressing to cleanup
 - Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
+- Keep `check` compatible with the dual-client configuration so it validates both source and destination connectivity without performing archive mutations.
 - Add a test-only LocalStack extension or equivalent in-container hook that rewrites object `last_modified` for deterministic retention tests.
 - Add a seed helper that uploads predictable keys into the per-test source bucket and then sets exact timestamps through the LocalStack-only hook.
 - Update the Compose test profile so LocalStack gets the test-only extension, while the app container remains the production-style runtime image.
@@ -89,13 +101,17 @@
   - strict cleanup gating for unset and `false`
   - frozen `run_started_at_utc` is captured once and reused across all phases
   - separate source and destination credentials are loaded independently
+  - transfer strategy selection chooses native copy versus multipart streaming correctly based on object size and capability
   - exact cutoff boundary for `59`, `60`, and `61` day objects
   - paginated multi-page listing
   - phase ordering and global cleanup blocking
   - copy failure prevents verify and cleanup from starting
   - verify failure prevents cleanup from starting
   - any stage failure exits the invocation cleanly and prevents later stages from running
+  - reruns treat already-verified destination objects as already copied
+  - reruns fail cleanly when destination contains a conflicting non-matching object
   - verification mismatch behavior and error payload shape
+  - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
   - LocalStack endpoint safety guard behavior
 - Integration tests against LocalStack:
   - per-test bucket pair creation and teardown
@@ -104,6 +120,8 @@
   - deterministic timestamp seeding in isolated buckets
   - whitelist mode copies and cleans up only keys under allowed source prefixes
   - blacklist mode never copies or cleans up keys under blocked source prefixes
+  - `check` succeeds against LocalStack with the dual-client config
+  - cross-endpoint transfers use streaming fallback when native copy is impossible
   - retention `60` with cleanup disabled
   - retention `60` with cleanup enabled
   - alternate retention such as `30`
@@ -111,6 +129,7 @@
   - verification failure produces non-zero status and zero deletes
 - E2E compose tests:
   - `docker compose run --rm app` shows help and does not archive
+  - explicit `s3-archiver check` still validates the dual-client configuration
   - explicit `s3-archiver archive` with cleanup unset
   - explicit `s3-archiver archive` with cleanup `false`
   - explicit `s3-archiver archive` with cleanup `true`
@@ -131,8 +150,11 @@
 - Time comparisons use UTC-aware datetimes only.
 - Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
 - Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
-- Source and destination may use different S3 identities and independent configuration, but the implementation still forbids downloading object payloads through the app container.
+- Source and destination may use different S3 identities, providers, and independent configuration. Native copy is preferred when available, but the app may stream payloads through itself when required for interoperability.
 - Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
+- Large-object support is automatic. The operator should not need to choose manually between simple copy and multipart transfer for normal operation.
+- The app still forbids local disk staging of object payloads during transfer, even when it must stream bytes through the process.
+- Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object.
 - Parallelism is allowed only inside a phase, never across phases.
 - The LocalStack-only timestamp hook is test infrastructure, not application functionality.
 - The production app image continues to be built from wheels only and must not ship the repository test suite or any LocalStack-only test code.
