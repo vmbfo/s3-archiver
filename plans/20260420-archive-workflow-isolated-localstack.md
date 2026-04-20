@@ -2,16 +2,25 @@
 
 ## Summary
 - Keep `check`, add explicit `s3-archiver archive`, and make bare `s3-archiver` print help and exit `0`.
-- Standardize runtime config on `S3_SOURCE_BUCKET` and `S3_DESTINATION_BUCKET` for both `check` and `archive`.
+- Standardize runtime config on separate source and destination S3 connection settings so the two buckets can use entirely different credentials, users, and endpoints.
 - Add `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP=false`, and `ARCHIVER_MAX_WORKERS=16`.
+- Freeze one `run_started_at_utc` timestamp at the beginning of every archive invocation and use that same timestamp for eligibility, verification, and cleanup decisions for the entire run.
 - Implement the archive job as strict phases: `list -> copy -> verify -> cleanup`. Each phase may run bounded parallel workers, but the next phase never starts until the previous one completed successfully for every eligible object.
 - Treat cleanup as globally gated: unset or `false` means cleanup code must not run at all, and even when `true`, any copy or verify failure blocks all deletes.
+- Run the archive job from a daily task scheduler. Each daily run takes a fresh frozen timestamp and retries from the start if the previous day failed.
 
 ## Runtime And Safety Contract
 - `check` verifies access to both buckets and emits JSON with both bucket names.
-- `archive` archives objects where `LastModified < now_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
+- Source and destination S3 settings are independent. Each side must support its own provider, credentials, region, bucket, endpoint override, and addressing style so the archive job can bridge between different S3 users or even different S3-compatible systems.
+- The runtime contract uses separate env groups for source and destination:
+  - source: `S3_SOURCE_PROVIDER`, `S3_SOURCE_ACCESS_KEY_ID`, `S3_SOURCE_SECRET_ACCESS_KEY`, `S3_SOURCE_REGION`, `S3_SOURCE_BUCKET`
+  - destination: `S3_DESTINATION_PROVIDER`, `S3_DESTINATION_ACCESS_KEY_ID`, `S3_DESTINATION_SECRET_ACCESS_KEY`, `S3_DESTINATION_REGION`, `S3_DESTINATION_BUCKET`
+  - optional per-side overrides: `S3_SOURCE_ENDPOINT_URL`, `S3_DESTINATION_ENDPOINT_URL`, `S3_SOURCE_ADDRESSING_STYLE`, `S3_DESTINATION_ADDRESSING_STYLE`
+  - OCI-only per-side fields when relevant: `S3_SOURCE_NAMESPACE`, `S3_SOURCE_IAM_USER_OCID`, `S3_DESTINATION_NAMESPACE`, `S3_DESTINATION_IAM_USER_OCID`
+- `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
 - Source and destination keys are preserved `1:1`.
 - Copy must stay S3-to-S3 only. The app must never download object payloads into the container.
+- The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
 - Cleanup verification gate compares source and destination via S3 metadata only:
   - size must match
   - checksum fields must match when both sides expose them
@@ -20,6 +29,7 @@
 - Every failure must be surfaced in stdout/stderr JSON and structured logs with phase, key, source bucket, destination bucket, and mismatch details.
 - Reject identical source and destination buckets.
 - Listing must use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`.
+- If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 
 ## Test Isolation And LocalStack Guard Rails
 - Integration and e2e tests must create fresh UUID-named source and destination buckets for every test case, not per session.
@@ -34,26 +44,33 @@
 - The LocalStack-only timestamp seeding path must be mounted only into the LocalStack test service and must never be part of the app runtime image.
 
 ## Implementation Changes
-- Add core archive modules for settings, manifest building, copy orchestration, verification, cleanup, and structured archive reporting.
-- Extend the typed S3 boundary to support paginated listing, `copy_object`, `head_object`, `delete_object`, and any checksum-capable metadata lookups needed for verification.
+- Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, copy orchestration, verification, cleanup, and structured archive reporting.
+- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, `copy_object`, `head_object`, `delete_object`, and any checksum-capable metadata lookups needed for verification.
+- If direct server-side copy across the two configured clients is not supported by the backing S3 systems, fail fast with a clear configuration/runtime error rather than silently falling back to downloading object payloads through the container.
+- Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
 - Add a test-only LocalStack extension or equivalent in-container hook that rewrites object `last_modified` for deterministic retention tests.
 - Add a seed helper that uploads predictable keys into the per-test source bucket and then sets exact timestamps through the LocalStack-only hook.
 - Update the Compose test profile so LocalStack gets the test-only extension, while the app container remains the production-style runtime image.
 - Keep test assets outside the shipped application packages. The current wheel-only runtime already excludes repo tests; preserve that as an explicit packaging rule and add a regression check for it.
 - Add a runtime image check that asserts the production app container does not contain repo `tests/`, LocalStack seed helpers, or the LocalStack test extension.
+- Add scheduler documentation and local orchestration helpers so the archive task can be run on a daily cadence locally without GitHub Actions.
 
 ## Test Plan
 - Unit tests first, run red before any implementation:
-  - env parsing and validation for the new two-bucket contract
+  - env parsing and validation for the new per-side S3 contract
   - bare-command help behavior
   - strict cleanup gating for unset and `false`
+  - frozen `run_started_at_utc` is captured once and reused across all phases
+  - separate source and destination credentials are loaded independently
   - exact cutoff boundary for `59`, `60`, and `61` day objects
   - paginated multi-page listing
   - phase ordering and global cleanup blocking
+  - copy failure prevents verify and cleanup from starting
   - verification mismatch behavior and error payload shape
   - LocalStack endpoint safety guard behavior
 - Integration tests against LocalStack:
   - per-test bucket pair creation and teardown
+  - isolated source and destination clients with distinct credentials
   - deterministic timestamp seeding in isolated buckets
   - retention `60` with cleanup disabled
   - retention `60` with cleanup enabled
@@ -71,10 +88,16 @@
   - explicit boundary fixtures for `59`, `60`, and `61`
   - destination bucket starts empty
   - expected split is asserted exactly for each configured retention
+- Scheduler behavior assertions:
+  - each run uses a fresh frozen timestamp
+  - a failed run does not leave cleanup partially executed
+  - the next scheduled run restarts from copy using the new run timestamp
 
 ## Assumptions And Defaults
 - `ARCHIVER_MAX_WORKERS` defaults to `16`.
 - Time comparisons use UTC-aware datetimes only.
+- Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
+- Source and destination may use different S3 identities and independent configuration, but the implementation still forbids downloading object payloads through the app container.
 - Parallelism is allowed only inside a phase, never across phases.
 - The LocalStack-only timestamp hook is test infrastructure, not application functionality.
 - The production app image continues to be built from wheels only and must not ship the repository test suite or any LocalStack-only test code.
