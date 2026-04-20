@@ -18,6 +18,15 @@
   - destination: `S3_DESTINATION_PROVIDER`, `S3_DESTINATION_ACCESS_KEY_ID`, `S3_DESTINATION_SECRET_ACCESS_KEY`, `S3_DESTINATION_REGION`, `S3_DESTINATION_BUCKET`
   - optional per-side overrides: `S3_SOURCE_ENDPOINT_URL`, `S3_DESTINATION_ENDPOINT_URL`, `S3_SOURCE_ADDRESSING_STYLE`, `S3_DESTINATION_ADDRESSING_STYLE`
   - OCI-only per-side fields when relevant: `S3_SOURCE_NAMESPACE`, `S3_SOURCE_IAM_USER_OCID`, `S3_DESTINATION_NAMESPACE`, `S3_DESTINATION_IAM_USER_OCID`
+- Source-bucket path filtering is configured only on the source side:
+  - `S3_SOURCE_PATH_WHITELIST_ENABLED=false`
+  - `S3_SOURCE_PATH_BLACKLIST_ENABLED=false`
+  - `S3_SOURCE_PATH_WHITELIST=[]`
+  - `S3_SOURCE_PATH_BLACKLIST=[]`
+- `S3_SOURCE_PATH_WHITELIST` and `S3_SOURCE_PATH_BLACKLIST` must be JSON arrays of strings. They default to empty arrays.
+- Only one source path filter mode may be enabled at a time. Startup must fail if both whitelist and blacklist mode are enabled.
+- In whitelist mode, the archive job operates only on source objects whose keys match one of the configured whitelist path prefixes. In blacklist mode, the archive job operates only on source objects whose keys do not match any configured blacklist path prefixes.
+- Path filters apply only to source-bucket eligibility. Filtered-out source objects must never be copied and must never be cleaned up.
 - Optional env vars may fall back to explicit defaults, but required auth and bucket settings must hard-fail startup when missing. In particular, non-LocalStack providers must not start without valid S3 auth inputs for that side.
 - Invalid env values must crash startup immediately, print a clear error to the console, and emit the same failure into the structured container logs so configuration mistakes surface immediately in Docker.
 - Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
@@ -53,7 +62,9 @@
 - Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, copy orchestration, verification, cleanup, and structured archive reporting.
 - Add a dedicated env decoding layer that validates every variable up front and models parse results in a pureenv/result-style boundary so defaults and hard failures are handled explicitly and consistently.
 - Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, `copy_object`, `head_object`, `delete_object`, and any checksum-capable metadata lookups needed for verification.
+- Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
 - Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
+- Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
 - If direct server-side copy across the two configured clients is not supported by the backing S3 systems, fail fast with a clear configuration/runtime error rather than silently falling back to downloading object payloads through the container.
 - Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
 - Add a test-only LocalStack extension or equivalent in-container hook that rewrites object `last_modified` for deterministic retention tests.
@@ -69,6 +80,11 @@
   - defaults are applied only where explicitly allowed
   - invalid type, enum, and range values fail fast at startup
   - missing required auth settings fail fast at startup
+  - whitelist and blacklist env vars decode from JSON arrays of strings
+  - enabling both whitelist and blacklist mode fails fast at startup
+  - whitelist mode includes only matching source path prefixes
+  - blacklist mode excludes matching source path prefixes
+  - filtered-out paths are never eligible for copy or cleanup
   - bare-command help behavior
   - strict cleanup gating for unset and `false`
   - frozen `run_started_at_utc` is captured once and reused across all phases
@@ -86,6 +102,8 @@
   - isolated source and destination clients with distinct credentials
   - startup bucket/auth validation happens before any archive phase work
   - deterministic timestamp seeding in isolated buckets
+  - whitelist mode copies and cleans up only keys under allowed source prefixes
+  - blacklist mode never copies or cleans up keys under blocked source prefixes
   - retention `60` with cleanup disabled
   - retention `60` with cleanup enabled
   - alternate retention such as `30`
@@ -114,6 +132,7 @@
 - Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
 - Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
 - Source and destination may use different S3 identities and independent configuration, but the implementation still forbids downloading object payloads through the app container.
+- Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
 - Parallelism is allowed only inside a phase, never across phases.
 - The LocalStack-only timestamp hook is test infrastructure, not application functionality.
 - The production app image continues to be built from wheels only and must not ship the repository test suite or any LocalStack-only test code.
