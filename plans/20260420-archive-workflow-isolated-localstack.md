@@ -36,13 +36,14 @@
 - The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
 - Object payloads may use local temp-file staging as a controlled fallback when direct streaming is unavailable or impractical for very large objects. Any temp files created for transfer must be cleaned up on success and on failure.
 - The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
-- Cleanup verification must use a portable archiver-controlled verification record, not only provider-native metadata:
+- Cleanup verification must use a portable archiver-controlled source-fingerprint record, not only provider-native metadata:
   - size must match
-  - for app-mediated streaming or temp-file-backed transfers, compute a strong digest such as `SHA-256` while reading the source and persist that digest with the copied object in destination-controlled metadata or an archiver-owned sidecar verification record
+  - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata or an archiver-owned sidecar verification record
+  - the source fingerprint should include the source bucket, source key, source size, source last-modified timestamp, source version id when available, and source ETag or provider checksum fields when available
   - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
-  - ETag may be used only when the transfer mode and provider semantics make it a reliable equality signal for that object
-  - multipart or provider-specific ETags must not be treated as sufficient proof of equality unless the implementation can prove they are comparable for that exact transfer
-  - if the run cannot establish or recover a portable verification record for an object, verification fails hard and cleanup remains blocked
+  - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
+  - multipart or provider-specific ETags must not be treated as sufficient proof of equality on their own unless the implementation can prove they are comparable for that exact transfer
+  - if the run cannot establish or recover a portable source-fingerprint record for an object, verification fails hard and cleanup remains blocked
 - Every failure must be surfaced in stdout/stderr JSON and structured logs with phase, key, source bucket, destination bucket, and mismatch details.
 - Add an opt-in debug logging mode that records per-object transfer decisions, including which copy strategy was selected for that object, such as simple native copy, multipart native copy, in-process streaming, or temp-file-backed transfer.
 - Reject identical source and destination buckets.
@@ -50,7 +51,7 @@
 - If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - Any failure at any stage must terminate the current invocation cleanly with a non-zero result, stop all further progress for that run, and leave retry to the next scheduled daily invocation.
-- Retries must be idempotent. If the destination already contains an object from a prior partial run or from external writers, the next run must not assume it is safe to delete the source. It must re-evaluate the destination object through the same verification rules and only treat it as copied when the destination matches the current source object under the accepted verification policy, including the portable verification record when required.
+- Retries must be idempotent. If the destination already contains an object from a prior partial run or from external writers, the next run must not assume it is safe to delete the source. It must re-evaluate the destination object through the same verification rules and only treat it as copied when the destination matches the current source object under the accepted verification policy, including the portable source-fingerprint record when required.
 
 ## Test Isolation And LocalStack Guard Rails
 - Integration and e2e tests must create fresh UUID-named source and destination buckets for every test case, not per session.
@@ -73,10 +74,10 @@
 - Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
 - Add structured debug logging around transfer strategy selection so operators can see which copy path each object used when debug logging is enabled.
 - Add a portable verification layer for streamed and temp-file-backed cross-provider copies:
-  - compute a strong digest such as `SHA-256` while reading source bytes
-  - persist that digest and object size in destination metadata when supported
+  - capture a lightweight source fingerprint before transfer
+  - persist that fingerprint in destination metadata when supported
   - when metadata portability is insufficient, persist the same verification data in an archiver-owned sidecar manifest or verification object under a reserved destination prefix
-  - make cleanup depend on recovering that verification record successfully
+  - make cleanup depend on recovering that source-fingerprint record successfully
 - Select transfer strategy automatically per object size and provider capability:
   - use simple native copy for smaller objects when the backing systems support it
   - use multipart native copy when supported for larger objects
@@ -88,7 +89,7 @@
   - delete temp files on any failure path and on startup recovery if stale files from a prior aborted run are found
 - Define explicit idempotency behavior for reruns:
   - if destination is missing, copy it
-  - if destination exists and verifies against source, treat it as already copied
+  - if destination exists and verifies against source using the stored source fingerprint, treat it as already copied
   - if destination exists but does not verify, fail the run rather than overwriting silently or progressing to cleanup
 - Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
 - Keep `check` compatible with the dual-client configuration so it validates both source and destination connectivity without performing archive mutations.
@@ -124,8 +125,8 @@
   - reruns treat already-verified destination objects as already copied
   - reruns fail cleanly when destination contains a conflicting non-matching object
   - verification mismatch behavior and error payload shape
-  - streamed and temp-file-backed transfers compute and persist a portable verification digest
-  - cleanup succeeds for cross-provider copies only when the portable verification record is present and matches
+  - streamed and temp-file-backed transfers persist a portable source-fingerprint record
+  - cleanup succeeds for cross-provider copies only when the portable source-fingerprint record is present and matches
   - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
   - debug logging emits the selected transfer operation for each object when enabled
   - temp files are cleaned up on success, failure, and stale-startup recovery
@@ -171,8 +172,8 @@
 - Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
 - Large-object support is automatic. The operator should not need to choose manually between simple copy and multipart transfer for normal operation.
 - The app still forbids local disk staging of object payloads during transfer, even when it must stream bytes through the process.
-- Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object.
-- Mixed-provider cleanup support depends on a portable verification record that the archiver itself can produce and recover across runs.
+- Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object using the stored source fingerprint.
+- Mixed-provider cleanup support depends on a portable source-fingerprint record that the archiver itself can produce and recover across runs.
 - Parallelism is allowed only inside a phase, never across phases.
 - The LocalStack-only timestamp hook is test infrastructure, not application functionality.
 - The production app image continues to be built from wheels only and must not ship the repository test suite or any LocalStack-only test code.
