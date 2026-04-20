@@ -3,12 +3,12 @@
 ## Summary
 - Keep `check`, add explicit `s3-archiver archive`, and make bare `s3-archiver` print help and exit `0`.
 - Standardize runtime config on separate source and destination S3 connection settings so the two buckets can use entirely different credentials, users, and endpoints.
-- Add `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP=false`, and `ARCHIVER_MAX_WORKERS=16`.
+- Add `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, and `ARCHIVER_RUN_TIMEOUT=7d`.
 - Freeze one `run_started_at_utc` timestamp at the beginning of every archive invocation and use that same timestamp for eligibility, verification, and cleanup decisions for the entire run.
 - Support large objects, including objects up to at least `50 GiB`, by automatically choosing the appropriate transfer strategy: single-request copy for smaller objects and multipart or streamed multipart transfer for larger objects.
 - Implement the archive job as strict phases: `list -> copy -> verify -> cleanup`. Each phase may run bounded parallel workers, but the next phase never starts until the previous one completed successfully for every eligible object.
 - Treat cleanup as globally gated: unset or `false` means cleanup code must not run at all, and even when `true`, any copy or verify failure blocks all deletes.
-- Run the archive job from a daily task scheduler. Each daily run takes a fresh frozen timestamp and retries from the start if the previous day failed.
+- Run the archive job from a daily task scheduler. Each daily run takes a fresh frozen timestamp and retries from the start if the previous day failed, but the scheduler must never start a second archive run while a prior run is still active. Missed daily triggers during an active run are skipped rather than replayed later.
 
 ## Runtime And Safety Contract
 - `check` remains a first-class command and must continue to verify startup configuration, logging, and bucket access for both sides. It must work with LocalStack in tests and with mixed multi-provider source/destination setups in real deployments.
@@ -40,6 +40,12 @@
 - Invalid env values must crash startup immediately and print a clear error to regular `stderr`. Early env-validation failures happen before the logging stack is initialized, so they must not depend on structured logging infrastructure being available.
 - Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
 - Startup must also query source-bucket versioning state. The archive workflow must support source buckets whose versioning state is disabled, enabled, or suspended, and it must switch to version-aware source discovery and cleanup behavior whenever the source bucket exposes version-history semantics. `check` must succeed for versioning-enabled and versioning-suspended buckets as part of this probe path.
+- `archive` must run under a single-run exclusivity guard. If an archive run is already active, the scheduler or invocation wrapper must not start another one until the active run finishes or times out.
+- `ARCHIVER_RUN_TIMEOUT` must be configurable and default to `7d`. If a run exceeds that timeout, the runtime must mark the run as failed, emit that failure clearly in stdout/stderr JSON and structured logs, release the single-run lock, and allow the next scheduled run to retry from the start.
+- The single-run exclusivity guard must recover safely from crashes and restarts. A stale lock from a dead process or prior container instance must not block the system forever:
+  - the lock record must include enough run metadata to distinguish an active run from an abandoned one
+  - startup and scheduler entry must reconcile stale locks against `ARCHIVER_RUN_TIMEOUT` and any liveness information the implementation records
+  - if the prior run is no longer alive or has exceeded the timeout, the runtime must mark that abandoned run as failed, log the stale-lock recovery clearly, clear the lock, and allow the next scheduled run to start fresh
 - `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
 - When source-bucket versioning is enabled or suspended, the archive manifest must pin the exact source version selected for copy and cleanup when one exists. Version-history buckets may also surface a live current object whose version id is `null` for objects that predate versioning; in that case, the manifest still records the source key and source last-modified timestamp, and cleanup uses the bucket's ordinary delete semantics for that current null-version object. The portable fingerprint persisted in destination-controlled metadata must include the exact source version id whenever one exists so reruns can recover that same version id and exact-version cleanup can target it again.
 - Source and destination keys are preserved `1:1`.
@@ -51,7 +57,6 @@
   - cache-control and expires metadata
   - user-defined object metadata
   - object tags
-- Destination encryption must satisfy the configured destination-side encryption contract and must never be silently downgraded by a streamed or temp-file-backed transfer path. If a chosen transfer mode or provider combination cannot preserve the required metadata, tags, or encryption behavior for an object, that object copy must fail hard and cleanup remains blocked.
 - The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
 - Object payloads may use local temp-file staging as a controlled fallback when direct streaming is unavailable or impractical for very large objects. Any temp files created for transfer must be cleaned up on success and on failure.
 - The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
@@ -70,7 +75,6 @@
   - the source fingerprint must include the fields listed above
   - when the source bucket exposes version ids, the persisted source fingerprint must include the exact source version id used for copy and cleanup, and reruns must recover that exact source version id from destination metadata before verification or exact-version cleanup proceeds
   - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
-  - destination encryption state must satisfy the configured destination-side encryption contract for that object and must not represent a silent downgrade from the transfer contract
   - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
   - multipart or provider-specific ETags must not be treated as sufficient proof of equality on their own unless the implementation can prove they are comparable for that exact transfer
   - if the run cannot establish or recover a portable source-fingerprint record for an object, verification fails hard and cleanup remains blocked
@@ -88,6 +92,7 @@
 - If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - Any failure at any stage must terminate the current invocation cleanly with a non-zero result, stop all further progress for that run, and leave retry to the next scheduled daily invocation.
 - Retries must be idempotent. If the destination already contains an object from a prior partial run or from external writers, the next run must not assume it is safe to delete the source. It must re-evaluate the destination object through the same verification rules and only treat it as copied when the destination matches the current source object under the accepted verification policy, including the portable source-fingerprint record when required.
+- Scheduler-triggered retries must respect the single-run exclusivity guard. Missed daily triggers while a long run is still active must be skipped rather than queued or replayed later, and once a timed-out, failed, or stale-locked run releases the lock, the next scheduled run starts only at the next eligible schedule with a new frozen timestamp.
 
 ## Test Isolation And LocalStack Guard Rails
 - Integration and e2e tests must create fresh UUID-named source and destination buckets for every test case, not per session.
@@ -116,7 +121,7 @@
   - capture a lightweight source fingerprint before transfer
   - persist that fingerprint in destination metadata when supported, including the exact source version id whenever one exists
   - make cleanup depend on recovering that source-fingerprint record successfully so reruns can reuse the same exact source version id for cleanup
-- Add metadata-copy support for every transfer strategy so simple copy, multipart copy, multipart streaming, and temp-file-backed transfer all preserve the required object properties, user metadata, tags, and destination encryption behavior.
+- Add metadata-copy support for every transfer strategy so simple copy, multipart copy, multipart streaming, and temp-file-backed transfer all preserve the required object properties, user metadata, and tags.
 - Add version-aware source discovery and cleanup:
   - inspect source-bucket versioning state during startup and archive initialization
   - teach `check` to exercise the versioning probe path successfully for versioning-enabled and versioning-suspended buckets
@@ -141,6 +146,14 @@
   - if destination exists and verifies against source using the stored source fingerprint, treat it as already copied
   - if destination exists but does not verify, fail the run rather than overwriting silently or progressing to cleanup
 - Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
+- Add single-run scheduler coordination:
+  - acquire a run lock before archive work begins
+  - refuse to start a second run while the lock is held by an active run
+  - track run start time against `ARCHIVER_RUN_TIMEOUT`
+  - mark timed-out runs as failed, log the timeout clearly, and release the lock so the next scheduled run can retry
+  - persist enough run-lock metadata to detect stale locks after crash or container restart
+  - reconcile stale locks on startup and before each scheduled run attempt
+  - skip missed ticks instead of replaying them after the lock clears
 - Keep `check` compatible with the dual-client configuration so it validates both source and destination connectivity without performing archive mutations.
 - Split structured archive error reporting into startup/pre-flight errors and per-object archive errors, with explicitly nullable object-specific fields for startup failures.
 - Keep env-validation error emission independent of the logging stack so config parse failures can report to regular `stderr` before logging setup completes.
@@ -157,6 +170,8 @@
   - defaults are applied only where explicitly allowed
   - invalid type, enum, and range values fail fast at startup
   - missing required auth settings fail fast at startup
+  - `ARCHIVER_RUN_TIMEOUT` defaults to `7d`
+  - invalid run-timeout values fail fast at startup
   - env-validation failures emit to regular `stderr` before logging initialization
   - identical bucket names across different storage-location tuples remain allowed
   - the same physical bucket reached with different credentials still fails fast at startup
@@ -178,6 +193,10 @@
   - version-aware pagination spans multiple pages without dropping entries at page boundaries
   - delete markers are filtered out of every version-aware page before eligibility is decided
   - phase ordering and global cleanup blocking
+  - a second run cannot start while another run is active
+  - a timed-out run is marked failed, releases the run lock, and allows the next run to start
+  - a timed-out run emits a timeout-specific failure payload in stdout/stderr JSON and structured logs
+  - a stale lock left by a crashed run is detected, logged, cleared, and does not block future scheduled runs forever
   - copy failure prevents verify and cleanup from starting
   - verify failure prevents cleanup from starting
   - any stage failure exits the invocation cleanly and prevents later stages from running
@@ -191,7 +210,7 @@
   - cleanup uses exact version-id delete when a non-null source version id is present and never falls back to generic delete in that case
   - delete markers are excluded from archive eligibility
   - streamed and temp-file-backed transfers preserve required content headers, user metadata, and object tags
-  - verification fails if required metadata, tags, or destination encryption behavior are not preserved
+  - verification fails if required metadata or tags are not preserved
   - streamed and temp-file-backed transfers persist a portable source-fingerprint record
   - cleanup succeeds for cross-provider copies only when the portable source-fingerprint record is present and matches
   - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
@@ -206,6 +225,8 @@
   - source buckets with versioning enabled or suspended complete startup successfully and activate version-aware archive behavior
   - version-aware listing paginates across multiple pages, including exact page-boundary handling and delete-marker filtering
   - source buckets with versioning disabled use `ListObjectsV2` and ordinary delete cleanup semantics
+  - a long-running archive invocation blocks overlapping scheduled invocations until it finishes or times out
+  - a crashed or restarted container reconciles a stale run lock before the next eligible scheduled run
   - startup bucket/auth validation happens before any archive phase work
   - deterministic timestamp seeding in isolated buckets
   - whitelist mode copies and cleans up only keys under allowed source prefixes
@@ -238,14 +259,23 @@
   - expected split is asserted exactly for each configured retention
 - Scheduler behavior assertions:
   - each run uses a fresh frozen timestamp
+  - only one run may be active at a time
+  - missed daily triggers during an active run do not start overlapping runs
+  - missed daily triggers are skipped rather than replayed after the active run ends
+  - `ARCHIVER_RUN_TIMEOUT` defaults to `7d`
+  - when a run exceeds the configured timeout, it is marked failed, logged as timed out, and releases the run lock
+  - timeout failures are operator-visible in stdout/stderr JSON and structured logs
+  - stale locks from crashed or restarted runs are detected, logged, marked failed, and cleared before the next eligible scheduled run
   - a failed run does not leave cleanup partially executed
   - a failed run exits cleanly and does not continue into later phases
   - the next scheduled run restarts from copy using the new run timestamp
 
 ## Assumptions And Defaults
 - `ARCHIVER_MAX_WORKERS` defaults to `16`.
+- `ARCHIVER_RUN_TIMEOUT` defaults to `7d`.
 - Time comparisons use UTC-aware datetimes only.
 - Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
+- Only one archive run may be active at a time in production. Daily scheduling is best-effort and non-overlapping; if one run is still active, later triggers are skipped rather than replayed, and the next run starts only at the next eligible schedule after the active, timed-out, or stale-locked run has been resolved.
 - Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
 - Env validation runs before logging initialization is complete, so env-parse and env-validation failures are reported via regular `stderr` rather than the structured logging pipeline.
 - The intended production deployment model is exactly one Docker container instance running this system. It is not intended to run via host-level cron, in both a container and an external scheduler at the same time, or across multiple containers or hosts.
@@ -255,7 +285,7 @@
 - Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
 - Large-object support is automatic. The operator should not need to choose manually between simple copy and multipart transfer for normal operation.
 - Native copy or direct streaming remains preferred, but the app may use controlled local temp-file staging as a fallback for interoperability or large-object safety. Any staged payload must live only in the dedicated runtime temp directory and must be cleaned up on success, failure, and stale-startup recovery.
-- Payload fidelity is not sufficient on its own; archive copies are expected to preserve the required object properties, user metadata, tags, and destination encryption behavior or fail the object copy.
+- Payload fidelity is not sufficient on its own; archive copies are expected to preserve the required object properties, user metadata, and tags or fail the object copy.
 - Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object using the stored source fingerprint.
 - Mixed-provider cleanup support depends on a portable source-fingerprint record that the archiver itself can produce and recover across runs.
 - Parallelism is allowed only inside a phase, never across phases.
