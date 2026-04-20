@@ -39,8 +39,9 @@
 - Optional env vars may fall back to explicit defaults, but required auth and bucket settings must hard-fail startup when missing. In particular, non-LocalStack providers must not start without valid S3 auth inputs for that side.
 - Invalid env values must crash startup immediately and print a clear error to regular `stderr`. Early env-validation failures happen before the logging stack is initialized, so they must not depend on structured logging infrastructure being available.
 - Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
-- Startup must also query source-bucket versioning state. The archive workflow supports only non-versioned source buckets; if source bucket versioning is `Enabled`, `Suspended`, or otherwise exposes version-history semantics, startup must fail before any archive phase begins.
+- Startup must also query source-bucket versioning state. The archive workflow must support source buckets whose versioning state is disabled, enabled, or suspended, and it must switch to version-aware source discovery and cleanup behavior whenever the source bucket exposes version-history semantics. `check` must succeed for versioning-enabled and versioning-suspended buckets as part of this probe path.
 - `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
+- When source-bucket versioning is enabled or suspended, the archive manifest must pin the exact source version selected for copy and cleanup when one exists. Version-history buckets may also surface a live current object whose version id is `null` for objects that predate versioning; in that case, the manifest still records the source key and source last-modified timestamp, and cleanup uses the bucket's ordinary delete semantics for that current null-version object. The portable fingerprint persisted in destination-controlled metadata must include the exact source version id whenever one exists so reruns can recover that same version id and exact-version cleanup can target it again.
 - Source and destination keys are preserved `1:1`.
 - Archive copies must preserve object properties, not only payload bytes. At minimum the destination object must preserve:
   - content type
@@ -67,6 +68,7 @@
   - object tags must match
   - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata
   - the source fingerprint must include the fields listed above
+  - when the source bucket exposes version ids, the persisted source fingerprint must include the exact source version id used for copy and cleanup, and reruns must recover that exact source version id from destination metadata before verification or exact-version cleanup proceeds
   - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
   - destination encryption state must satisfy the configured destination-side encryption contract for that object and must not represent a silent downgrade from the transfer contract
   - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
@@ -78,7 +80,10 @@
   - per-object archive failures must include phase, key, source bucket, destination bucket, and mismatch or verification details when applicable
 - Add an opt-in debug logging mode that records per-object transfer decisions, including which copy strategy was selected for that object, such as simple native copy, multipart native copy, in-process streaming, or temp-file-backed transfer.
 - Reject only identical source and destination storage locations as defined by the normalized storage-location identity tuple.
-- Listing must use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`.
+- Listing must be version-aware:
+  - when the source bucket is unversioned, use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`
+  - when the source bucket versioning state is enabled or suspended, use version-aware listing so each manifest entry is bound to the selected live source object, carrying the exact source version id when one exists or `null` for the live current object in a version-history bucket, delete markers are excluded from archive eligibility, and pagination across multiple version-aware pages is handled correctly at page boundaries
+- Cleanup must delete the exact archived source version when a non-null source version id is available. For any version-history bucket, a live current object with source version id `null` must use ordinary key-only delete semantics for that exact current object because no exact-version delete target exists. Generic key-only delete remains forbidden for versioned cleanup when a non-null version id is available because it can create delete markers instead of reclaiming the archived bytes.
 - If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - Any failure at any stage must terminate the current invocation cleanly with a non-zero result, stop all further progress for that run, and leave retry to the next scheduled daily invocation.
@@ -101,7 +106,7 @@
 ## Implementation Changes
 - Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, transfer orchestration, verification, cleanup, and structured archive reporting.
 - Add a dedicated env decoding layer that validates every variable up front and models parse results in a pureenv/result-style boundary so defaults and hard failures are handled explicitly and consistently.
-- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, temp-file-backed transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, bucket-versioning inspection for source-bucket safety, and any checksum-capable metadata lookups needed for verification.
+- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, temp-file-backed transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, bucket-versioning inspection, version-aware source listing, version-aware delete by exact source version id, and any checksum-capable metadata lookups needed for verification.
 - Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
 - Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
 - Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
@@ -109,10 +114,19 @@
 - Add a normalized storage-location identity helper used by startup validation, `check`, and archive safety checks so identical-location rejection is based on the same physical-bucket tuple everywhere, independent of which credentials access it.
 - Add a portable verification layer for streamed and temp-file-backed cross-provider copies:
   - capture a lightweight source fingerprint before transfer
-  - persist that fingerprint in destination metadata when supported
-  - make cleanup depend on recovering that source-fingerprint record successfully
+  - persist that fingerprint in destination metadata when supported, including the exact source version id whenever one exists
+  - make cleanup depend on recovering that source-fingerprint record successfully so reruns can reuse the same exact source version id for cleanup
 - Add metadata-copy support for every transfer strategy so simple copy, multipart copy, multipart streaming, and temp-file-backed transfer all preserve the required object properties, user metadata, tags, and destination encryption behavior.
-- Reject versioned source buckets during startup and `check` until the workflow gains explicit version-aware listing and deletion semantics.
+- Add version-aware source discovery and cleanup:
+  - inspect source-bucket versioning state during startup and archive initialization
+  - teach `check` to exercise the versioning probe path successfully for versioning-enabled and versioning-suspended buckets
+  - use `ListObjectsV2` and ordinary delete cleanup when the source bucket is versioning `Disabled`
+  - use version-aware listing or equivalent manifest construction when the source bucket exposes version-history semantics
+  - bind each manifest entry to the exact source version id chosen for the run when one exists
+  - allow the current object with version id `null` in any version-history bucket to clean up through ordinary key-only delete semantics
+  - exclude delete markers from archive eligibility
+  - paginate version-aware listing across multiple pages and preserve correct page-boundary handling
+  - delete by exact source version id during cleanup whenever a non-null source version id is present
 - Select transfer strategy automatically per object size and provider capability:
   - use simple native copy for smaller objects when the backing systems support it
   - use multipart native copy when supported for larger objects
@@ -147,7 +161,8 @@
   - identical bucket names across different storage-location tuples remain allowed
   - the same physical bucket reached with different credentials still fails fast at startup
   - fully identical normalized storage-location tuples fail fast at startup
-  - source buckets with versioning `Enabled` or `Suspended` fail fast at startup
+  - source buckets with versioning `Disabled` use `ListObjectsV2` pagination and ordinary delete semantics
+  - source buckets with versioning `Enabled` or `Suspended` activate version-aware archive behavior instead of failing fast
   - whitelist and blacklist env vars decode from JSON arrays of strings
   - enabling both whitelist and blacklist mode fails fast at startup
   - whitelist mode includes only matching source path prefixes
@@ -160,14 +175,21 @@
   - transfer strategy selection chooses native copy, multipart streaming, or temp-file-backed transfer correctly based on object size and capability
   - exact cutoff boundary for `59`, `60`, and `61` day objects
   - paginated multi-page listing
+  - version-aware pagination spans multiple pages without dropping entries at page boundaries
+  - delete markers are filtered out of every version-aware page before eligibility is decided
   - phase ordering and global cleanup blocking
   - copy failure prevents verify and cleanup from starting
   - verify failure prevents cleanup from starting
   - any stage failure exits the invocation cleanly and prevents later stages from running
   - reruns treat already-verified destination objects as already copied
   - reruns fail cleanly when destination contains a conflicting non-matching object
+  - portable fingerprint metadata round-trips the exact source version id and reruns recover it for exact-version cleanup
   - startup/pre-flight error payload shape allows nullable object-specific fields
   - per-object verification mismatch behavior and archive-error payload shape
+  - version-aware listing captures the exact source version id for versioned-source manifest entries
+  - version-history buckets record the null current source version as a special case and use ordinary key-only delete semantics for that exact object
+  - cleanup uses exact version-id delete when a non-null source version id is present and never falls back to generic delete in that case
+  - delete markers are excluded from archive eligibility
   - streamed and temp-file-backed transfers preserve required content headers, user metadata, and object tags
   - verification fails if required metadata, tags, or destination encryption behavior are not preserved
   - streamed and temp-file-backed transfers persist a portable source-fingerprint record
@@ -181,13 +203,21 @@
   - isolated source and destination clients with distinct credentials
   - LocalStack safety guard rejects the run unless both source and destination resolve to LocalStack-only endpoints
   - startup rejects the same LocalStack bucket even when source and destination use different credentials
-  - startup rejects source buckets with versioning enabled or suspended
+  - source buckets with versioning enabled or suspended complete startup successfully and activate version-aware archive behavior
+  - version-aware listing paginates across multiple pages, including exact page-boundary handling and delete-marker filtering
+  - source buckets with versioning disabled use `ListObjectsV2` and ordinary delete cleanup semantics
   - startup bucket/auth validation happens before any archive phase work
   - deterministic timestamp seeding in isolated buckets
   - whitelist mode copies and cleans up only keys under allowed source prefixes
   - blacklist mode never copies or cleans up keys under blocked source prefixes
   - `check` succeeds against LocalStack with the dual-client config
+  - `check` succeeds against versioning-enabled buckets and versioning-suspended buckets, proving the versioning probe path accepts both states
   - cross-endpoint transfers use streaming fallback when native copy is impossible
+  - versioned-source cleanup deletes the exact archived source version instead of creating a delete marker
+  - versioned-source reruns recover the exact source version id from destination metadata and reuse it for exact-version cleanup
+  - version-history buckets surface current `null` versions through ordinary key-only delete semantics
+  - version-aware pagination preserves page boundaries across multiple pages and filters delete markers from every page
+  - delete markers are never treated as archiveable source objects
   - streamed fallback preserves required content headers, user metadata, and object tags
   - retention `60` with cleanup disabled
   - retention `60` with cleanup enabled
@@ -219,7 +249,7 @@
 - Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
 - Env validation runs before logging initialization is complete, so env-parse and env-validation failures are reported via regular `stderr` rather than the structured logging pipeline.
 - The intended production deployment model is exactly one Docker container instance running this system. It is not intended to run via host-level cron, in both a container and an external scheduler at the same time, or across multiple containers or hosts.
-- The current cleanup model assumes non-versioned source buckets only. Versioned or previously versioned source buckets are out of scope for this workflow until explicit version-aware listing and delete semantics are designed.
+- Versioned source buckets are supported. When version-history semantics are active, the workflow is expected to bind each archiveable source object to an exact source version id when one exists. Version-history buckets may surface the live current object with version id `null` for objects that predate versioning; that object is still archiveable, but its cleanup path uses ordinary key-only delete semantics because there is no exact version id to target. When a non-null version id exists, the same exact version id must round-trip through destination metadata so reruns can recover it and perform exact-version cleanup against the same archived source version.
 - Source and destination may use different S3 identities, providers, and independent configuration. Native copy is preferred when available, but the app may stream payloads through itself when required for interoperability.
 - Source and destination credentials may differ, but same-bucket detection is based on the underlying storage location rather than which principal accessed it.
 - Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
