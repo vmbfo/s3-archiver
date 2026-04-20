@@ -118,7 +118,7 @@ docker run --rm \
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
 - Integration tests run against LocalStack S3 and verify bucket access plus object round-trips.
 - E2E tests build and run the compose stack and assert the rootless container can complete `s3-archiver check` and persist logs.
-- GitHub Actions runs the same verification flow on pushes and pull requests.
+- CI is currently intended to run locally through the documented scripts and Make targets.
 
 ## Conventional Commits And Releases
 
