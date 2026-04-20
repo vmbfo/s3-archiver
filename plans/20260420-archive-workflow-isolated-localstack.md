@@ -36,10 +36,17 @@
 - The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
 - Object payloads may use local temp-file staging as a controlled fallback when direct streaming is unavailable or impractical for very large objects. Any temp files created for transfer must be cleaned up on success and on failure.
 - The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
+- The portable source-fingerprint record must be explicit and stable. It consists of:
+  - source bucket
+  - source key
+  - source size
+  - source last-modified timestamp
+  - source version id when available
+  - source ETag or provider checksum fields when available
 - Cleanup verification must use a portable archiver-controlled source-fingerprint record, not only provider-native metadata:
   - size must match
   - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata or an archiver-owned sidecar verification record
-  - the source fingerprint should include the source bucket, source key, source size, source last-modified timestamp, source version id when available, and source ETag or provider checksum fields when available
+  - the source fingerprint must include the fields listed above
   - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
   - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
   - multipart or provider-specific ETags must not be treated as sufficient proof of equality on their own unless the implementation can prove they are comparable for that exact transfer
