@@ -43,6 +43,7 @@
   - multipart or provider-specific ETags must not be treated as sufficient proof of equality unless the implementation can prove they are comparable for that exact transfer
   - if no acceptable verification signal is available for an object, verification fails hard and cleanup remains blocked
 - Every failure must be surfaced in stdout/stderr JSON and structured logs with phase, key, source bucket, destination bucket, and mismatch details.
+- Add an opt-in debug logging mode that records per-object transfer decisions, including which copy strategy was selected for that object, such as simple native copy, multipart native copy, in-process streaming, or temp-file-backed transfer.
 - Reject identical source and destination buckets.
 - Listing must use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`.
 - If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
@@ -69,6 +70,7 @@
 - Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
 - Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
 - Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
+- Add structured debug logging around transfer strategy selection so operators can see which copy path each object used when debug logging is enabled.
 - Select transfer strategy automatically per object size and provider capability:
   - use simple native copy for smaller objects when the backing systems support it
   - use multipart native copy when supported for larger objects
@@ -112,6 +114,7 @@
   - reruns fail cleanly when destination contains a conflicting non-matching object
   - verification mismatch behavior and error payload shape
   - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
+  - debug logging emits the selected transfer operation for each object when enabled
   - LocalStack endpoint safety guard behavior
 - Integration tests against LocalStack:
   - per-test bucket pair creation and teardown
