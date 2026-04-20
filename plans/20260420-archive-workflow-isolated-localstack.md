@@ -19,6 +19,14 @@
   - destination: `S3_DESTINATION_PROVIDER`, `S3_DESTINATION_ACCESS_KEY_ID`, `S3_DESTINATION_SECRET_ACCESS_KEY`, `S3_DESTINATION_REGION`, `S3_DESTINATION_BUCKET`
   - optional per-side overrides: `S3_SOURCE_ENDPOINT_URL`, `S3_DESTINATION_ENDPOINT_URL`, `S3_SOURCE_ADDRESSING_STYLE`, `S3_DESTINATION_ADDRESSING_STYLE`
   - OCI-only per-side fields when relevant: `S3_SOURCE_NAMESPACE`, `S3_SOURCE_IAM_USER_OCID`, `S3_DESTINATION_NAMESPACE`, `S3_DESTINATION_IAM_USER_OCID`
+- Source and destination identity must be evaluated as underlying storage locations, not bucket labels or credentials alone. The normalized storage-location identity tuple is:
+  - provider
+  - normalized endpoint URL or the provider default endpoint when no override is set
+  - region when that provider uses region in bucket addressing or bucket placement
+  - storage namespace or tenant identifier only when it changes the underlying bucket namespace
+  - bucket name
+- Access credentials must never make the source and destination appear distinct if they resolve to the same underlying bucket. Access key ids, secret keys, IAM user ids, and other principal-specific settings are not part of storage-location identity unless the provider documents them as part of the bucket namespace itself.
+- Startup must reject the configuration when the normalized source and destination storage-location tuples are identical. Bucket-name equality by itself must never be treated as sufficient proof that the source and destination are the same target, but different credentials alone must also never be treated as sufficient proof that they are different targets.
 - Source-bucket path filtering is configured only on the source side:
   - `S3_SOURCE_PATH_WHITELIST_ENABLED=false`
   - `S3_SOURCE_PATH_BLACKLIST_ENABLED=false`
@@ -29,10 +37,20 @@
 - In whitelist mode, the archive job operates only on source objects whose keys match one of the configured whitelist path prefixes. In blacklist mode, the archive job operates only on source objects whose keys do not match any configured blacklist path prefixes.
 - Path filters apply only to source-bucket eligibility. Filtered-out source objects must never be copied and must never be cleaned up.
 - Optional env vars may fall back to explicit defaults, but required auth and bucket settings must hard-fail startup when missing. In particular, non-LocalStack providers must not start without valid S3 auth inputs for that side.
-- Invalid env values must crash startup immediately, print a clear error to the console, and emit the same failure into the structured container logs so configuration mistakes surface immediately in Docker.
+- Invalid env values must crash startup immediately and print a clear error to regular `stderr`. Early env-validation failures happen before the logging stack is initialized, so they must not depend on structured logging infrastructure being available.
 - Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
+- Startup must also query source-bucket versioning state. The archive workflow supports only non-versioned source buckets; if source bucket versioning is `Enabled`, `Suspended`, or otherwise exposes version-history semantics, startup must fail before any archive phase begins.
 - `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
 - Source and destination keys are preserved `1:1`.
+- Archive copies must preserve object properties, not only payload bytes. At minimum the destination object must preserve:
+  - content type
+  - content encoding
+  - content language
+  - content disposition
+  - cache-control and expires metadata
+  - user-defined object metadata
+  - object tags
+- Destination encryption must satisfy the configured destination-side encryption contract and must never be silently downgraded by a streamed or temp-file-backed transfer path. If a chosen transfer mode or provider combination cannot preserve the required metadata, tags, or encryption behavior for an object, that object copy must fail hard and cleanup remains blocked.
 - The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
 - Object payloads may use local temp-file staging as a controlled fallback when direct streaming is unavailable or impractical for very large objects. Any temp files created for transfer must be cleaned up on success and on failure.
 - The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
@@ -45,15 +63,21 @@
   - source ETag or provider checksum fields when available
 - Cleanup verification must use a portable archiver-controlled source-fingerprint record, not only provider-native metadata:
   - size must match
-  - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata or an archiver-owned sidecar verification record
+  - preserved object properties and user-defined metadata must match the archived source object for the fields listed above
+  - object tags must match
+  - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata
   - the source fingerprint must include the fields listed above
   - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
+  - destination encryption state must satisfy the configured destination-side encryption contract for that object and must not represent a silent downgrade from the transfer contract
   - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
   - multipart or provider-specific ETags must not be treated as sufficient proof of equality on their own unless the implementation can prove they are comparable for that exact transfer
   - if the run cannot establish or recover a portable source-fingerprint record for an object, verification fails hard and cleanup remains blocked
-- Every failure must be surfaced in stdout/stderr JSON and structured logs with phase, key, source bucket, destination bucket, and mismatch details.
+- Every failure must be surfaced in stdout/stderr JSON and structured logs, but the payload contract depends on failure class:
+  - env-validation failures that occur before logging initialization must be written to regular `stderr`; they must include the startup phase name, the relevant config field that failed, and diagnostic details, while object key and mismatch fields may be `null`
+  - later startup and pre-flight failures that occur after logging initialization must include the startup phase name, the relevant config field or connectivity check that failed, source bucket and destination bucket when those values were parsed successfully, and diagnostic details; object key and mismatch fields may be `null`
+  - per-object archive failures must include phase, key, source bucket, destination bucket, and mismatch or verification details when applicable
 - Add an opt-in debug logging mode that records per-object transfer decisions, including which copy strategy was selected for that object, such as simple native copy, multipart native copy, in-process streaming, or temp-file-backed transfer.
-- Reject identical source and destination buckets.
+- Reject only identical source and destination storage locations as defined by the normalized storage-location identity tuple.
 - Listing must use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`.
 - If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
 - If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
@@ -66,8 +90,10 @@
 - Each test fixture must create its own bucket pair, seed only those buckets, and in teardown empty and delete both buckets even on failure.
 - Remove reliance on one static integration bucket for test execution. LocalStack readiness should verify the S3 API is up, not depend on a shared test bucket.
 - Test code must fail fast unless the target is LocalStack:
-  - `S3_PROVIDER` must be `localstack`
-  - endpoint host must match a strict LocalStack allowlist such as `127.0.0.1`, `localhost`, `localstack`, or `localhost.localstack.cloud`
+  - `S3_SOURCE_PROVIDER` must be `localstack`
+  - `S3_DESTINATION_PROVIDER` must be `localstack`
+  - both resolved endpoint hosts must match a strict LocalStack allowlist such as `127.0.0.1`, `localhost`, `localstack`, or `localhost.localstack.cloud`
+  - integration and e2e fixtures must fail if either side falls back to a non-LocalStack default endpoint or any host outside that allowlist
   - test scripts must not load the normal production `.env`
 - Keep LocalStack test env generation inside fixtures/scripts so integration and e2e runs cannot accidentally point at OCI or any live S3 endpoint.
 - The LocalStack-only timestamp seeding path must be mounted only into the LocalStack test service and must never be part of the app runtime image.
@@ -75,16 +101,18 @@
 ## Implementation Changes
 - Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, transfer orchestration, verification, cleanup, and structured archive reporting.
 - Add a dedicated env decoding layer that validates every variable up front and models parse results in a pureenv/result-style boundary so defaults and hard failures are handled explicitly and consistently.
-- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, temp-file-backed transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, and any checksum-capable metadata lookups needed for verification.
+- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, temp-file-backed transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, bucket-versioning inspection for source-bucket safety, and any checksum-capable metadata lookups needed for verification.
 - Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
 - Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
 - Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
 - Add structured debug logging around transfer strategy selection so operators can see which copy path each object used when debug logging is enabled.
+- Add a normalized storage-location identity helper used by startup validation, `check`, and archive safety checks so identical-location rejection is based on the same physical-bucket tuple everywhere, independent of which credentials access it.
 - Add a portable verification layer for streamed and temp-file-backed cross-provider copies:
   - capture a lightweight source fingerprint before transfer
   - persist that fingerprint in destination metadata when supported
-  - when metadata portability is insufficient, persist the same verification data in an archiver-owned sidecar manifest or verification object under a reserved destination prefix
   - make cleanup depend on recovering that source-fingerprint record successfully
+- Add metadata-copy support for every transfer strategy so simple copy, multipart copy, multipart streaming, and temp-file-backed transfer all preserve the required object properties, user metadata, tags, and destination encryption behavior.
+- Reject versioned source buckets during startup and `check` until the workflow gains explicit version-aware listing and deletion semantics.
 - Select transfer strategy automatically per object size and provider capability:
   - use simple native copy for smaller objects when the backing systems support it
   - use multipart native copy when supported for larger objects
@@ -100,6 +128,8 @@
   - if destination exists but does not verify, fail the run rather than overwriting silently or progressing to cleanup
 - Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
 - Keep `check` compatible with the dual-client configuration so it validates both source and destination connectivity without performing archive mutations.
+- Split structured archive error reporting into startup/pre-flight errors and per-object archive errors, with explicitly nullable object-specific fields for startup failures.
+- Keep env-validation error emission independent of the logging stack so config parse failures can report to regular `stderr` before logging setup completes.
 - Add a test-only LocalStack extension or equivalent in-container hook that rewrites object `last_modified` for deterministic retention tests.
 - Add a seed helper that uploads predictable keys into the per-test source bucket and then sets exact timestamps through the LocalStack-only hook.
 - Update the Compose test profile so LocalStack gets the test-only extension, while the app container remains the production-style runtime image.
@@ -113,6 +143,11 @@
   - defaults are applied only where explicitly allowed
   - invalid type, enum, and range values fail fast at startup
   - missing required auth settings fail fast at startup
+  - env-validation failures emit to regular `stderr` before logging initialization
+  - identical bucket names across different storage-location tuples remain allowed
+  - the same physical bucket reached with different credentials still fails fast at startup
+  - fully identical normalized storage-location tuples fail fast at startup
+  - source buckets with versioning `Enabled` or `Suspended` fail fast at startup
   - whitelist and blacklist env vars decode from JSON arrays of strings
   - enabling both whitelist and blacklist mode fails fast at startup
   - whitelist mode includes only matching source path prefixes
@@ -131,7 +166,10 @@
   - any stage failure exits the invocation cleanly and prevents later stages from running
   - reruns treat already-verified destination objects as already copied
   - reruns fail cleanly when destination contains a conflicting non-matching object
-  - verification mismatch behavior and error payload shape
+  - startup/pre-flight error payload shape allows nullable object-specific fields
+  - per-object verification mismatch behavior and archive-error payload shape
+  - streamed and temp-file-backed transfers preserve required content headers, user metadata, and object tags
+  - verification fails if required metadata, tags, or destination encryption behavior are not preserved
   - streamed and temp-file-backed transfers persist a portable source-fingerprint record
   - cleanup succeeds for cross-provider copies only when the portable source-fingerprint record is present and matches
   - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
@@ -141,12 +179,16 @@
 - Integration tests against LocalStack:
   - per-test bucket pair creation and teardown
   - isolated source and destination clients with distinct credentials
+  - LocalStack safety guard rejects the run unless both source and destination resolve to LocalStack-only endpoints
+  - startup rejects the same LocalStack bucket even when source and destination use different credentials
+  - startup rejects source buckets with versioning enabled or suspended
   - startup bucket/auth validation happens before any archive phase work
   - deterministic timestamp seeding in isolated buckets
   - whitelist mode copies and cleans up only keys under allowed source prefixes
   - blacklist mode never copies or cleans up keys under blocked source prefixes
   - `check` succeeds against LocalStack with the dual-client config
   - cross-endpoint transfers use streaming fallback when native copy is impossible
+  - streamed fallback preserves required content headers, user metadata, and object tags
   - retention `60` with cleanup disabled
   - retention `60` with cleanup enabled
   - alternate retention such as `30`
@@ -175,10 +217,15 @@
 - Time comparisons use UTC-aware datetimes only.
 - Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
 - Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
+- Env validation runs before logging initialization is complete, so env-parse and env-validation failures are reported via regular `stderr` rather than the structured logging pipeline.
+- The intended production deployment model is exactly one Docker container instance running this system. It is not intended to run via host-level cron, in both a container and an external scheduler at the same time, or across multiple containers or hosts.
+- The current cleanup model assumes non-versioned source buckets only. Versioned or previously versioned source buckets are out of scope for this workflow until explicit version-aware listing and delete semantics are designed.
 - Source and destination may use different S3 identities, providers, and independent configuration. Native copy is preferred when available, but the app may stream payloads through itself when required for interoperability.
+- Source and destination credentials may differ, but same-bucket detection is based on the underlying storage location rather than which principal accessed it.
 - Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
 - Large-object support is automatic. The operator should not need to choose manually between simple copy and multipart transfer for normal operation.
-- The app still forbids local disk staging of object payloads during transfer, even when it must stream bytes through the process.
+- Native copy or direct streaming remains preferred, but the app may use controlled local temp-file staging as a fallback for interoperability or large-object safety. Any staged payload must live only in the dedicated runtime temp directory and must be cleaned up on success, failure, and stale-startup recovery.
+- Payload fidelity is not sufficient on its own; archive copies are expected to preserve the required object properties, user metadata, tags, and destination encryption behavior or fail the object copy.
 - Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object using the stored source fingerprint.
 - Mixed-provider cleanup support depends on a portable source-fingerprint record that the archiver itself can produce and recover across runs.
 - Parallelism is allowed only inside a phase, never across phases.
