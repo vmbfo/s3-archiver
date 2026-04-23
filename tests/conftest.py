@@ -6,7 +6,7 @@ import os
 import socket
 import subprocess
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError, URLError
@@ -63,6 +63,8 @@ def base_env(tmp_path: Path) -> dict[str, str]:
 def compose_env(tmp_path: Path) -> dict[str, str]:
     bucket_pair = new_localstack_bucket_pair()
     env = os.environ.copy()
+    localstack_host_endpoint = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+    localstack_host_port = urlparse(localstack_host_endpoint).port
     env["APP_ENV_FILE"] = str(
         write_localstack_env_file(
             tmp_path,
@@ -71,7 +73,9 @@ def compose_env(tmp_path: Path) -> dict[str, str]:
             log_dir="/var/log/s3-archiver",
         )
     )
-    env["LOCALSTACK_S3_URL"] = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+    env["LOCALSTACK_S3_URL"] = localstack_host_endpoint
+    if localstack_host_port is not None:
+        env["LOCALSTACK_HOST_PORT"] = str(localstack_host_port)
     env["TEST_S3_SOURCE_BUCKET"] = bucket_pair.source
     env["TEST_S3_DESTINATION_BUCKET"] = bucket_pair.destination
     return env
@@ -85,11 +89,10 @@ def localstack_service(compose_env: dict[str, str]) -> Generator[None, None, Non
             compose_env,
             "up",
             "-d",
-            "--wait",
             "localstack",
             retries=_COMPOSE_UP_RETRIES,
         )
-        _wait_for_localstack_readiness()
+        _wait_for_localstack_readiness(env=compose_env)
         yield
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
@@ -150,8 +153,13 @@ def _run_compose(
     raise AssertionError("compose retry loop exhausted without returning")
 
 
-def _wait_for_localstack_readiness(timeout_seconds: float = 90.0) -> None:
-    endpoint = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+def _wait_for_localstack_readiness(
+    timeout_seconds: float = 90.0,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    endpoint_source = os.environ if env is None else env
+    endpoint = endpoint_source.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
     parsed = urlparse(endpoint)
     host = parsed.hostname
     port = parsed.port

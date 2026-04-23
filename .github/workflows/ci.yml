@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Add uv to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sync workspace
+        run: uv sync --all-packages --all-groups --frozen
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run basedpyright
+
+      - name: Verify exported types
+        run: uv run python scripts/check_type_coverage.py
+
+      - name: Full suite with coverage gate
+        run: ./scripts/run_full_suite.sh
+
+      - name: Build packages
+        run: |
+          uv build --package s3-archiver-core
+          uv build --package s3-archiver-cli

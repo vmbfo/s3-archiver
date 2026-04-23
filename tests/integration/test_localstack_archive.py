@@ -30,6 +30,10 @@ from tests.integration.localstack_harness import (
     LocalstackBucketPair,
     localstack_test_env,
 )
+from tests.integration.test_localstack_timestamp_seed import (
+    SEED_NOW,
+    run_timestamp_seed_helper,
+)
 
 RUNNER = CliRunner()
 FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2100, 1, 1, tzinfo=UTC)
@@ -135,6 +139,39 @@ def test_archive_command_blacklist_filter_controls_copy_and_cleanup_scope(
     assert _listed_keys(source_client, localstack_bucket_pair.source) == {
         "blocked/b.txt",
         "blocked/nested/c.txt",
+    }
+
+
+@pytest.mark.integration()
+def test_archive_command_retention_uses_seeded_last_modified_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    compose_env: dict[str, str],
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    prefix = "retention-boundary"
+    _ = run_timestamp_seed_helper(
+        compose_env,
+        prefix=prefix,
+        days=(59, 60, 61),
+        seed_now=SEED_NOW,
+    )
+    env = _archive_env(tmp_path, localstack_bucket_pair)
+    env["ARCHIVER_RETENTION_DAYS"] = "60"
+    source_client = _client(env, "source")
+    destination_client = _client(env, "destination")
+
+    payload = _run_archive(monkeypatch, env)
+
+    assert payload["status"] == "ok"
+    assert payload["manifest"]["object_count"] == 1
+    assert _listed_keys(destination_client, localstack_bucket_pair.destination) == {
+        f"{prefix}/age-61-days.txt"
+    }
+    assert _listed_keys(source_client, localstack_bucket_pair.source) == {
+        f"{prefix}/age-59-days.txt",
+        f"{prefix}/age-60-days.txt",
+        f"{prefix}/age-61-days.txt",
     }
 
 

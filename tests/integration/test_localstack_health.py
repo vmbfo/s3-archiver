@@ -186,41 +186,6 @@ def test_health_check_succeeds_for_source_bucket_versioning_states(
     assert (report.source_bucket, report.source_versioning) == (settings.bucket, expected_state)
 
 
-@pytest.mark.integration()
-def test_timestamp_seed_helper_records_supported_last_modified_behavior(
-    compose_env: dict[str, str],
-    localstack_bucket_pair: LocalstackBucketPair,
-) -> None:
-    _ = localstack_bucket_pair
-    seed_command = (
-        "TEST_TIMESTAMP_SEED_PREFIX=seed-helper "
-        + "TEST_TIMESTAMP_SEED_DAYS='0 61' "
-        + "/opt/s3-archiver-test-support/seed-object-timestamps.sh"
-    )
-    result = _run_compose(
-        compose_env,
-        "exec",
-        "-T",
-        "localstack",
-        "sh",
-        "-lc",
-        seed_command,
-    )
-    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
-
-    rows = [line.split("\t") for line in result.stdout.splitlines()]
-    assert [row[1] for row in rows] == ["0", "61"]
-    assert all(row[0] == f"seed-helper/age-{row[1]}-days.txt" for row in rows)
-    assert all(row[2] not in {"", "None"} for row in rows)
-    for age_days in ("0", "61"):
-        key = f"seed-helper/age-{age_days}-days.txt"
-        head = client.head_object(Bucket=settings.bucket, Key=key)
-        metadata = cast(dict[str, object], head.get("Metadata", {}))
-        assert metadata.get("s3-archiver-test-age-days") == age_days
-        assert head.get("LastModified") is not None
-
-
 def _listed_keys(response: Mapping[str, object]) -> set[str]:
     contents = response.get("Contents")
     if not isinstance(contents, list):
