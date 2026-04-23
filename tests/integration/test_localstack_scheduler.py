@@ -226,5 +226,7 @@ def _start_active_lock(lock_path: Path) -> subprocess.Popen[bytes]:
 def _last_json(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
+
+
 def _last_error_payload(output: str) -> SchedulerErrorPayload:
     return cast(SchedulerErrorPayload, cast(object, _last_json(output)))
