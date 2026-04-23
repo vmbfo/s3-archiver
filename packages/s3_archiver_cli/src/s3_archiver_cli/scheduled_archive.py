@@ -118,12 +118,18 @@ def _as_text(value: str | bytes | None) -> str:
 
 
 def _stdout_echo(message: str) -> None:
+    """Write scheduled child stdout to the parent stdout stream."""
+
     typer.echo(message, nl=False)
 
 
 def _stderr_echo(message: str) -> None:
+    """Write scheduled child stderr to the parent stderr stream."""
+
     typer.echo(message, err=True, nl=False)
 
 
 def _utc_now() -> datetime:
+    """Return the current UTC timestamp."""
+
     return datetime.now(tz=UTC)

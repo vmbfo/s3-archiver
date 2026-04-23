@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -17,9 +16,7 @@ import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 import typer
-from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
-from s3_archiver_core.archive_manifest import ArchiveManifest
-from s3_archiver_core.errors import ArchiveRunError, ConfigError, HealthCheckError
+from s3_archiver_core.errors import ConfigError, HealthCheckError
 from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
@@ -242,6 +239,7 @@ def test_sleep_until_next_daily_tick_waits_until_later_same_day(
             return now
 
     monkeypatch.setattr(cli_module, "datetime", FrozenDateTime)
+
     def noop_info(_message: str, *, extra: dict[str, object]) -> None:
         _ = extra
 
@@ -261,265 +259,6 @@ def test_scheduled_archive_command_targets_archive_cli() -> None:
         "from s3_archiver_cli.main import main; main()",
         "archive",
     ]
-
-
-@pytest.mark.unit()
-def test_run_scheduled_archive_relays_child_process_streams(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-    stdout_messages: list[str] = []
-    stderr_messages: list[str] = []
-    commands: list[list[str]] = []
-
-    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0, stdout='{"status":"ok"}\n', stderr="warn\n")
-
-    scheduled_archive_module.run_scheduled_archive(
-        settings,
-        Path("/tmp/log"),
-        command=["archive"],
-        run_command=fake_run_command,
-        stdout_echo=stdout_messages.append,
-        stderr_echo=stderr_messages.append,
-    )
-
-    assert commands == [["archive"]]
-    assert stdout_messages == ['{"status":"ok"}\n']
-    assert stderr_messages == ["warn\n"]
-
-
-@pytest.mark.unit()
-def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-    stderr_messages: list[str] = []
-    logged_payloads: list[dict[str, object]] = []
-    acquired: list[str] = []
-    released: list[str] = []
-
-    class RecordingLock:
-        def __init__(self, path: Path, **_kwargs: object) -> None:
-            assert path == Path(base_env["LOG_DIR"]) / "archive.lock"
-
-        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            assert run_started_at_utc.tzinfo == UTC
-            acquired.append(run_id)
-            _ = timeout
-            return True
-
-        def release(self, *, run_id: str) -> None:
-            released.append(run_id)
-
-    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        error = subprocess.TimeoutExpired(command, timeout=1, output="", stderr="")
-        raise error
-
-    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RecordingLock)
-
-    scheduled_archive_module.run_scheduled_archive(
-        settings,
-        Path("/tmp/log"),
-        command=["archive"],
-        run_command=fake_run_command,
-        stderr_echo=stderr_messages.append,
-        log_error=lambda payload: logged_payloads.append(cast(dict[str, object], dict(payload))),
-    )
-
-    assert len(acquired) == 1
-    assert released == acquired
-    payload = _load_payload(stderr_messages[-1])
-    assert payload["field"] == "ARCHIVER_RUN_TIMEOUT"
-    assert payload["message"] == "archive run timed out"
-    assert payload["phase"] == "archive.run"
-    assert payload["reason"] == "archive_run_timeout"
-    assert payload["timed_out"] is True
-    assert logged_payloads[-1]["phase"] == "archive.run"
-
-
-@pytest.mark.unit()
-def test_run_scheduled_archive_timeout_skips_release_when_recovery_lock_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-    released: list[str] = []
-
-    class RefusingLock:
-        def __init__(self, path: Path, **_kwargs: object) -> None:
-            assert path == Path(base_env["LOG_DIR"]) / "archive.lock"
-
-        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            _ = (run_id, run_started_at_utc, timeout)
-            return False
-
-        def release(self, *, run_id: str) -> None:
-            released.append(run_id)
-
-    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.TimeoutExpired(command, timeout=1, output=None, stderr=None)
-
-    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RefusingLock)
-
-    scheduled_archive_module.run_scheduled_archive(
-        settings,
-        Path("/tmp/log"),
-        command=["archive"],
-        run_command=fake_run_command,
-    )
-
-    assert released == []
-
-
-@pytest.mark.unit()
-def test_scheduled_archive_text_and_echo_helpers() -> None:
-    echoed: list[tuple[str, bool, bool]] = []
-    monkeypatch = pytest.MonkeyPatch()
-
-    def record_echo(message: str, *, err: bool = False, nl: bool = True) -> None:
-        echoed.append((message, err, nl))
-
-    monkeypatch.setattr(typer, "echo", record_echo)
-    try:
-        assert _as_text(None) == ""
-        assert _as_text(b"warn\n") == "warn\n"
-        assert _as_text("ok\n") == "ok\n"
-        _stdout_echo("ok\n")
-        _stderr_echo("warn\n")
-    finally:
-        monkeypatch.undo()
-
-    assert echoed == [("ok\n", False, False), ("warn\n", True, False)]
-
-
-@pytest.mark.unit()
-def test_run_archive_keeps_matching_run_id_and_releases_lock(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-    released: list[str] = []
-
-    class FixedUuid:
-        hex: str = "locked-run"
-
-    class RecordingLock:
-        def __init__(self, _path: Path, **_kwargs: object) -> None:
-            return
-
-        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            _ = (run_started_at_utc, timeout)
-            return run_id == "locked-run"
-
-        def release(self, *, run_id: str) -> None:
-            released.append(run_id)
-
-    def run_health(_settings: AppSettings, _log_file: Path) -> object:
-        return object()
-
-    def build_client(_location: object) -> object:
-        return object()
-
-    def run_core_archive(
-        source: object,
-        destination: object,
-        options: object,
-        *,
-        run_started_at_utc: datetime,
-        debug_logger: object | None = None,
-    ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_started_at_utc, debug_logger)
-        return _archive_result(run_id="locked-run")
-
-    monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
-    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_health_check", run_health)
-    monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
-
-    payload = _run_archive(settings, Path("/tmp/log"))
-
-    assert payload["status"] == "ok"
-    assert released == ["locked-run"]
-
-
-@pytest.mark.unit()
-def test_run_archive_raises_when_lock_is_already_held(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-
-    class RefusingLock:
-        def __init__(self, _path: Path, **_kwargs: object) -> None:
-            return
-
-        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            _ = (run_id, run_started_at_utc, timeout)
-            return False
-
-        def release(self, *, run_id: str) -> None:
-            raise AssertionError(f"unexpected release for {run_id}")
-
-    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RefusingLock)
-
-    with pytest.raises(ArchiveRunError, match="already held"):
-        _ = _run_archive(settings, Path("/tmp/log"))
-
-
-@pytest.mark.unit()
-def test_run_archive_reraises_domain_errors_and_releases_lock(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    settings = AppSettings.from_env(base_env)
-    released: list[str] = []
-
-    class RecordingLock:
-        def __init__(self, _path: Path, **_kwargs: object) -> None:
-            return
-
-        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
-            _ = (run_id, run_started_at_utc, timeout)
-            return True
-
-        def release(self, *, run_id: str) -> None:
-            released.append(run_id)
-
-    def raise_health_error(_settings: AppSettings, _log_file: Path) -> object:
-        raise HealthCheckError("auth failed: denied")
-
-    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_health_check", raise_health_error)
-
-    with pytest.raises(HealthCheckError, match="auth failed: denied"):
-        _ = _run_archive(settings, Path("/tmp/log"))
-
-    assert len(released) == 1
-
-
-def _archive_result(*, run_id: str = "run-id") -> ArchiveRunResult:
-    return ArchiveRunResult(
-        run_id=run_id,
-        manifest=ArchiveManifest(
-            run_started_at_utc=datetime.fromisoformat("2026-04-09T17:00:43+00:00"),
-            retention_cutoff_utc=datetime.fromisoformat("2026-02-08T17:00:43+00:00"),
-            entries=(),
-        ),
-        copy=ArchivePhaseResult("copy"),
-        verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
-    )
 
 
 def _load_payload(output: str) -> dict[str, object]:

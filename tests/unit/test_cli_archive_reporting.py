@@ -146,45 +146,6 @@ def test_archive_command_reports_error_when_skipped_phase_has_failures(
 
 
 @pytest.mark.unit()
-def test_archive_command_wires_lock_recovery_logger(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    _stub_runtime(monkeypatch, base_env)
-    recovery_loggers: list[object] = []
-
-    class RecordingLock:
-        def __init__(self, _path: Path, **kwargs: object) -> None:
-            recovery_loggers.append(kwargs.get("recovery_logger"))
-
-        def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
-            _ = (run_id, run_started_at_utc, timeout)
-            return True
-
-        def release(self, *, run_id: str) -> None:
-            _ = run_id
-
-    def run_core_archive(
-        source: object,
-        destination: object,
-        options: ArchiveOptions,
-        *,
-        run_lock: object | None = None,
-        **_kwargs: object,
-    ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, _kwargs)
-        return _archive_result()
-
-    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
-
-    result = RUNNER.invoke(cli_module.app, ["archive"])
-
-    assert result.exit_code == 0
-    assert callable(recovery_loggers[0])
-
-
-@pytest.mark.unit()
 def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

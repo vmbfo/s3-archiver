@@ -138,6 +138,7 @@ class FakeBucket:
             if source_version_id is not None
             else source._payloads[source_key]
         )
+        assert payload is not None
         self._destination_payloads[destination_key] = payload
 
     def delete_source(self, key: str, version_id: str | None) -> None:
