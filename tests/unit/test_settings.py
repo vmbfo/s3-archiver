@@ -11,6 +11,8 @@ from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3Provider
 from s3_archiver_core.temp_files import default_temp_dir
 
+from tests.unit.settings_fakes import dual_env as _dual_env
+
 
 @pytest.mark.unit()
 def test_from_env_builds_dual_s3_settings(tmp_path: Path) -> None:
@@ -279,24 +281,3 @@ def test_from_env_rejects_two_enabled_path_filter_modes(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="S3_SOURCE_PATH_FILTER_MODE"):
         _ = AppSettings.from_env(env)
-
-
-def _dual_env(tmp_path: Path) -> dict[str, str]:
-    return {
-        "S3_SOURCE_PROVIDER": "oci",
-        "S3_SOURCE_ACCESS_KEY_ID": "source-access",
-        "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
-        "S3_SOURCE_REGION": "eu-frankfurt-1",
-        "S3_SOURCE_NAMESPACE": "tenant",
-        "S3_SOURCE_BUCKET": "source-bucket",
-        "S3_SOURCE_IAM_USER_OCID": "ocid1.user.oc1..source",
-        "S3_SOURCE_ADDRESSING_STYLE": "path",
-        "S3_DESTINATION_PROVIDER": "localstack",
-        "S3_DESTINATION_ACCESS_KEY_ID": "destination-access",
-        "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-secret",
-        "S3_DESTINATION_REGION": "us-east-1",
-        "S3_DESTINATION_BUCKET": "destination-bucket",
-        "S3_DESTINATION_ADDRESSING_STYLE": "path",
-        "LOG_LEVEL": "INFO",
-        "LOG_DIR": str(tmp_path / "logs"),
-    }

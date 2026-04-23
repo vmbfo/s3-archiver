@@ -10,14 +10,15 @@ from typing import NotRequired, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
+from s3_archiver_cli.env import load_runtime_env, parse_env_file
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.health import HealthReport
 from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
-PARSE_ENV_FILE = cast(Callable[[Path], dict[str, str]], cli_module.__dict__["_parse_env_file"])
-LOAD_RUNTIME_ENV = cast(Callable[[], dict[str, str]], cli_module.__dict__["_load_runtime_env"])
+PARSE_ENV_FILE = cast(Callable[[Path], dict[str, str]], parse_env_file)
+LOAD_RUNTIME_ENV = cast(Callable[[], dict[str, str]], load_runtime_env)
 
 
 class HealthPayload(TypedDict):

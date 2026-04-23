@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -27,6 +26,8 @@ from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
+
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 
@@ -35,7 +36,6 @@ app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True
 CONFIG_ERROR_EXIT_CODE = 2
 LOGGING_ERROR_EXIT_CODE = 3
 HEALTH_CHECK_ERROR_EXIT_CODE = 4
-DEFAULT_ENV_FILE = ".env"
 
 
 @app.callback()
@@ -278,37 +278,3 @@ def _preflight_field_from_health_error(message: str) -> str | None:
     if "destination bucket" in lowered:
         return "destination_bucket_access"
     return "s3_connectivity"
-
-
-def _load_runtime_env() -> dict[str, str]:
-    env_file = _selected_env_file()
-    file_env = _parse_env_file(env_file) if env_file.is_file() else {}
-    runtime_env = dict(file_env)
-    runtime_env.update(os.environ)
-    return runtime_env
-
-
-def _selected_env_file() -> Path:
-    env_file = os.environ.get("APP_ENV_FILE") or os.environ.get("ENV_FILE") or DEFAULT_ENV_FILE
-    return Path(env_file)
-
-
-def _parse_env_file(path: Path) -> dict[str, str]:
-    loaded: dict[str, str] = {}
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = raw_line.strip()
-        if stripped == "" or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped.removeprefix("export ").strip()
-        key, separator, raw_value = stripped.partition("=")
-        if separator == "" or key.strip() == "":
-            raise ConfigError(f"Invalid env assignment in {path}:{line_number}")
-        loaded[key.strip()] = _strip_optional_quotes(raw_value.strip())
-    return loaded
-
-
-def _strip_optional_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
