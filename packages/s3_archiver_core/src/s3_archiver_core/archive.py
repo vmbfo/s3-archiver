@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -14,11 +13,14 @@ from s3_archiver_core.archive_manifest import (
 )
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
+    VerificationResult,
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_content,
     verify_source_unchanged,
 )
+from s3_archiver_core.archive_workers import run_archive_workers
 
 # fmt: off
 __all__ = ("ArchiveBucket", "ArchivePhaseResult", "ArchiveRunLock", "ArchiveRunResult", "DebugLogger", "run_archive")  # noqa: E501
@@ -120,7 +122,9 @@ def run_archive(
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
-            else _verify_phase(destination, options, manifest.entries, timeout, time_remaining)
+            else _verify_phase(
+                source, destination, options, manifest.entries, timeout, time_remaining
+            )
         )
         if copy_result.ok and _timed_out(now, deadline):
             return ArchiveRunResult(
@@ -153,7 +157,7 @@ def _copy_phase(
 
     return ArchivePhaseResult(
         "copy",
-        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
+        run_archive_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
@@ -166,7 +170,7 @@ def _copy_one(
 ) -> str | None:
     existing = destination.head_object(entry.key)
     if existing is not None:
-        verified = verify_destination(entry, existing)
+        verified = _verify_archive_copy(source, destination, entry)
         return None if verified.ok else f"{entry.key}: {verified.detail}"
     strategy = select_transfer_strategy(entry.size, options.transfer_capabilities)
     if debug_logger is not None:
@@ -185,6 +189,7 @@ def _copy_one(
 
 
 def _verify_phase(
+    source: ArchiveBucket,
     destination: ArchiveBucket,
     options: ArchiveOptions,
     entries: tuple[ManifestEntry, ...],
@@ -192,19 +197,33 @@ def _verify_phase(
     time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
     def worker(entry: ManifestEntry) -> str | None:
-        return _verify_one(destination, entry)
+        return _verify_one(source, destination, entry)
 
     return ArchivePhaseResult(
         "verify",
-        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
+        run_archive_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
-def _verify_one(destination: ArchiveBucket, entry: ManifestEntry) -> str | None:
-    verified = verify_destination(entry, destination.head_object(entry.key))
+def _verify_one(
+    source: ArchiveBucket, destination: ArchiveBucket, entry: ManifestEntry
+) -> str | None:
+    verified = _verify_archive_copy(source, destination, entry)
     if verified.ok:
         return None
     return f"{entry.key}: {verified.detail}"
+
+
+def _verify_archive_copy(
+    source: ArchiveBucket, destination: ArchiveBucket, entry: ManifestEntry
+) -> VerificationResult:
+    verified = verify_destination(entry, destination.head_object(entry.key))
+    if not verified.ok:
+        return verified
+    return verify_destination_content(
+        source.content_sha256(entry.key, entry.version_id),
+        destination.content_sha256(entry.key),
+    )
 
 
 def _cleanup_phase(
@@ -222,7 +241,7 @@ def _cleanup_phase(
 
     return ArchivePhaseResult(
         "cleanup",
-        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
+        run_archive_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
@@ -233,52 +252,6 @@ def _cleanup_one(source: ArchiveBucket, entry: ManifestEntry) -> str | None:
             return f"{entry.key}: {verified.detail}"
     source.delete_source(entry.key, entry.version_id)
     return None
-
-
-def _run_workers(
-    entries: tuple[ManifestEntry, ...],
-    max_workers: int,
-    worker: Callable[[ManifestEntry], str | None],
-    timed_out: Callable[[], bool],
-    time_remaining: Callable[[], float],
-) -> tuple[str, ...]:
-    failures: list[str] = []
-    worker_count = max(1, max_workers)
-    executor = ThreadPoolExecutor(max_workers=worker_count)
-    try:
-        for batch_start in range(0, len(entries), worker_count):
-            if timed_out():
-                failures.append("archive run timed out")
-                break
-            batch = entries[batch_start : batch_start + worker_count]
-            futures = [executor.submit(_call_worker, worker, entry) for entry in batch]
-            done, pending = wait(futures, timeout=time_remaining())
-            for future in done:
-                failure = _future_result(future)
-                if failure is not None:
-                    failures.append(failure)
-            if pending:
-                for future in pending:
-                    _ = future.cancel()
-                failures.append("archive run timed out")
-                break
-        return tuple(failures)
-    finally:
-        executor.shutdown(cancel_futures=True)
-
-
-def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry) -> str | None:
-    try:
-        return worker(entry)
-    except Exception as exc:
-        return f"{entry.key}: {exc}"
-
-
-def _future_result(future: Future[str | None]) -> str | None:
-    try:
-        return future.result()
-    except Exception as exc:
-        return f"worker failure: {exc}"
 
 
 def _skipped(phase: str) -> ArchivePhaseResult:

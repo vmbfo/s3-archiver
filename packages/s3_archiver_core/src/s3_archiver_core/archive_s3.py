@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 from botocore.exceptions import ClientError
 
 from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
+    S3_CHUNK_BYTES,
     S3Client,
     S3ListedObject,
     S3ObjectProperties,
@@ -61,6 +63,24 @@ class S3ArchiveBucket:
             raise
         tags = self.get_tags(key, version_id)
         return _properties_from_head(head, tags)
+
+    def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        """Return a SHA-256 digest for object content, or ``None`` when absent."""
+
+        try:
+            response = self.client.get_object(**_versioned_kwargs(self.bucket, key, version_id))
+        except ClientError as exc:
+            if _is_not_found_error(exc):
+                return None
+            raise
+        body = cast(ReadableBody, response["Body"])
+        digest = hashlib.sha256()
+        try:
+            while chunk := body.read(S3_CHUNK_BYTES):
+                digest.update(chunk)
+        finally:
+            body.close()
+        return digest.hexdigest()
 
     def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
         properties = self.head_object(key, version_id)
@@ -160,6 +180,18 @@ class S3ArchiveBucket:
         etag = _optional_string(item.get("ETag"))
         properties = self._source_properties(key, version_id)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
+
+
+class ReadableBody(Protocol):
+    """Streaming body returned by S3 object reads."""
+
+    def read(self, amt: int | None = None) -> bytes:
+        """Read body bytes."""
+        ...
+
+    def close(self) -> None:
+        """Close the body."""
+        ...
 
 
 def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:

@@ -18,7 +18,7 @@ from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
 @pytest.mark.unit()
-def test_run_archive_keeps_lock_scope_until_timed_out_copy_worker_quiesces() -> None:
+def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> None:
     class SlowCopyBucket(FakeBucket):
         @override
         def copy_from(
@@ -63,5 +63,4 @@ def test_run_archive_keeps_lock_scope_until_timed_out_copy_worker_quiesces() -> 
     )
 
     assert result.copy.failures == ("archive run timed out",)
-    assert time.monotonic() - began >= 0.18
-    assert destination.copied == ["slow.txt"]
+    assert time.monotonic() - began < 0.18

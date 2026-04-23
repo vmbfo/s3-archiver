@@ -123,6 +123,20 @@ def verify_destination(
     return VerificationResult(True, "ok")
 
 
+def verify_destination_content(
+    source_sha256: str | None, destination_sha256: str | None
+) -> VerificationResult:
+    """Verify the destination payload matches the source payload."""
+
+    if source_sha256 is None:
+        return VerificationResult(False, "source missing during verification")
+    if destination_sha256 is None:
+        return VerificationResult(False, "destination missing")
+    if source_sha256 != destination_sha256:
+        return VerificationResult(False, "content mismatch")
+    return VerificationResult(True, "ok")
+
+
 def verify_source_unchanged(
     entry: ManifestEntry, current: S3ObjectProperties | None
 ) -> VerificationResult:

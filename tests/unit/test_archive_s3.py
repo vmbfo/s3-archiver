@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
+from typing import override
 
 import pytest
 from botocore.exceptions import ClientError
@@ -13,6 +15,20 @@ from tests.unit.archive_s3_fakes import (
     copy_object,
     properties,
 )
+
+
+class MissingObjectClient(FakeArchiveClient):
+    @override
+    def get_object(self, **kwargs: object) -> dict[str, object]:
+        _ = kwargs
+        raise client_error("NoSuchKey")
+
+
+class DeniedObjectClient(FakeArchiveClient):
+    @override
+    def get_object(self, **kwargs: object) -> dict[str, object]:
+        _ = kwargs
+        raise client_error("AccessDenied", 403)
 
 
 @pytest.mark.unit()
@@ -108,6 +124,17 @@ def test_s3_archive_bucket_streaming_upload_uses_bounded_parts() -> None:
     assert destination_client.upload_part_sizes == [S3_CHUNK_BYTES, 1]
     assert destination_client.abort_calls == []
     assert destination_client.tagging_calls[0]["Bucket"] == "destination"
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_content_sha256_hashes_body_and_handles_missing() -> None:
+    client = FakeArchiveClient()
+    client.source_body = b"abc"
+
+    assert S3ArchiveBucket(client, "source").content_sha256("key") == sha256(b"abc").hexdigest()
+    assert S3ArchiveBucket(MissingObjectClient(), "source").content_sha256("missing") is None
+    with pytest.raises(ClientError):
+        _ = S3ArchiveBucket(DeniedObjectClient(), "source").content_sha256("denied")
 
 
 @pytest.mark.unit()

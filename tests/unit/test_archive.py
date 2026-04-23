@@ -19,6 +19,7 @@ from s3_archiver_core.archive_transfer import (
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_content,
     verify_source_unchanged,
 )
 from s3_archiver_core.s3 import S3TransferCapabilities, VersioningState
@@ -68,6 +69,9 @@ def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
 
     assert verify_destination(entry, destination).ok is True
     assert verify_destination(entry, replace(destination, size=11)).detail == "size mismatch"
+    assert verify_destination_content("digest", "digest").ok is True
+    assert verify_destination_content(None, "digest").detail == "source missing during verification"
+    assert verify_destination_content("digest", None).detail == "destination missing"
     assert (
         select_transfer_strategy(10, S3TransferCapabilities(), simple_copy_limit_bytes=10)
         == "simple_native_copy"
@@ -177,6 +181,25 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
     assert verify_failed.verify.skipped is True
+    assert source.deleted == []
+
+    listed = _listed("old.txt", 90)
+    entry = ManifestEntry("source", "old.txt", 10, listed.last_modified, '"etag"', "v1", listed)
+    metadata = archive_metadata(entry)
+    wrong_payload_destination = FakeBucket(
+        "destination",
+        destination={"old.txt": replace(entry.object.properties, metadata=metadata)},
+        payloads={"old.txt": b"different"},
+    )
+    content_failed = run_archive(
+        source,
+        wrong_payload_destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert content_failed.copy.failures == ("old.txt: content mismatch",)
     assert source.deleted == []
 
 

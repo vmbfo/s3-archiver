@@ -30,6 +30,10 @@ class ArchiveBucket(Protocol):
         """Return object properties."""
         ...
 
+    def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        """Return a SHA-256 digest for object content."""
+        ...
+
     def copy_from(
         self,
         source: ArchiveBucket,

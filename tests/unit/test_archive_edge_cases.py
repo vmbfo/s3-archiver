@@ -189,7 +189,7 @@ def test_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) ->
         _ = (worker, entry)
         raise RuntimeError("executor failed")
 
-    monkeypatch.setattr("s3_archiver_core.archive._call_worker", broken_call_worker)
+    monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
 
     result = run_archive(
         FakeBucket("source", (_listed("old.txt", 90),)),

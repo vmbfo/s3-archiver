@@ -24,6 +24,10 @@ class EmptyBucket:
         _ = (key, version_id)
         return None
 
+    def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        _ = (key, version_id)
+        return None
+
     def copy_from(self, *_args: object, **_kwargs: object) -> None:
         raise AssertionError("empty manifest must not copy")
 

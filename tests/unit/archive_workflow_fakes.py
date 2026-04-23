@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -55,6 +56,8 @@ class FakeBucket:
     fail_copy: bool
     _objects: dict[str, S3ListedObject]
     _destination: dict[str, S3ObjectProperties]
+    _payloads: dict[str, bytes]
+    _destination_payloads: dict[str, bytes]
     _versioning_state: VersioningState
 
     def __init__(
@@ -62,6 +65,7 @@ class FakeBucket:
         bucket: str,
         objects: Iterable[S3ListedObject] = (),
         destination: Mapping[str, S3ObjectProperties] | None = None,
+        payloads: Mapping[str, bytes] | None = None,
         versioning_state: VersioningState = "Enabled",
     ) -> None:
         self.bucket = bucket
@@ -70,6 +74,12 @@ class FakeBucket:
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
         self._destination = dict(destination or {})
+        self._payloads = {
+            key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._objects
+        }
+        self._destination_payloads = {
+            key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._destination
+        }
         self._versioning_state = versioning_state
 
     def versioning_state(self) -> VersioningState:
@@ -82,6 +92,11 @@ class FakeBucket:
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
         _ = version_id
         return self._destination.get(key)
+
+    def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        _ = version_id
+        payload = self._payloads.get(key) or self._destination_payloads.get(key)
+        return None if payload is None else hashlib.sha256(payload).hexdigest()
 
     def copy_from(
         self,
@@ -101,6 +116,7 @@ class FakeBucket:
             raise RuntimeError("copy failed")
         self.copied.append(source_key)
         self._destination[destination_key] = replace(properties, metadata=destination_metadata)
+        self._destination_payloads[destination_key] = source._payloads[source_key]
 
     def delete_source(self, key: str, version_id: str | None) -> None:
         self.deleted.append((key, version_id))
