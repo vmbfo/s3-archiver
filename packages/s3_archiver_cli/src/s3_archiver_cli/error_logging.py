@@ -53,6 +53,8 @@ def archive_result_payload(
     settings: AppSettings,
     log_file: Path,
 ) -> dict[str, JsonValue]:
+    """Build the CLI payload for a completed archive invocation."""
+
     return {
         "status": status,
         "run_id": result.run_id,
@@ -78,6 +80,8 @@ def archive_failure_payload(
     settings: AppSettings,
     log_file: Path,
 ) -> dict[str, JsonValue]:
+    """Build the CLI error payload for a failed archive invocation."""
+
     phase, detail = _first_archive_failure(result)
     timed_out = detail == "archive run timed out"
     payload = archive_result_payload("error", result, settings, log_file)
@@ -99,6 +103,8 @@ def archive_failure_payload(
 def error_payload(
     error: S3ArchiverError, settings: AppSettings | None = None
 ) -> dict[str, JsonValue]:
+    """Build a structured CLI error payload for startup or runtime failures."""
+
     phase = (
         "startup.env_validation"
         if isinstance(error, ConfigError)
