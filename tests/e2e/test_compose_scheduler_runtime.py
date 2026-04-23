@@ -22,7 +22,6 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
         import json
 
         from s3_archiver_cli import main as cli
-        from s3_archiver_core.errors import ArchiveRunError
 
         events = []
         state = {"sleep_calls": 0, "run_attempts": 0}
@@ -34,16 +33,23 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
                 print(json.dumps({"events": events}, sort_keys=True))
                 raise SystemExit(0)
 
-        def fake_run_archive(settings, log_file):
-            _ = (settings, log_file)
+        def fake_run_scheduled_archive(settings, log_file, **kwargs):
+            _ = (settings, log_file, kwargs)
             state["run_attempts"] += 1
             events.append(f"run-{state['run_attempts']}")
             if state["run_attempts"] == 1:
-                raise ArchiveRunError("archive run lock is already held")
-            return {"status": "ok", "run_id": "scheduled-run"}
+                cli.typer.echo(
+                    json.dumps(
+                        {"message": "archive run lock is already held", "phase": "archive.run"},
+                        sort_keys=True,
+                    ),
+                    err=True,
+                )
+                return
+            cli.typer.echo(json.dumps({"status": "ok", "run_id": "scheduled-run"}, sort_keys=True))
 
         cli._sleep_until_next_daily_tick = fake_sleep
-        cli._run_archive = fake_run_archive
+        cli.run_scheduled_archive = fake_run_scheduled_archive
         cli.schedule(daily_at_utc="04:05")
         PY
         """

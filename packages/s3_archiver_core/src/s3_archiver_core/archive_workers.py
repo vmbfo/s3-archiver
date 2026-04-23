@@ -26,24 +26,19 @@ def run_archive_workers(
             break
         batch = entries[batch_start : batch_start + worker_count]
         results: Queue[str | None] = Queue()
-        threads: list[Thread] = []
         for entry in batch:
-            thread = Thread(target=_put_worker_result, args=(results, worker, entry))
+            thread = Thread(target=_put_worker_result, args=(results, worker, entry), daemon=True)
             thread.start()
-            threads.append(thread)
         pending = len(batch)
-        try:
-            while pending:
-                try:
-                    failure = results.get(timeout=time_remaining())
-                except Empty:
-                    failures.append("archive run timed out")
-                    return tuple(failures)
-                pending -= 1
-                if failure is not None:
-                    failures.append(failure)
-        finally:
-            _join_threads(threads)
+        while pending:
+            try:
+                failure = results.get(timeout=time_remaining())
+            except Empty:
+                failures.append("archive run timed out")
+                return tuple(failures)
+            pending -= 1
+            if failure is not None:
+                failures.append(failure)
     return tuple(failures)
 
 
@@ -64,8 +59,3 @@ def _put_worker_result(
     except Exception as exc:
         failure = f"worker failure: {exc}"
     results.put(failure)
-
-
-def _join_threads(threads: list[Thread]) -> None:
-    for thread in threads:
-        thread.join()

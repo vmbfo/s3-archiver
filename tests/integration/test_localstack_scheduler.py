@@ -6,19 +6,16 @@ import json
 import os
 import socket
 import subprocess
-import time
-from collections.abc import Mapping
+import sys
+import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event, Thread
 from typing import cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
-import s3_archiver_core.archive_s3 as archive_s3_module
-from s3_archiver_core.archive_transfer import TransferStrategy
+import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 from s3_archiver_core.logging_config import configure_logging
-from s3_archiver_core.s3 import S3Client, S3ObjectProperties
 from s3_archiver_core.settings import AppSettings
 
 from tests.integration.localstack_harness import (
@@ -130,101 +127,69 @@ def test_schedule_retries_after_timeout_on_next_tick(
     )
     lock_path = settings.log_dir / "archive.lock"
     sleep_calls = 0
-    copy_attempts = 0
-    slow_copy_started = Event()
-    allow_slow_copy_exit = Event()
-    slow_copy_finished = Event()
-    timeout_observations: dict[str, object] = {}
-    observer_errors: list[str] = []
-    original_copy = archive_s3_module.copy_s3_object
+    command_calls = 0
+    archive_command = scheduled_archive_module.scheduled_archive_command
+    timeout_probe = textwrap.dedent(
+        """
+        import json
+        import os
+        import time
+        from datetime import UTC, datetime, timedelta
+        from pathlib import Path
 
-    def slow_first_copy(
-        destination_client: S3Client,
-        source_client: S3Client,
-        source_bucket: str,
-        source_key: str,
-        source_version_id: str | None,
-        properties: S3ObjectProperties,
-        destination_bucket: str,
-        destination_key: str,
-        metadata: Mapping[str, str],
-        strategy: TransferStrategy,
-        temp_dir: Path,
-    ) -> None:
-        nonlocal copy_attempts
-        copy_attempts += 1
-        if copy_attempts == 1:
-            slow_copy_started.set()
-            try:
-                assert allow_slow_copy_exit.wait(timeout=5)
-                raise RuntimeError("delayed LocalStack copy released after timeout")
-            finally:
-                slow_copy_finished.set()
-        original_copy(
-            destination_client,
-            source_client,
-            source_bucket,
-            source_key,
-            source_version_id,
-            properties,
-            destination_bucket,
-            destination_key,
-            metadata,
-            strategy,
-            temp_dir,
-        )
+        from s3_archiver_core.archive_lock import FileArchiveRunLock
 
-    def observe_timeout_window() -> None:
-        try:
-            if not slow_copy_started.wait(timeout=5):
-                observer_errors.append("slow copy never started")
-                return
-            time.sleep(1.2)
-            timeout_observations["copy_attempts"] = copy_attempts
-            timeout_observations["destination_keys"] = listed_keys(
-                destination_client, localstack_bucket_pair.destination
-            )
-            timeout_observations["lock_exists"] = lock_path.exists()
-        finally:
-            allow_slow_copy_exit.set()
+        lock = FileArchiveRunLock(Path(os.environ["LOG_DIR"]) / "archive.lock")
+        if not lock.acquire(
+            run_id="timed-out-run",
+            run_started_at_utc=datetime.now(tz=UTC),
+            timeout=timedelta(seconds=1),
+        ):
+            raise SystemExit("failed to acquire archive lock")
+        print(json.dumps({"lock_acquired": True}), flush=True)
+        time.sleep(10)
+        """
+    ).strip()
+
+    def fake_scheduled_archive_command() -> list[str]:
+        nonlocal command_calls
+        command_calls += 1
+        if command_calls == 1:
+            return [sys.executable, "-c", timeout_probe]
+        return archive_command()
 
     def fake_sleep_until_tick(hour: int, minute: int) -> None:
         nonlocal sleep_calls
         _ = (hour, minute)
         sleep_calls += 1
-        if sleep_calls <= 2:
+        if sleep_calls == 1:
+            return
+        if sleep_calls == 2:
+            assert not lock_path.exists()
             return
         raise RuntimeError("stop scheduler integration test")
 
     monkeypatch.setattr(os, "environ", env)
     monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
-    monkeypatch.setattr(archive_s3_module, "copy_s3_object", slow_first_copy)
-    observer = Thread(target=observe_timeout_window)
-    observer.start()
+    monkeypatch.setattr(
+        scheduled_archive_module, "scheduled_archive_command", fake_scheduled_archive_command
+    )
 
     with pytest.raises(RuntimeError, match="stop scheduler integration test"):
         cli_module.schedule(daily_at_utc="04:05")
-    observer.join(timeout=5)
 
-    assert not observer.is_alive()
     captured = capsys.readouterr()
     error_payload = _last_json(captured.err)
     success_payload = _last_json(captured.out)
-    assert observer_errors == []
-    assert timeout_observations == {
-        "copy_attempts": 1,
-        "destination_keys": set(),
-        "lock_exists": True,
-    }
-    assert error_payload["phase"] == "archive.copy"
+    assert '"lock_acquired": true' in captured.out
+    assert error_payload["phase"] == "archive.run"
     assert error_payload["field"] == "ARCHIVER_RUN_TIMEOUT"
     assert error_payload["message"] == "archive run timed out"
     assert error_payload["reason"] == "archive_run_timeout"
     assert error_payload["timed_out"] is True
     assert success_payload["status"] == "ok"
     assert success_payload["manifest"]["object_count"] == 1
-    assert copy_attempts == 2
-    assert slow_copy_finished.is_set()
+    assert command_calls == 2
     assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {key}
     assert not lock_path.exists()

@@ -43,6 +43,7 @@ from s3_archiver_cli.error_logging import (
 from s3_archiver_cli.error_logging import (
     log_error_payload as _log_error_payload,
 )
+from s3_archiver_cli.scheduled_archive import run_scheduled_archive
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -122,7 +123,7 @@ def schedule(
     while True:
         _sleep_until_next_daily_tick(hour, minute)
         try:
-            _ = _emit_archive_payload(_run_archive(settings, log_file))
+            run_scheduled_archive(settings, log_file, recovery_logger=_log_lock_recovery)
         except S3ArchiverError as exc:
             payload = _error_payload(exc, settings)
             _log_error_payload(payload, exc)

@@ -1,0 +1,129 @@
+"""Helpers for running archive commands from the daily scheduler."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
+
+import typer
+from s3_archiver_core.archive_lock import FileArchiveRunLock, LockRecoveryLogger
+from s3_archiver_core.settings import AppSettings
+
+from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
+
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+type RunCommand = Callable[..., subprocess.CompletedProcess[str]]
+type Echo = Callable[[str], None]
+
+
+def scheduled_archive_command() -> list[str]:
+    """Return the archive command used by the scheduler."""
+
+    return [sys.executable, "-c", "from s3_archiver_cli.main import main; main()", "archive"]
+
+
+def run_scheduled_archive(
+    settings: AppSettings,
+    log_file: Path,
+    *,
+    recovery_logger: LockRecoveryLogger | None = None,
+    command: Sequence[str] | None = None,
+    run_command: RunCommand = subprocess.run,
+    stdout_echo: Echo | None = None,
+    stderr_echo: Echo | None = None,
+    log_error: Callable[[Mapping[str, JsonValue]], None] = _log_error_payload,
+    now: Callable[[], datetime] | None = None,
+) -> None:
+    """Run one scheduled archive child process and relay its output."""
+
+    emit_stdout = _stdout_echo if stdout_echo is None else stdout_echo
+    emit_stderr = _stderr_echo if stderr_echo is None else stderr_echo
+    clock = _utc_now if now is None else now
+    process_command = list(command or scheduled_archive_command())
+    try:
+        result = run_command(
+            process_command,
+            env=dict(os.environ),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=settings.run_timeout.total_seconds(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _relay_output(_as_text(exc.stdout), emit_stdout)
+        _relay_output(_as_text(exc.stderr), emit_stderr)
+        _recover_stale_archive_lock(settings, recovery_logger, clock)
+        payload = _timeout_payload(settings, log_file)
+        log_error(payload)
+        emit_stderr(json.dumps(payload, sort_keys=True))
+        return
+    _relay_output(result.stdout, emit_stdout)
+    _relay_output(result.stderr, emit_stderr)
+
+
+def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
+    return {
+        "status": "error",
+        "phase": "archive.run",
+        "field": "ARCHIVER_RUN_TIMEOUT",
+        "message": "archive run timed out",
+        "details": "archive run timed out",
+        "source_bucket": settings.source.bucket,
+        "destination_bucket": settings.destination.bucket,
+        "key": None,
+        "mismatch": None,
+        "reason": "archive_run_timeout",
+        "timed_out": True,
+        "log_file": str(log_file),
+    }
+
+
+def _recover_stale_archive_lock(
+    settings: AppSettings,
+    recovery_logger: LockRecoveryLogger | None,
+    now: Callable[[], datetime],
+) -> None:
+    run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=recovery_logger)
+    recovery_run_id = uuid4().hex
+    if run_lock.acquire(
+        run_id=recovery_run_id,
+        run_started_at_utc=now(),
+        timeout=settings.run_timeout,
+    ):
+        run_lock.release(run_id=recovery_run_id)
+
+
+def _archive_lock_path(settings: AppSettings) -> Path:
+    return settings.log_dir / "archive.lock"
+
+
+def _relay_output(output: str, echo: Echo) -> None:
+    if output:
+        echo(output)
+
+
+def _as_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
+
+
+def _stdout_echo(message: str) -> None:
+    typer.echo(message, nl=False)
+
+
+def _stderr_echo(message: str) -> None:
+    typer.echo(message, err=True, nl=False)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(tz=UTC)
