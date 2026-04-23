@@ -123,9 +123,7 @@ def run_archive(
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
-            else _verify_phase(
-                source, destination, options, phase_entries, timeout, time_remaining
-            )
+            else _verify_phase(source, destination, options, phase_entries, timeout, time_remaining)
         )
         if copy_result.ok and _timed_out(now, deadline):
             return ArchiveRunResult(

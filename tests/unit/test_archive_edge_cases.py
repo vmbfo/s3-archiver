@@ -158,6 +158,7 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
                 strategy,
             )
             self.copied.append(source_key)
+
     source = FakeBucket("source", (_listed("old.txt", 90),))
     result = run_archive(
         source,
@@ -178,6 +179,7 @@ def test_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) ->
     ) -> str | None:
         _ = (worker, entry)
         raise RuntimeError("executor failed")
+
     monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
     result = run_archive(
         FakeBucket("source", (_listed("old.txt", 90),)),
@@ -282,6 +284,7 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
         @override
         def versioning_state(self) -> VersioningState:
             raise RuntimeError("list failed")
+
     lock = FakeRunLock()
     result = run_archive(
         BrokenListBucket("source"),

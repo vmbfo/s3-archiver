@@ -26,6 +26,8 @@ def log_error_payload(payload: Mapping[str, JsonValue], error: Exception | None 
 
     if payload.get("phase") == "startup.env_validation":
         return
+    if not logging.getLogger("s3_archiver").handlers:
+        return
     logger = logging.getLogger("s3_archiver.archive")
     log_method = logger.exception if error is not None else logger.error
     log_method(

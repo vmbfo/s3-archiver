@@ -78,9 +78,7 @@ class FakeBucket:
         self.deleted = []
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
-        self._versions = {
-            (item.key, item.version_id): item for item in chain(objects, versions)
-        }
+        self._versions = {(item.key, item.version_id): item for item in chain(objects, versions)}
         self._destination = dict(destination or {})
         self._payloads = {
             key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._objects
