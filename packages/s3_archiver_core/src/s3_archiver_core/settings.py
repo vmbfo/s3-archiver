@@ -1,25 +1,23 @@
-"""Configuration loading and validation."""
-
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 from s3_archiver_core.errors import ConfigError
 
 
 class S3Provider(StrEnum):
-    """Supported S3 backends."""
-
     OCI = "oci"
     LOCALSTACK = "localstack"
 
 
 class S3AddressingStyle(StrEnum):
-    """Supported S3 addressing styles."""
-
     PATH = "path"
     VIRTUAL = "virtual"
 
@@ -30,9 +28,16 @@ _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
 
 @dataclass(frozen=True, slots=True)
-class AppSettings:
-    """Runtime configuration loaded from environment variables."""
+class StorageLocationIdentity:
+    provider: S3Provider
+    endpoint_url: str
+    region: str | None
+    namespace: str | None
+    bucket: str
 
+
+@dataclass(frozen=True, slots=True)
+class S3LocationSettings:
     provider: S3Provider
     access_key_id: str
     secret_access_key: str
@@ -42,61 +47,242 @@ class AppSettings:
     iam_user_ocid: str | None
     endpoint_url: str | None
     addressing_style: S3AddressingStyle
-    log_level: str
-    log_dir: Path
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> AppSettings:
-        """Build validated settings from environment variables."""
-
-        provider_value = _require(env, "S3_PROVIDER").lower()
-        addressing_style_value = env.get("S3_ADDRESSING_STYLE", "path").lower()
-        log_level = env.get("LOG_LEVEL", "INFO").upper()
-        namespace = _optional(env, "S3_NAMESPACE")
-        iam_user_ocid = _optional(env, "OCI_IAM_USER_OCID")
-
-        if provider_value not in _VALID_PROVIDERS:
-            raise ConfigError(
-                f"S3_PROVIDER must be one of {_VALID_PROVIDERS}, got {provider_value!r}"
-            )
-        if addressing_style_value not in _VALID_ADDRESSING_STYLES:
-            message = "S3_ADDRESSING_STYLE must be one of " + (
-                f"{_VALID_ADDRESSING_STYLES}, got {addressing_style_value!r}"
-            )
-            raise ConfigError(message)
-        if log_level not in _VALID_LOG_LEVELS:
-            raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
-        provider = S3Provider(provider_value)
-        if provider is S3Provider.OCI and namespace is None:
-            raise ConfigError("S3_NAMESPACE is required when S3_PROVIDER=oci")
-        if provider is S3Provider.OCI and iam_user_ocid is None:
-            raise ConfigError("OCI_IAM_USER_OCID is required when S3_PROVIDER=oci")
-
-        return cls(
-            provider=provider,
-            access_key_id=_require(env, "S3_ACCESS_KEY_ID"),
-            secret_access_key=_require(env, "S3_SECRET_ACCESS_KEY"),
-            region=_require(env, "S3_REGION"),
-            bucket=_require(env, "S3_BUCKET"),
-            namespace=namespace,
-            iam_user_ocid=iam_user_ocid,
-            endpoint_url=_optional(env, "S3_ENDPOINT_URL"),
-            addressing_style=S3AddressingStyle(addressing_style_value),
-            log_level=log_level,
-            log_dir=Path(env.get("LOG_DIR", "/var/log/s3-archiver")),
-        )
 
     def resolved_endpoint_url(self) -> str:
-        """Return the effective endpoint URL for the configured provider."""
-
         if self.endpoint_url is not None:
             return self.endpoint_url
         if self.provider is S3Provider.LOCALSTACK:
             return "http://localstack:4566"
         namespace = self.namespace
         if namespace is None:
-            raise ConfigError("OCI endpoints require S3_NAMESPACE to be set")
+            raise ConfigError("S3_NAMESPACE is required for OCI endpoint resolution")
         return f"https://{namespace}.compat.objectstorage.{self.region}.oraclecloud.com"
+
+    def storage_identity(self) -> StorageLocationIdentity:
+        return StorageLocationIdentity(
+            provider=self.provider,
+            endpoint_url=_normalize_endpoint_url(self.resolved_endpoint_url()),
+            region=self.region,
+            namespace=self.namespace if self.provider is S3Provider.OCI else None,
+            bucket=self.bucket,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PathFilterSettings:
+    whitelist_enabled: bool
+    blacklist_enabled: bool
+    whitelist: tuple[str, ...]
+    blacklist: tuple[str, ...]
+
+    def includes(self, key: str) -> bool:
+        if self.whitelist_enabled:
+            return any(key.startswith(prefix) for prefix in self.whitelist)
+        if self.blacklist_enabled:
+            return not any(key.startswith(prefix) for prefix in self.blacklist)
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class AppSettings:
+    source: S3LocationSettings
+    destination: S3LocationSettings
+    path_filters: PathFilterSettings
+    retention_days: int
+    cleanup_enabled: bool
+    max_workers: int
+    run_timeout: timedelta
+    log_level: str
+    log_dir: Path
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> AppSettings:
+        log_level = env.get("LOG_LEVEL", "INFO").upper()
+        if log_level not in _VALID_LOG_LEVELS:
+            raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
+
+        legacy = _uses_legacy_s3_env(env)
+        source = _load_s3_location(env, "SOURCE", legacy=legacy)
+        destination = _load_s3_location(env, "DESTINATION", legacy=legacy)
+        path_filters = _load_path_filters(env)
+        retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=0)
+        max_workers = _parse_int(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
+        cleanup_enabled = _parse_bool(env, "ARCHIVER_ENABLE_CLEANUP", default=False)
+        run_timeout = _parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
+
+        if not legacy and source.storage_identity() == destination.storage_identity():
+            raise ConfigError(
+                "ARCHIVER_STORAGE_LOCATION must differ between source and destination"
+            )
+
+        return cls(
+            source=source,
+            destination=destination,
+            path_filters=path_filters,
+            retention_days=retention_days,
+            cleanup_enabled=cleanup_enabled,
+            max_workers=max_workers,
+            run_timeout=run_timeout,
+            log_level=log_level,
+            log_dir=Path(env.get("LOG_DIR", "/var/log/s3-archiver")),
+        )
+
+    @property
+    def provider(self) -> S3Provider:
+        return self.source.provider
+
+    @property
+    def access_key_id(self) -> str:
+        return self.source.access_key_id
+
+    @property
+    def secret_access_key(self) -> str:
+        return self.source.secret_access_key
+
+    @property
+    def region(self) -> str:
+        return self.source.region
+
+    @property
+    def bucket(self) -> str:
+        return self.source.bucket
+
+    @property
+    def addressing_style(self) -> S3AddressingStyle:
+        return self.source.addressing_style
+
+    def resolved_endpoint_url(self) -> str:
+        return self.source.resolved_endpoint_url()
+
+
+def _load_s3_location(env: Mapping[str, str], side: str, *, legacy: bool) -> S3LocationSettings:
+    prefix = f"S3_{side}_"
+    provider_key = _key("S3_PROVIDER", prefix, legacy)
+    provider_value = _require(env, provider_key).lower()
+    addressing_key = _key("S3_ADDRESSING_STYLE", prefix, legacy)
+    addressing_value = env.get(addressing_key, "path").lower()
+    namespace = _optional(env, _key("S3_NAMESPACE", prefix, legacy))
+    iam_user_ocid = _optional(env, _key("S3_IAM_USER_OCID", prefix, legacy))
+    if legacy:
+        iam_user_ocid = iam_user_ocid or _optional(env, "OCI_IAM_USER_OCID")
+
+    if provider_value not in _VALID_PROVIDERS:
+        raise ConfigError(
+            f"{provider_key} must be one of {_VALID_PROVIDERS}, got {provider_value!r}"
+        )
+    if addressing_value not in _VALID_ADDRESSING_STYLES:
+        raise ConfigError(
+            f"{addressing_key} must be one of {_VALID_ADDRESSING_STYLES}, got {addressing_value!r}"
+        )
+    provider = S3Provider(provider_value)
+    if provider is S3Provider.OCI and namespace is None:
+        namespace_key = _key("S3_NAMESPACE", prefix, legacy)
+        raise ConfigError(f"{namespace_key} is required when {provider_key}=oci")
+    if provider is S3Provider.OCI and iam_user_ocid is None:
+        raise ConfigError(
+            f"{_key('S3_IAM_USER_OCID', prefix, legacy)} is required when {provider_key}=oci"
+        )
+
+    return S3LocationSettings(
+        provider=provider,
+        access_key_id=_require(env, _key("S3_ACCESS_KEY_ID", prefix, legacy)),
+        secret_access_key=_require(env, _key("S3_SECRET_ACCESS_KEY", prefix, legacy)),
+        region=_require(env, _key("S3_REGION", prefix, legacy)),
+        bucket=_require(env, _key("S3_BUCKET", prefix, legacy)),
+        namespace=namespace,
+        iam_user_ocid=iam_user_ocid,
+        endpoint_url=_optional(env, _key("S3_ENDPOINT_URL", prefix, legacy)),
+        addressing_style=S3AddressingStyle(addressing_value),
+    )
+
+
+def _load_path_filters(env: Mapping[str, str]) -> PathFilterSettings:
+    whitelist_enabled = _parse_bool(env, "S3_SOURCE_PATH_WHITELIST_ENABLED", default=False)
+    blacklist_enabled = _parse_bool(env, "S3_SOURCE_PATH_BLACKLIST_ENABLED", default=False)
+    if whitelist_enabled and blacklist_enabled:
+        raise ConfigError("S3_SOURCE_PATH_FILTER_MODE allows only one enabled filter mode")
+    return PathFilterSettings(
+        whitelist_enabled=whitelist_enabled,
+        blacklist_enabled=blacklist_enabled,
+        whitelist=_parse_string_array(env, "S3_SOURCE_PATH_WHITELIST"),
+        blacklist=_parse_string_array(env, "S3_SOURCE_PATH_BLACKLIST"),
+    )
+
+
+def _key(legacy_key: str, prefix: str, legacy: bool) -> str:
+    if legacy:
+        return "OCI_IAM_USER_OCID" if legacy_key == "S3_IAM_USER_OCID" else legacy_key
+    return f"{prefix}{legacy_key.removeprefix('S3_')}"
+
+
+def _uses_legacy_s3_env(env: Mapping[str, str]) -> bool:
+    dual = ("S3_SOURCE_PROVIDER", "S3_DESTINATION_PROVIDER")
+    return "S3_PROVIDER" in env and not any(key in env for key in dual)
+
+
+def _parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
+    raw = env.get(key)
+    if raw is None or raw.strip() == "":
+        return default
+    value = raw.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ConfigError(f"{key} must be true or false")
+
+
+def _parse_int(env: Mapping[str, str], key: str, *, default: int, minimum: int) -> int:
+    raw = env.get(key)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be an integer") from exc
+    if value < minimum:
+        raise ConfigError(f"{key} must be greater than or equal to {minimum}")
+    return value
+
+
+def _parse_duration(raw: str, key: str) -> timedelta:
+    value = raw.strip().lower()
+    if value == "":
+        raise ConfigError(f"{key} is required")
+    unit = value[-1]
+    digits = value[:-1] if unit in {"s", "m", "h", "d"} else value
+    if not digits.isdecimal():
+        raise ConfigError(f"{key} must be a positive duration such as 7d")
+    amount = int(digits)
+    if amount <= 0:
+        raise ConfigError(f"{key} must be greater than zero")
+    return timedelta(seconds=amount * {"s": 1, "m": 60, "h": 3_600, "d": 86_400}.get(unit, 1))
+
+
+def _parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:
+    raw = env.get(key, "[]")
+    try:
+        parsed = cast(object, json.loads(raw))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{key} must be a JSON array of strings") from exc
+    if not isinstance(parsed, list):
+        raise ConfigError(f"{key} must be a JSON array of strings")
+    items: list[str] = []
+    for item in cast(list[object], parsed):
+        if not isinstance(item, str):
+            raise ConfigError(f"{key} must be a JSON array of strings")
+        items.append(item)
+    return tuple(items)
+
+
+def _normalize_endpoint_url(raw: str) -> str:
+    parsed = urlsplit(raw)
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    port = parsed.port
+    netloc = hostname if port in {None, 80, 443} else f"{hostname}:{port}"
+    path = parsed.path.rstrip("/")
+    return urlunsplit((scheme, netloc, path, "", ""))
 
 
 def _require(env: Mapping[str, str], key: str) -> str:

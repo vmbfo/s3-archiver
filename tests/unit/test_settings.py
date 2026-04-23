@@ -2,97 +2,189 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from pathlib import Path
+
 import pytest
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3Provider
 
 
 @pytest.mark.unit()
-def test_from_env_builds_oci_settings(base_env: dict[str, str]) -> None:
-    settings = AppSettings.from_env(base_env)
+def test_from_env_builds_dual_s3_settings(tmp_path: Path) -> None:
+    settings = AppSettings.from_env(_dual_env(tmp_path))
 
-    assert settings.provider is S3Provider.OCI
-    assert settings.resolved_endpoint_url() == (
+    assert settings.source.provider is S3Provider.OCI
+    assert settings.destination.provider is S3Provider.LOCALSTACK
+    assert settings.source.access_key_id == "source-access"
+    assert settings.destination.access_key_id == "destination-access"
+    assert settings.source.resolved_endpoint_url() == (
         "https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
     )
+    assert settings.destination.resolved_endpoint_url() == "http://localstack:4566"
 
 
 @pytest.mark.unit()
-def test_from_env_rejects_invalid_log_level(base_env: dict[str, str]) -> None:
-    base_env["LOG_LEVEL"] = "TRACE"
+def test_from_env_applies_archive_defaults(tmp_path: Path) -> None:
+    settings = AppSettings.from_env(_dual_env(tmp_path))
 
-    with pytest.raises(ConfigError):
-        _ = AppSettings.from_env(base_env)
-
-
-@pytest.mark.unit()
-def test_from_env_rejects_invalid_provider(base_env: dict[str, str]) -> None:
-    base_env["S3_PROVIDER"] = "broken"
-
-    with pytest.raises(ConfigError, match="S3_PROVIDER"):
-        _ = AppSettings.from_env(base_env)
+    assert settings.retention_days == 60
+    assert settings.cleanup_enabled is False
+    assert settings.max_workers == 16
+    assert settings.run_timeout == timedelta(days=7)
 
 
 @pytest.mark.unit()
-def test_localstack_defaults_without_namespace(base_env: dict[str, str]) -> None:
-    base_env["S3_PROVIDER"] = "localstack"
-    _ = base_env.pop("S3_NAMESPACE")
-    _ = base_env.pop("OCI_IAM_USER_OCID")
+def test_from_env_parses_archive_runtime_options(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["ARCHIVER_RETENTION_DAYS"] = "30"
+    env["ARCHIVER_ENABLE_CLEANUP"] = "true"
+    env["ARCHIVER_MAX_WORKERS"] = "4"
+    env["ARCHIVER_RUN_TIMEOUT"] = "12h"
 
-    settings = AppSettings.from_env(base_env)
+    settings = AppSettings.from_env(env)
 
-    assert settings.provider is S3Provider.LOCALSTACK
-    assert settings.resolved_endpoint_url() == "http://localstack:4566"
-
-
-@pytest.mark.unit()
-def test_from_env_rejects_invalid_addressing_style(base_env: dict[str, str]) -> None:
-    base_env["S3_ADDRESSING_STYLE"] = "broken"
-
-    with pytest.raises(ConfigError, match="S3_ADDRESSING_STYLE"):
-        _ = AppSettings.from_env(base_env)
+    assert settings.retention_days == 30
+    assert settings.cleanup_enabled is True
+    assert settings.max_workers == 4
+    assert settings.run_timeout == timedelta(hours=12)
 
 
 @pytest.mark.unit()
-def test_from_env_requires_namespace_for_oci(base_env: dict[str, str]) -> None:
-    _ = base_env.pop("S3_NAMESPACE")
+def test_from_env_rejects_invalid_runtime_values(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["ARCHIVER_MAX_WORKERS"] = "0"
 
-    with pytest.raises(ConfigError, match="S3_NAMESPACE"):
-        _ = AppSettings.from_env(base_env)
-
-
-@pytest.mark.unit()
-def test_from_env_requires_iam_user_for_oci(base_env: dict[str, str]) -> None:
-    _ = base_env.pop("OCI_IAM_USER_OCID")
-
-    with pytest.raises(ConfigError, match="OCI_IAM_USER_OCID"):
-        _ = AppSettings.from_env(base_env)
+    with pytest.raises(ConfigError, match="ARCHIVER_MAX_WORKERS"):
+        _ = AppSettings.from_env(env)
 
 
 @pytest.mark.unit()
-def test_from_env_requires_non_empty_required_values(base_env: dict[str, str]) -> None:
-    base_env["S3_ACCESS_KEY_ID"] = " "
+def test_from_env_rejects_invalid_run_timeout(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["ARCHIVER_RUN_TIMEOUT"] = "soon"
 
-    with pytest.raises(ConfigError, match="S3_ACCESS_KEY_ID is required"):
-        _ = AppSettings.from_env(base_env)
+    with pytest.raises(ConfigError, match="ARCHIVER_RUN_TIMEOUT"):
+        _ = AppSettings.from_env(env)
 
 
 @pytest.mark.unit()
-def test_resolved_endpoint_url_requires_namespace_when_missing(base_env: dict[str, str]) -> None:
-    settings = AppSettings.from_env(base_env)
-    settings_without_namespace = AppSettings(
-        provider=settings.provider,
-        access_key_id=settings.access_key_id,
-        secret_access_key=settings.secret_access_key,
-        region=settings.region,
-        bucket=settings.bucket,
-        namespace=None,
-        iam_user_ocid=settings.iam_user_ocid,
-        endpoint_url=None,
-        addressing_style=settings.addressing_style,
-        log_level=settings.log_level,
-        log_dir=settings.log_dir,
-    )
+def test_from_env_rejects_invalid_provider(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "broken"
 
-    with pytest.raises(ConfigError, match="OCI endpoints require S3_NAMESPACE"):
-        _ = settings_without_namespace.resolved_endpoint_url()
+    with pytest.raises(ConfigError, match="S3_SOURCE_PROVIDER"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_invalid_addressing_style(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_ADDRESSING_STYLE"] = "broken"
+
+    with pytest.raises(ConfigError, match="S3_DESTINATION_ADDRESSING_STYLE"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_requires_oci_namespace_and_user(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    _ = env.pop("S3_SOURCE_NAMESPACE")
+
+    with pytest.raises(ConfigError, match="S3_SOURCE_NAMESPACE"):
+        _ = AppSettings.from_env(env)
+
+    env = _dual_env(tmp_path)
+    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
+    with pytest.raises(ConfigError, match="S3_SOURCE_IAM_USER_OCID"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_same_normalized_storage_location_with_different_credentials(
+    tmp_path: Path,
+) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_PROVIDER"] = "oci"
+    env["S3_DESTINATION_REGION"] = env["S3_SOURCE_REGION"]
+    env["S3_DESTINATION_BUCKET"] = env["S3_SOURCE_BUCKET"]
+    env["S3_DESTINATION_NAMESPACE"] = env["S3_SOURCE_NAMESPACE"]
+    env["S3_DESTINATION_IAM_USER_OCID"] = "ocid1.user.oc1..other"
+
+    with pytest.raises(ConfigError, match="ARCHIVER_STORAGE_LOCATION"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_allows_same_bucket_name_at_different_storage_locations(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_BUCKET"] = env["S3_SOURCE_BUCKET"]
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.source.bucket == settings.destination.bucket
+    assert settings.source.storage_identity() != settings.destination.storage_identity()
+
+
+@pytest.mark.unit()
+def test_from_env_parses_source_path_whitelist(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PATH_WHITELIST_ENABLED"] = "true"
+    env["S3_SOURCE_PATH_WHITELIST"] = '["daily/", "manual/"]'
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.path_filters.includes("daily/report.json") is True
+    assert settings.path_filters.includes("other/report.json") is False
+
+
+@pytest.mark.unit()
+def test_from_env_parses_source_path_blacklist(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PATH_BLACKLIST_ENABLED"] = "true"
+    env["S3_SOURCE_PATH_BLACKLIST"] = '["tmp/"]'
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.path_filters.includes("tmp/report.json") is False
+    assert settings.path_filters.includes("daily/report.json") is True
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_invalid_path_filter_array(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PATH_WHITELIST"] = '["ok", 3]'
+
+    with pytest.raises(ConfigError, match="S3_SOURCE_PATH_WHITELIST"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_two_enabled_path_filter_modes(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PATH_WHITELIST_ENABLED"] = "true"
+    env["S3_SOURCE_PATH_BLACKLIST_ENABLED"] = "true"
+
+    with pytest.raises(ConfigError, match="S3_SOURCE_PATH_FILTER_MODE"):
+        _ = AppSettings.from_env(env)
+
+
+def _dual_env(tmp_path: Path) -> dict[str, str]:
+    return {
+        "S3_SOURCE_PROVIDER": "oci",
+        "S3_SOURCE_ACCESS_KEY_ID": "source-access",
+        "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
+        "S3_SOURCE_REGION": "eu-frankfurt-1",
+        "S3_SOURCE_NAMESPACE": "tenant",
+        "S3_SOURCE_BUCKET": "source-bucket",
+        "S3_SOURCE_IAM_USER_OCID": "ocid1.user.oc1..source",
+        "S3_SOURCE_ADDRESSING_STYLE": "path",
+        "S3_DESTINATION_PROVIDER": "localstack",
+        "S3_DESTINATION_ACCESS_KEY_ID": "destination-access",
+        "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-secret",
+        "S3_DESTINATION_REGION": "us-east-1",
+        "S3_DESTINATION_BUCKET": "destination-bucket",
+        "S3_DESTINATION_ADDRESSING_STYLE": "path",
+        "LOG_LEVEL": "INFO",
+        "LOG_DIR": str(tmp_path / "logs"),
+    }

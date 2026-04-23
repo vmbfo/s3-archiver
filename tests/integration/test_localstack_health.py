@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from integration.localstack_harness import (
+    LOCALSTACK_HOST_ENDPOINT,
+    LocalstackBucketPair,
+    assert_localstack_test_target,
+    localstack_test_env,
+)
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.s3 import build_s3_client
@@ -26,26 +32,21 @@ INTEGRATION_RUNTIME_LOG_DIR = (
 )
 
 
-def _integration_env() -> dict[str, str]:
-    endpoint = os.environ.get("LOCALSTACK_S3_URL", "http://127.0.0.1:4566")
-    return {
-        "S3_PROVIDER": "localstack",
-        "S3_ACCESS_KEY_ID": "test",
-        "S3_SECRET_ACCESS_KEY": "test",
-        "S3_REGION": "us-east-1",
-        "S3_BUCKET": "s3-archiver-integration",
-        "S3_ENDPOINT_URL": endpoint,
-        "S3_ADDRESSING_STYLE": "path",
-        "LOG_LEVEL": "INFO",
-        "LOG_DIR": str(INTEGRATION_RUNTIME_LOG_DIR),
-    }
+def _integration_env(bucket_pair: LocalstackBucketPair) -> dict[str, str]:
+    endpoint = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+    return localstack_test_env(
+        bucket_pair,
+        endpoint=endpoint,
+        log_dir=str(INTEGRATION_RUNTIME_LOG_DIR),
+    )
 
 
 @pytest.mark.integration()
-def test_health_check_succeeds_against_localstack(localstack_service: None) -> None:
-    _ = localstack_service
+def test_health_check_succeeds_against_isolated_localstack_buckets(
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
     _reset_integration_runtime_log_dir()
-    settings = AppSettings.from_env(_integration_env())
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
     log_file = configure_logging(settings)
     logger = logging.getLogger("s3_archiver.integration")
     try:
@@ -89,9 +90,9 @@ def test_health_check_succeeds_against_localstack(localstack_service: None) -> N
 @pytest.mark.integration()
 def test_compose_runtime_log_volume_captures_health_logs(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     _reset_app_logs_volume()
 
     result = _run_compose(compose_env, "run", "--rm", "app")
@@ -102,20 +103,24 @@ def test_compose_runtime_log_volume_captures_health_logs(
 
 
 @pytest.mark.integration()
-def test_localstack_ready_hook_creates_bucket(localstack_service: None) -> None:
-    _ = localstack_service
-    settings = AppSettings.from_env(_integration_env())
+def test_localstack_ready_hook_creates_isolated_buckets(
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
     client = build_s3_client(settings)
 
-    response = client.head_bucket(Bucket=settings.bucket)
+    source_response = client.head_bucket(Bucket=localstack_bucket_pair.source)
+    destination_response = client.head_bucket(Bucket=localstack_bucket_pair.destination)
 
-    assert response is not None
+    assert source_response is not None
+    assert destination_response is not None
 
 
 @pytest.mark.integration()
-def test_s3_client_supports_bucket_listing(localstack_service: None) -> None:
-    _ = localstack_service
-    settings = AppSettings.from_env(_integration_env())
+def test_s3_client_supports_bucket_listing(
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
     client = build_s3_client(settings)
     key = "integration/listing-probe.txt"
     body = b"listed"
@@ -127,9 +132,10 @@ def test_s3_client_supports_bucket_listing(localstack_service: None) -> None:
 
 
 @pytest.mark.integration()
-def test_s3_client_supports_object_round_trip(localstack_service: None) -> None:
-    _ = localstack_service
-    settings = AppSettings.from_env(_integration_env())
+def test_s3_client_supports_isolated_object_round_trip(
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
     client = build_s3_client(settings)
     key = "integration/probe.txt"
     body = b"s3-archiver"
@@ -139,6 +145,17 @@ def test_s3_client_supports_object_round_trip(localstack_service: None) -> None:
     payload = response["Body"].read()
 
     assert payload == body
+
+
+@pytest.mark.integration()
+def test_localstack_guard_rejects_live_s3_endpoint(
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    unsafe_env = _integration_env(localstack_bucket_pair)
+    unsafe_env["S3_DESTINATION_ENDPOINT_URL"] = "https://s3.amazonaws.com"
+
+    with pytest.raises(RuntimeError, match="not allowed"):
+        assert_localstack_test_target(unsafe_env)
 
 
 def _listed_keys(response: Mapping[str, object]) -> set[str]:

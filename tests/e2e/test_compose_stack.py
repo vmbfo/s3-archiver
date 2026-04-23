@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
+from integration.localstack_harness import bucket_pair_from_env
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
 
 _COMPOSE_RETRY_DELAY_SECONDS = 2.0
@@ -41,7 +42,7 @@ def test_compose_app_healthcheck_succeeds(
     assert '"event": "health.started"' in result.stdout
     assert '"event": "health.succeeded"' in result.stdout
     assert '"status": "ok"' in final_line
-    assert '"bucket": "s3-archiver-integration"' in final_line
+    assert f'"bucket": "{bucket_pair_from_env(compose_env).source}"' in final_line
 
 
 @pytest.mark.e2e()
@@ -58,7 +59,7 @@ def test_compose_run_starts_localstack_without_pytest_orchestration(
     assert '"event": "health.started"' in result.stdout
     assert '"event": "health.succeeded"' in result.stdout
     assert '"status": "ok"' in final_line
-    assert '"bucket": "s3-archiver-integration"' in final_line
+    assert f'"bucket": "{bucket_pair_from_env(compose_env).source}"' in final_line
 
 
 @pytest.mark.e2e()
@@ -157,6 +158,28 @@ def test_compose_app_fails_fast_when_log_dir_is_unwritable(
     payload = _error_payload(result.stderr)
     assert payload["status"] == "error"
     assert "Failed to initialize log directory" in payload["message"]
+
+
+@pytest.mark.e2e()
+def test_runtime_image_excludes_test_and_localstack_assets(compose_env: dict[str, str]) -> None:
+    probe = (
+        "test ! -e /app/tests && "
+        "test ! -e /app/docker/localstack && "
+        "test ! -e /opt/s3-archiver-test-support"
+    )
+    result = _run_compose(
+        compose_env,
+        "run",
+        "--rm",
+        "--no-deps",
+        "--entrypoint",
+        "sh",
+        "app",
+        "-lc",
+        probe,
+    )
+
+    assert result.returncode == 0
 
 
 def _run_compose(

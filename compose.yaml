@@ -21,9 +21,10 @@ services:
     environment:
       AWS_DEFAULT_REGION: us-east-1
       SERVICES: s3
-      TEST_S3_BUCKET: s3-archiver-integration
+      TEST_S3_SOURCE_BUCKET: ${TEST_S3_SOURCE_BUCKET:-}
+      TEST_S3_DESTINATION_BUCKET: ${TEST_S3_DESTINATION_BUCKET:-}
     healthcheck:
-      test: ["CMD-SHELL", "awslocal s3api head-bucket --bucket \"$${TEST_S3_BUCKET}\" >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "awslocal s3api list-buckets >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -31,6 +32,7 @@ services:
       - "4566:4566"
     volumes:
       - ./docker/localstack/init:/etc/localstack/init/ready.d:ro
+      - ./docker/localstack/test-support:/opt/s3-archiver-test-support:ro
 
 volumes:
   app_logs:

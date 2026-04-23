@@ -24,6 +24,8 @@ Run the canonical compose-backed health check flow:
 
 ```bash
 docker compose build app
+TEST_S3_SOURCE_BUCKET=s3-archiver-integration \
+TEST_S3_DESTINATION_BUCKET=s3-archiver-destination-local \
 docker compose --profile test up -d localstack
 APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
 docker compose --profile test down -v
@@ -33,6 +35,7 @@ The container runs rootless and writes retained JSON logs to the `app_logs` name
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` for the LocalStack compose flow shown above.
+The pytest integration and e2e harnesses do not load the production `.env`; they generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test.
 
 ## Local Development
 
@@ -116,9 +119,11 @@ docker run --rm \
 ## Tests
 
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
-- Integration tests run against LocalStack S3 and verify bucket access plus object round-trips.
-- E2E tests build and run the compose stack and assert the rootless container can complete `s3-archiver check` and persist logs.
+- Integration tests run against LocalStack S3 with per-test source and destination buckets, LocalStack endpoint guard rails, and object round-trips.
+- E2E tests build and run the compose stack, assert the rootless container can complete `s3-archiver check` and persist logs, and verify the runtime image excludes repo tests and LocalStack test support.
 - CI is currently intended to run locally through the documented scripts and Make targets.
+
+LocalStack test-only helpers live under `docker/localstack/test-support` and are mounted only into the LocalStack service by the `test` compose profile. They are not copied into the application runtime image.
 
 ## Conventional Commits And Releases
 

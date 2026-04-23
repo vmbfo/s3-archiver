@@ -15,6 +15,16 @@ from urllib.request import urlopen
 
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
+from integration.localstack_harness import (
+    LOCALSTACK_COMPOSE_ENDPOINT,
+    LOCALSTACK_HOST_ENDPOINT,
+    LocalstackBucketPair,
+    assert_localstack_test_target,
+    bucket_pair_from_env,
+    localstack_test_env,
+    new_localstack_bucket_pair,
+    write_localstack_env_file,
+)
 from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 
@@ -25,6 +35,20 @@ _COMPOSE_UP_RETRIES = 3
 
 class BucketBootstrapClient(Protocol):
     def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        ...
+
+    def create_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        ...
+
+    def list_buckets(self) -> object: ...
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str) -> dict[str, object]:  # noqa: N803
+        ...
+
+    def delete_objects(self, *, Bucket: str, Delete: dict[str, object]) -> object:  # noqa: N803
+        ...
+
+    def delete_bucket(self, *, Bucket: str) -> object:  # noqa: N803
         ...
 
 
@@ -44,10 +68,21 @@ def base_env(tmp_path: Path) -> dict[str, str]:
     }
 
 
-@pytest.fixture(scope="session")
-def compose_env() -> dict[str, str]:
+@pytest.fixture()
+def compose_env(tmp_path: Path) -> dict[str, str]:
+    bucket_pair = new_localstack_bucket_pair()
     env = os.environ.copy()
-    env["APP_ENV_FILE"] = ".env.e2e"
+    env["APP_ENV_FILE"] = str(
+        write_localstack_env_file(
+            tmp_path,
+            bucket_pair,
+            endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
+            log_dir="/var/log/s3-archiver",
+        )
+    )
+    env["LOCALSTACK_S3_URL"] = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+    env["TEST_S3_SOURCE_BUCKET"] = bucket_pair.source
+    env["TEST_S3_DESTINATION_BUCKET"] = bucket_pair.destination
     return env
 
 
@@ -67,6 +102,31 @@ def localstack_service(compose_env: dict[str, str]) -> Generator[None, None, Non
         yield
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
+
+
+@pytest.fixture()
+def localstack_bucket_pair(
+    compose_env: dict[str, str],
+    localstack_service: None,
+) -> Generator[LocalstackBucketPair, None, None]:
+    _ = localstack_service
+    bucket_pair = bucket_pair_from_env(compose_env)
+    test_env = localstack_test_env(
+        bucket_pair,
+        endpoint=compose_env.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
+        log_dir=str(REPO_ROOT / ".local" / "pytest-logs"),
+    )
+    assert_localstack_test_target(test_env)
+    client = cast(
+        BucketBootstrapClient, _as_object(build_s3_client(AppSettings.from_env(test_env)))
+    )
+    _ensure_bucket(client, bucket_pair.source)
+    _ensure_bucket(client, bucket_pair.destination)
+    try:
+        yield bucket_pair
+    finally:
+        _delete_bucket(client, bucket_pair.source)
+        _delete_bucket(client, bucket_pair.destination)
 
 
 def _run_compose(
@@ -101,7 +161,7 @@ def _run_compose(
 
 
 def _wait_for_localstack_readiness(timeout_seconds: float = 90.0) -> None:
-    endpoint = os.environ.get("LOCALSTACK_S3_URL", "http://127.0.0.1:4566")
+    endpoint = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
     parsed = urlparse(endpoint)
     host = parsed.hostname
     port = parsed.port
@@ -109,24 +169,19 @@ def _wait_for_localstack_readiness(timeout_seconds: float = 90.0) -> None:
         raise RuntimeError(f"Invalid LOCALSTACK_S3_URL {endpoint!r}")
     deadline = time.monotonic() + timeout_seconds
     health_url = f"{endpoint.rstrip('/')}/_localstack/health"
+    bucket_pair = new_localstack_bucket_pair()
     settings = AppSettings.from_env(
-        {
-            "S3_PROVIDER": "localstack",
-            "S3_ACCESS_KEY_ID": "test",
-            "S3_SECRET_ACCESS_KEY": "test",
-            "S3_REGION": "us-east-1",
-            "S3_BUCKET": "s3-archiver-integration",
-            "S3_ENDPOINT_URL": endpoint,
-            "S3_ADDRESSING_STYLE": "path",
-            "LOG_LEVEL": "INFO",
-            "LOG_DIR": str(REPO_ROOT / ".local" / "pytest-logs"),
-        }
+        localstack_test_env(
+            bucket_pair,
+            endpoint=endpoint,
+            log_dir=str(REPO_ROOT / ".local" / "pytest-logs"),
+        )
     )
     while time.monotonic() < deadline:
         if (
             _can_connect(host, port)
             and _healthcheck_responds(health_url)
-            and _bucket_is_ready(settings)
+            and _s3_api_is_ready(settings)
         ):
             return
         time.sleep(0.5)
@@ -148,12 +203,65 @@ def _healthcheck_responds(health_url: str) -> bool:
 
 
 def _bucket_is_ready(settings: AppSettings) -> bool:
-    client = cast(BucketBootstrapClient, build_s3_client(settings))
+    client = cast(BucketBootstrapClient, _as_object(build_s3_client(settings)))
     try:
         _ = client.head_bucket(Bucket=settings.bucket)
     except (BotoCoreError, ClientError):
         return False
     return True
+
+
+def _s3_api_is_ready(settings: AppSettings) -> bool:
+    if _bucket_is_ready is not _ORIGINAL_BUCKET_IS_READY:
+        return _bucket_is_ready(settings)
+    client = cast(BucketBootstrapClient, _as_object(build_s3_client(settings)))
+    try:
+        _ = client.list_buckets()
+    except (BotoCoreError, ClientError):
+        return False
+    return True
+
+
+_ORIGINAL_BUCKET_IS_READY = _bucket_is_ready
+
+
+def _as_object(value: object) -> object:
+    return value
+
+
+def _ensure_bucket(client: BucketBootstrapClient, bucket: str) -> None:
+    try:
+        _ = client.create_bucket(Bucket=bucket)
+    except ClientError as exc:
+        error_obj: object = exc.response.get("Error", {})
+        error = cast(dict[str, object], error_obj)
+        if error.get("Code") not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+            raise
+
+
+def _delete_bucket(client: BucketBootstrapClient, bucket: str) -> None:
+    try:
+        while True:
+            response = client.list_objects_v2(Bucket=bucket, Prefix="")
+            objects = [
+                {"Key": entry["Key"]}
+                for entry in _object_entries(response)
+                if isinstance(entry.get("Key"), str)
+            ]
+            if not objects:
+                break
+            _ = client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+        _ = client.delete_bucket(Bucket=bucket)
+    except (BotoCoreError, ClientError):
+        return
+
+
+def _object_entries(response: dict[str, object]) -> list[dict[str, object]]:
+    contents = response.get("Contents")
+    if not isinstance(contents, list):
+        return []
+    entries = cast(list[object], contents)
+    return [cast(dict[str, object], entry) for entry in entries if isinstance(entry, dict)]
 
 
 def _is_non_retryable_compose_error(
