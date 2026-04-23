@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
+from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
 S3TransferStrategy = Literal[
     "simple_native_copy", "multipart_native_copy", "multipart_streaming", "temp_file_backed"
@@ -33,6 +34,7 @@ def copy_s3_object(
     destination_key: str,
     metadata: Mapping[str, str],
     strategy: S3TransferStrategy,
+    temp_dir: Path,
 ) -> None:
     """Copy an S3 object with the requested strategy."""
 
@@ -60,7 +62,7 @@ def copy_s3_object(
             destination_client, destination_bucket, destination_key, properties, metadata, body
         )
         return
-    path = _stage(body)
+    path = _stage(body, temp_dir)
     try:
         with path.open("rb") as file:
             _upload_stream(
@@ -140,10 +142,13 @@ def _upload_stream(
     _put_tags(client, bucket, key, properties.tags)
 
 
-def _stage(body: ReadableBody) -> Path:
+def _stage(body: ReadableBody, temp_dir: Path) -> Path:
     path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile("wb", delete=False) as file:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "wb", delete=False, dir=temp_dir, prefix=TRANSFER_TEMP_PREFIX
+        ) as file:
             path = Path(file.name)
             while True:
                 chunk = body.read(S3_CHUNK_BYTES)

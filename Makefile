@@ -2,7 +2,7 @@ UV ?= uv
 PYTEST ?= $(UV) run pytest
 ENV_FILE ?= .env
 
-.PHONY: bootstrap run format-check lint typecheck type-coverage test-unit test-integration test-e2e test-full test build release
+.PHONY: bootstrap run archive format-check lint typecheck type-coverage test-unit test-integration test-e2e test-full test build release
 
 bootstrap:
 	$(UV) python install 3.12
@@ -11,6 +11,9 @@ bootstrap:
 
 run:
 	@ENV_FILE="$(ENV_FILE)" UV="$(UV)" S3_ENDPOINT_URL="$(S3_ENDPOINT_URL)" ./scripts/run.sh
+
+archive:
+	@ENV_FILE="$(ENV_FILE)" UV="$(UV)" ./scripts/run_archive.sh
 
 format-check:
 	$(UV) run ruff format --check .

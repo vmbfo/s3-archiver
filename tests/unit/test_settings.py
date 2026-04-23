@@ -9,6 +9,7 @@ import pytest
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3Provider
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 @pytest.mark.unit()
@@ -33,6 +34,7 @@ def test_from_env_applies_archive_defaults(tmp_path: Path) -> None:
     assert settings.cleanup_enabled is False
     assert settings.max_workers == 16
     assert settings.run_timeout == timedelta(days=7)
+    assert settings.temp_dir == default_temp_dir()
 
 
 @pytest.mark.unit()
@@ -42,6 +44,7 @@ def test_from_env_parses_archive_runtime_options(tmp_path: Path) -> None:
     env["ARCHIVER_ENABLE_CLEANUP"] = "true"
     env["ARCHIVER_MAX_WORKERS"] = "4"
     env["ARCHIVER_RUN_TIMEOUT"] = "12h"
+    env["ARCHIVER_TEMP_DIR"] = str(tmp_path / "archive-temp")
 
     settings = AppSettings.from_env(env)
 
@@ -49,6 +52,7 @@ def test_from_env_parses_archive_runtime_options(tmp_path: Path) -> None:
     assert settings.cleanup_enabled is True
     assert settings.max_workers == 4
     assert settings.run_timeout == timedelta(hours=12)
+    assert settings.temp_dir == tmp_path / "archive-temp"
 
 
 @pytest.mark.unit()

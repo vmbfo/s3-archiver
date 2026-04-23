@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol, cast
 
 from botocore.exceptions import ClientError
@@ -17,6 +18,7 @@ from s3_archiver_core.s3 import (
     VersioningState,
 )
 from s3_archiver_core.s3_transfer import copy_s3_object
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 class ArchiveS3Client(Protocol):
@@ -45,6 +47,7 @@ class S3ArchiveBucket:
 
     client: ArchiveS3Client
     bucket: str
+    temp_dir: Path = field(default_factory=default_temp_dir)
 
     def versioning_state(self) -> VersioningState:
         """Return the bucket versioning state."""
@@ -128,6 +131,7 @@ class S3ArchiveBucket:
             destination_key,
             destination_metadata,
             strategy,
+            self.temp_dir,
         )
 
     def delete_source(self, key: str, version_id: str | None) -> None:

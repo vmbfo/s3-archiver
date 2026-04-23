@@ -44,7 +44,7 @@ The container runs rootless and writes retained JSON logs to the `app_logs` name
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
-Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, and disabled source whitelist/blacklist filters.
+Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, `ARCHIVER_TEMP_DIR=/tmp/s3-archiver`, and disabled source whitelist/blacklist filters.
 The pytest integration and e2e harnesses do not load the production `.env`; they generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test.
 
 ## Local Development
@@ -108,6 +108,13 @@ ENV_FILE=".local/e2e-${suffix}.env" \
   uv run s3-archiver archive
 ```
 
+Run the production-style local wrapper:
+
+```bash
+ENV_FILE=.env ./scripts/run_archive.sh
+make archive
+```
+
 Run checks:
 
 ```bash
@@ -160,6 +167,17 @@ docker run --rm \
 - CI is currently intended to run locally through the documented scripts and Make targets.
 
 LocalStack test-only helpers live under `docker/localstack/test-support` and are mounted only into the LocalStack service by the `test` compose profile. They are not copied into the application runtime image.
+
+## Local Scheduling
+
+Schedule exactly one local archive task on the production machine. The intended unit of work is one `s3-archiver archive` process, for example from a systemd timer that runs:
+
+```bash
+cd /opt/s3-archiver
+ENV_FILE=/opt/s3-archiver/.env ./scripts/run_archive.sh
+```
+
+Do not schedule the same archive from GitHub Actions, host cron, and a container at the same time. Each invocation takes a fresh UTC run timestamp, acquires the archive lock in `LOG_DIR`, and exits non-zero if another run is active. Missed timer ticks while the lock is held should be left skipped by the scheduler; do not configure catch-up replay.
 
 ## Conventional Commits And Releases
 

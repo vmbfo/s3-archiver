@@ -24,6 +24,7 @@ from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -52,6 +53,7 @@ def check() -> None:
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
+        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
         report = run_health_check(settings, log_file)
     except S3ArchiverError as exc:
@@ -69,6 +71,7 @@ def archive() -> None:
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
+        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
         _ = run_health_check(settings, log_file)
         payload = _run_archive(settings, log_file)
@@ -100,10 +103,13 @@ def _exit_code_for_error(error: S3ArchiverError) -> int:
 
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     try:
-        source = S3ArchiveBucket(build_s3_client(settings.source), settings.source.bucket)
+        source = S3ArchiveBucket(
+            build_s3_client(settings.source), settings.source.bucket, settings.temp_dir
+        )
         destination = S3ArchiveBucket(
             build_s3_client(settings.destination),
             settings.destination.bucket,
+            settings.temp_dir,
         )
         result = run_archive(
             source,

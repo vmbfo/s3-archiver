@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.errors import ConfigError
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 class S3Provider(StrEnum):
@@ -93,6 +94,7 @@ class AppSettings:
     cleanup_enabled: bool
     max_workers: int
     run_timeout: timedelta
+    temp_dir: Path
     log_level: str
     log_dir: Path
 
@@ -123,6 +125,7 @@ class AppSettings:
             cleanup_enabled=cleanup_enabled,
             max_workers=max_workers,
             run_timeout=run_timeout,
+            temp_dir=Path(env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),
             log_level=log_level,
             log_dir=Path(env.get("LOG_DIR", "/var/log/s3-archiver")),
         )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -113,15 +112,14 @@ def test_s3_archive_bucket_streaming_upload_uses_bounded_parts() -> None:
 
 @pytest.mark.unit()
 def test_s3_archive_bucket_temp_file_transfer_cleans_up_on_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     source_client = FakeArchiveClient()
     destination_client = FakeArchiveClient()
     source_client.source_body = b"a" * 4
     destination_client.fail_upload_part = True
     source = S3ArchiveBucket(source_client, "source")
-    bucket = S3ArchiveBucket(destination_client, "destination")
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    bucket = S3ArchiveBucket(destination_client, "destination", tmp_path)
 
     with pytest.raises(RuntimeError, match="upload failed"):
         copy_object(bucket, properties(len(source_client.source_body)), "temp_file_backed", source)
@@ -132,6 +130,23 @@ def test_s3_archive_bucket_temp_file_transfer_cleans_up_on_failure(
         {"Bucket": "destination", "Key": "large.bin", "UploadId": "upload-1"}
     ]
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_temp_file_transfer_uses_dedicated_dir(tmp_path: Path) -> None:
+    source_client = FakeArchiveClient()
+    destination_client = FakeArchiveClient()
+    source_client.source_body = b"a" * 4
+    unrelated_dir = tmp_path / "unrelated"
+    temp_dir = tmp_path / "runtime-temp"
+    unrelated_dir.mkdir()
+    source = S3ArchiveBucket(source_client, "source", unrelated_dir)
+    bucket = S3ArchiveBucket(destination_client, "destination", temp_dir)
+
+    copy_object(bucket, properties(len(source_client.source_body)), "temp_file_backed", source)
+
+    assert list(temp_dir.iterdir()) == []
+    assert list(unrelated_dir.iterdir()) == []
 
 
 @pytest.mark.unit()
