@@ -1,0 +1,108 @@
+"""Unit tests for narrow S3 branch coverage."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+from typing import final, override
+
+import pytest
+from botocore.exceptions import ClientError
+from s3_archiver_core.archive_s3 import S3ArchiveBucket
+from s3_archiver_core.s3 import S3ObjectProperties
+
+from tests.unit.archive_s3_fakes import FakeArchiveClient, copy_object, properties
+
+
+class HeadErrorClient(FakeArchiveClient):
+    def __init__(self, response: Mapping[str, object]) -> None:
+        super().__init__()
+        self.response: Mapping[str, object] = response
+
+    @override
+    def head_object(self, **kwargs: object) -> Mapping[str, object]:
+        _ = kwargs
+        raise PartialClientError(self.response)
+
+
+@final
+class PartialClientError(ClientError):
+    def __init__(self, response: Mapping[str, object]) -> None:
+        Exception.__init__(self, "partial")
+        self.response = response  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _minimal_properties(size: int = 1) -> S3ObjectProperties:
+    return S3ObjectProperties(
+        size,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        {},
+        {},
+    )
+
+
+@pytest.mark.unit()
+def test_s3_archive_not_found_detection_handles_partial_error_shapes() -> None:
+    assert (
+        S3ArchiveBucket(
+            HeadErrorClient({"Error": "bad", "ResponseMetadata": {"HTTPStatusCode": 404}}),
+            "source",
+        ).head_object("missing")
+        is None
+    )
+    assert (
+        S3ArchiveBucket(
+            HeadErrorClient({"Error": {"Code": "404"}, "ResponseMetadata": "bad"}),
+            "source",
+        ).head_object("missing")
+        is None
+    )
+
+
+@pytest.mark.unit()
+def test_s3_transfer_omits_version_and_empty_optional_headers() -> None:
+    source_client = FakeArchiveClient()
+    destination_client = FakeArchiveClient()
+    source_client.source_body = b"x"
+    source = S3ArchiveBucket(source_client, "source")
+    destination = S3ArchiveBucket(destination_client, "destination")
+
+    destination.copy_from(
+        source,
+        "source",
+        "key",
+        None,
+        _minimal_properties(),
+        "key",
+        {},
+        "multipart_streaming",
+    )
+
+    assert source_client.get_call == {"Bucket": "source", "Key": "key"}
+    assert destination_client.create_calls[0] == {
+        "Bucket": "destination",
+        "Key": "key",
+        "Metadata": {},
+    }
+
+
+@pytest.mark.unit()
+def test_s3_transfer_stage_failure_before_file_creation(tmp_path: Path) -> None:
+    blocked_temp_dir = tmp_path / "not-a-directory"
+    _ = blocked_temp_dir.write_text("file", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        copy_object(
+            S3ArchiveBucket(FakeArchiveClient(), "destination", blocked_temp_dir),
+            properties(1),
+            "temp_file_backed",
+            S3ArchiveBucket(FakeArchiveClient(), "source"),
+        )
+
+    assert blocked_temp_dir.read_text(encoding="utf-8") == "file"

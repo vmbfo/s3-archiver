@@ -35,4 +35,4 @@ RUN /opt/venv/bin/pip install /dist/*.whl \
     && rm -rf /dist \
     && chown -R app:app /app /var/log/s3-archiver
 USER app:app
-CMD ["s3-archiver"]
+ENTRYPOINT ["s3-archiver"]

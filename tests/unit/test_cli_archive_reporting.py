@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
@@ -67,10 +67,9 @@ def test_archive_command_reports_lock_refusal_payload(
 def test_archive_command_reports_timeout_and_skipped_later_phases(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _stub_runtime(monkeypatch, base_env)
-    caplog.set_level(logging.ERROR, logger="s3_archiver.archive")
+    logged_error_payloads: list[Mapping[str, object]] = []
 
     def run_core_archive(
         source: object,
@@ -88,6 +87,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
         )
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "_log_error_payload", logged_error_payloads.append)
 
     result = RUNNER.invoke(cli_module.app, ["archive"])
 
@@ -100,8 +100,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     assert phases["copy"]["status"] == "error"
     assert phases["verify"]["status"] == "skipped"
     assert phases["cleanup"]["status"] == "skipped"
-    logged_payloads = [_record_error_payload(record) for record in caplog.records]
-    assert any(payload.get("phase") == "archive.copy" for payload in logged_payloads)
+    assert any(payload.get("phase") == "archive.copy" for payload in logged_error_payloads)
 
 
 @pytest.mark.unit()
@@ -192,14 +191,6 @@ def _phase_payloads(payload: ArchivePayload) -> dict[str, dict[str, object]]:
     phases = payload.get("phases")
     assert isinstance(phases, dict)
     return {key: cast(dict[str, object], value) for key, value in phases.items()}
-
-
-def _record_error_payload(record: logging.LogRecord) -> dict[str, object]:
-    raw_value = cast(object, record.__dict__.get("error_payload_json", "{}"))
-    raw = raw_value if isinstance(raw_value, str) else "{}"
-    decoded = cast(object, json.loads(raw))
-    assert isinstance(decoded, dict)
-    return cast(dict[str, object], decoded)
 
 
 def _archive_result(

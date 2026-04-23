@@ -244,15 +244,15 @@ def _run_workers(
 ) -> tuple[str, ...]:
     failures: list[str] = []
     worker_count = max(1, max_workers)
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+    executor, wait_for_workers = ThreadPoolExecutor(max_workers=worker_count), True
+    try:
         for batch_start in range(0, len(entries), worker_count):
             if timed_out():
                 failures.append("archive run timed out")
+                wait_for_workers = False
                 break
             batch = entries[batch_start : batch_start + worker_count]
-            futures: list[Future[str | None]] = [
-                executor.submit(_call_worker, worker, entry) for entry in batch
-            ]
+            futures = [executor.submit(_call_worker, worker, entry) for entry in batch]
             done, pending = wait(futures, timeout=time_remaining())
             for future in done:
                 failure = _future_result(future)
@@ -262,9 +262,11 @@ def _run_workers(
                 for future in pending:
                     _ = future.cancel()
                 failures.append("archive run timed out")
-                executor.shutdown(wait=False, cancel_futures=True)
+                wait_for_workers = False
                 break
         return tuple(failures)
+    finally:
+        executor.shutdown(wait=wait_for_workers, cancel_futures=not wait_for_workers)
 
 
 def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry) -> str | None:

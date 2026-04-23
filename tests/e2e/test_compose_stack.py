@@ -83,8 +83,9 @@ def test_compose_app_writes_persisted_logs(
         compose_env,
         "run",
         "--rm",
-        "app",
+        "--entrypoint",
         "sh",
+        "app",
         "-lc",
         "test -s /var/log/s3-archiver/s3-archiver.log && cat /var/log/s3-archiver/s3-archiver.log",
     )
@@ -136,8 +137,9 @@ def test_compose_app_persists_rotated_logs(
         compose_env,
         "run",
         "--rm",
-        "app",
+        "--entrypoint",
         "sh",
+        "app",
         "-lc",
         rotation_probe,
     )
