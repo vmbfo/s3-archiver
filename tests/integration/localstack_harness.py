@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,10 @@ LOCALSTACK_HOST_ENDPOINT = "http://127.0.0.1:4566"
 LOCALSTACK_COMPOSE_ENDPOINT = "http://localstack:4566"
 LOCALSTACK_ENDPOINT_HOSTS = frozenset(
     {"127.0.0.1", "localhost", "localstack", "localhost.localstack.cloud"}
+)
+_RETRYABLE_LOCALSTACK_ERRORS = (
+    "Connection was closed before we received a valid response",
+    "Could not connect to the endpoint URL",
 )
 
 
@@ -127,17 +132,23 @@ def ensure_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> No
 
 
 def delete_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> None:
-    try:
-        _delete_all_versions(client, bucket)
-        _delete_current_objects(client, bucket)
-        _ = client.delete_bucket(Bucket=bucket)
-    except (BotoCoreError, ClientError) as exc:
-        if (
-            isinstance(exc, ClientError)
-            and exc.response.get("Error", {}).get("Code") == "NoSuchBucket"
-        ):
+    for attempt in range(5):
+        try:
+            _delete_all_versions(client, bucket)
+            _delete_current_objects(client, bucket)
+            _ = client.delete_bucket(Bucket=bucket)
             return
-        raise RuntimeError(f"Failed to delete LocalStack test bucket {bucket!r}: {exc}") from exc
+        except (BotoCoreError, ClientError) as exc:
+            if (
+                isinstance(exc, ClientError)
+                and exc.response.get("Error", {}).get("Code") == "NoSuchBucket"
+            ):
+                return
+            if attempt == 4 or not _is_retryable_localstack_error(exc):
+                raise RuntimeError(
+                    f"Failed to delete LocalStack test bucket {bucket!r}: {exc}"
+                ) from exc
+            time.sleep(0.5)
 
 
 def _assert_localstack_endpoint(field: str, endpoint: str | None) -> None:
@@ -212,3 +223,8 @@ def _optional_string(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _is_retryable_localstack_error(exc: Exception) -> bool:
+    message = str(exc)
+    return any(detail in message for detail in _RETRYABLE_LOCALSTACK_ERRORS)
