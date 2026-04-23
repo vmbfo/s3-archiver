@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
@@ -18,6 +18,10 @@ from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
+
+
+def _private_attr(module: object, name: str) -> object:
+    return cast(object, getattr(module, name))
 
 
 class ArchivePayload(TypedDict):
@@ -227,7 +231,11 @@ def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    payload = cli_module._run_archive(settings, Path("/tmp/log"))
+    run_archive = cast(
+        Callable[[AppSettings, Path], dict[str, object]],
+        _private_attr(cli_module, "_run_archive"),
+    )
+    payload = run_archive(settings, Path("/tmp/log"))
 
     assert payload["status"] == "ok"
     assert events == [
@@ -258,7 +266,17 @@ def _stub_runtime(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
 
 
 def _load_payload(output: str) -> ArchivePayload:
-    return cast(ArchivePayload, json.loads(output))
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = cast(object, json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return cast(ArchivePayload, cast(object, payload))
+    raise AssertionError(f"expected JSON payload in output: {output!r}")
 
 
 def _phase_payloads(payload: ArchivePayload) -> dict[str, dict[str, object]]:

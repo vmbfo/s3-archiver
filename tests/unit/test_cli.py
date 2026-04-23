@@ -229,7 +229,17 @@ def test_main_runs_typer_application(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _load_payload(output: str) -> HealthPayload:
-    return cast(HealthPayload, json.loads(output))
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = cast(object, json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return cast(HealthPayload, cast(object, payload))
+    raise AssertionError(f"expected JSON payload in output: {output!r}")
 
 
 def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:

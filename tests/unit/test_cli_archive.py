@@ -190,7 +190,17 @@ def test_archive_command_wires_debug_transfer_logger(
 
 
 def _load_payload(output: str) -> ArchivePayload:
-    return cast(ArchivePayload, json.loads(output))
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = cast(object, json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return cast(ArchivePayload, cast(object, payload))
+    raise AssertionError(f"expected JSON payload in output: {output!r}")
 
 
 def _archive_result(

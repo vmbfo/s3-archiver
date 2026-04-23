@@ -211,7 +211,17 @@ def stub_runtime(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
 
 
 def load_payload(output: str) -> dict[str, object]:
-    return cast(dict[str, object], json.loads(output))
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = cast(object, json.loads(stripped))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return cast(dict[str, object], cast(object, payload))
+    raise AssertionError(f"expected JSON payload in output: {output!r}")
 
 
 def capture_logger_context(monkeypatch: pytest.MonkeyPatch) -> list[Mapping[str, object]]:
