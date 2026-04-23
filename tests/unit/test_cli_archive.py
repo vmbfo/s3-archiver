@@ -13,6 +13,7 @@ import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
 from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.errors import ArchiveRunError
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
@@ -222,6 +223,48 @@ def test_schedule_command_runs_archive_after_first_tick(
     assert isinstance(result.exception, RuntimeError)
     assert "stop scheduler test" in str(result.exception)
     assert scheduled_runs == [{"status": "ok", "run_id": "scheduled-run"}]
+
+
+@pytest.mark.unit()
+def test_schedule_command_retries_lock_skips_only_on_later_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    events: list[str] = []
+    sleep_calls = 0
+    run_attempts = 0
+
+    def configure(_settings: AppSettings) -> Path:
+        return Path("/tmp/log")
+
+    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        events.append(f"sleep-{sleep_calls}")
+        assert (hour, minute) == (4, 5)
+        if sleep_calls == 3:
+            raise RuntimeError("stop scheduler test")
+
+    def fake_run_archive(_settings: AppSettings, _log_file: Path) -> dict[str, str]:
+        nonlocal run_attempts
+        run_attempts += 1
+        events.append(f"run-{run_attempts}")
+        if run_attempts == 1:
+            raise ArchiveRunError("archive run lock is already held")
+        return {"status": "ok", "run_id": "scheduled-run"}
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
+    monkeypatch.setattr(cli_module, "_run_archive", fake_run_archive)
+
+    result = RUNNER.invoke(cli_module.app, ["schedule", "--daily-at-utc", "04:05"])
+
+    assert isinstance(result.exception, RuntimeError)
+    assert "stop scheduler test" in str(result.exception)
+    assert events == ["sleep-1", "run-1", "sleep-2", "run-2", "sleep-3"]
+    assert _load_payload(result.stderr)["message"] == "archive run lock is already held"
+    assert _load_payload(result.stdout)["status"] == "ok"
 
 
 def _load_payload(output: str) -> ArchivePayload:

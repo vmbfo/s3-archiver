@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
@@ -178,6 +178,66 @@ def test_archive_command_wires_lock_recovery_logger(
 
     assert result.exit_code == 0
     assert callable(recovery_loggers[0])
+
+
+@pytest.mark.unit()
+def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    _stub_runtime(monkeypatch, base_env)
+    settings = AppSettings.from_env(base_env)
+    lock_path = Path(base_env["LOG_DIR"]) / "archive.lock"
+    stale_payload = {
+        "hostname": "prior-host",
+        "pid": 4321,
+        "run_id": "stale-run",
+        "run_started_at_utc": datetime(2026, 4, 20, tzinfo=UTC).isoformat(),
+    }
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = lock_path.write_text(json.dumps(stale_payload), encoding="utf-8")
+    events: list[str] = []
+
+    def log_recovery(reason: str, payload: Mapping[str, object]) -> None:
+        events.append(f"recovery:{reason}")
+        assert payload == stale_payload
+
+    def run_health(_settings: AppSettings, _log_file: Path) -> object:
+        events.append("health")
+        return object()
+
+    def build_client(location: S3LocationSettings) -> object:
+        events.append(f"build:{location.bucket}")
+        return object()
+
+    def run_core_archive(
+        source: object,
+        destination: object,
+        options: ArchiveOptions,
+        *,
+        run_lock: object | None = None,
+        **_kwargs: object,
+    ) -> ArchiveRunResult:
+        _ = (source, destination, options, run_lock, _kwargs)
+        events.append("run_archive")
+        return _archive_result()
+
+    monkeypatch.setattr(cli_module, "_log_lock_recovery", log_recovery)
+    monkeypatch.setattr(cli_module, "run_health_check", run_health)
+    monkeypatch.setattr(cli_module, "build_s3_client", build_client)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+
+    payload = cli_module._run_archive(settings, Path("/tmp/log"))
+
+    assert payload["status"] == "ok"
+    assert events == [
+        "recovery:stale_lock_prior_host",
+        "health",
+        "build:archive-bucket",
+        "build:destination-bucket",
+        "run_archive",
+    ]
+    assert not lock_path.exists()
 
 
 def _stub_runtime(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
