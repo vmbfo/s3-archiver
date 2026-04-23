@@ -64,7 +64,7 @@ class HeadShapeClient(FakeArchiveClient):
 
     @override
     def head_object(self, **kwargs: object) -> Mapping[str, object]:
-        _ = kwargs
+        self.head_call = dict(kwargs)
         return self.response
 
 
@@ -215,20 +215,19 @@ def test_s3_archive_bucket_head_defaults_and_coerces_metadata() -> None:
 
 @pytest.mark.unit()
 def test_s3_archive_bucket_head_collects_last_modified_and_checksums() -> None:
-    bucket = S3ArchiveBucket(
-        HeadShapeClient(
-            {
-                "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
-                "ChecksumSHA256": "sha256-value",
-                "ChecksumCRC32": "crc32-value",
-            }
-        ),
-        "source",
+    client = HeadShapeClient(
+        {
+            "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
+            "ChecksumSHA256": "sha256-value",
+            "ChecksumCRC32": "crc32-value",
+        }
     )
+    bucket = S3ArchiveBucket(client, "source")
 
     properties = bucket.head_object("key")
 
     assert properties is not None
+    assert client.head_call["ChecksumMode"] == "ENABLED"
     assert properties.last_modified == datetime(2024, 1, 1, tzinfo=UTC)
     assert properties.checksums == {"sha256": "sha256-value", "crc32": "crc32-value"}
 

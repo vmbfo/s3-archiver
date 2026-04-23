@@ -198,6 +198,62 @@ def test_archive_lock_recovery_logger_adds_structured_context(
     assert failure_context["error_recovered"] is True
 
 
+@pytest.mark.unit()
+def test_archive_lock_recovery_logger_marks_abandoned_prior_host_run_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    stub_runtime(monkeypatch, base_env)
+    contexts = capture_logger_context(monkeypatch)
+
+    class RecoveringLock:
+        def __init__(self, _path: Path, **kwargs: object) -> None:
+            recovery_logger = cast(
+                Callable[[str, Mapping[str, object]], None],
+                kwargs["recovery_logger"],
+            )
+            recovery_logger(
+                "stale_lock_prior_host",
+                {
+                    "run_id": "run-2",
+                    "run_started_at_utc": "2026-01-01T00:00:00+00:00",
+                    "hostname": "prior-host",
+                    "pid": 456,
+                },
+            )
+
+        def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            _ = run_id
+
+    def run_core_archive(
+        source: object,
+        destination: object,
+        options: ArchiveOptions,
+        *,
+        run_lock: object | None = None,
+        **kwargs: object,
+    ) -> ArchiveRunResult:
+        _ = (source, destination, options, run_lock, kwargs)
+        return archive_result()
+
+    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecoveringLock)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
+
+    assert result.exit_code == 0
+    failure_context = next(context for context in contexts if context.get("event") == "s3_archiver.error")
+    assert failure_context["error_phase"] == "archive.run"
+    assert failure_context["error_reason"] == "archive_run_abandoned"
+    assert failure_context["error_run_id"] == "run-2"
+    assert failure_context["error_lock_recovery_reason"] == "stale_lock_prior_host"
+    assert failure_context["error_recovered"] is True
+
+
 def stub_runtime(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
     monkeypatch.setattr(os, "environ", env)
 

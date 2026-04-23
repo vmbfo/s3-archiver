@@ -85,7 +85,7 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
 
 
 @pytest.mark.integration()
-def test_run_archive_recovers_timed_out_prior_host_lock_before_archive_work(
+def test_run_archive_recovers_prior_host_lock_before_archive_work(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
@@ -109,7 +109,7 @@ def test_run_archive_recovers_timed_out_prior_host_lock_before_archive_work(
     assert not lock_path.exists()
     log_text = log_file.read_text(encoding="utf-8")
     assert '"event": "archive.lock.recovered"' in log_text
-    assert '"reason": "stale_lock_timed_out"' in log_text
+    assert '"reason": "stale_lock_prior_host"' in log_text
 
 
 @pytest.mark.integration()

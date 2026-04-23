@@ -55,6 +55,7 @@ class S3ArchiveBucket:
         """Return object properties, or ``None`` when the object is absent."""
 
         kwargs = _versioned_kwargs(self.bucket, key, version_id)
+        kwargs["ChecksumMode"] = "ENABLED"
         try:
             head = self.client.head_object(**kwargs)
         except ClientError as exc:

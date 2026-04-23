@@ -269,7 +269,7 @@ def _recovered_run_failure_payload(
     payload: Mapping[str, object],
 ) -> dict[str, JsonValue] | None:
     timed_out = reason == "stale_lock_timed_out"
-    if reason not in {"stale_lock_abandoned", "stale_lock_timed_out"}:
+    if reason not in {"stale_lock_abandoned", "stale_lock_prior_host", "stale_lock_timed_out"}:
         return None
     return {
         "status": "error",

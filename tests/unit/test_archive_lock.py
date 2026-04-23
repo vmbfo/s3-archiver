@@ -95,7 +95,7 @@ def test_file_lock_recovers_timed_out_lock_for_live_process(tmp_path: Path) -> N
 
 
 @pytest.mark.unit()
-def test_file_lock_recovers_timed_out_lock_from_other_host(tmp_path: Path) -> None:
+def test_file_lock_recovers_lock_from_other_host(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
     payload = {
         "hostname": "other-host",
@@ -117,7 +117,7 @@ def test_file_lock_recovers_timed_out_lock_from_other_host(tmp_path: Path) -> No
 
     assert acquired is True
     assert _read_lock(lock_path)["run_id"] == "next"
-    assert recoveries == [("stale_lock_timed_out", payload)]
+    assert recoveries == [("stale_lock_prior_host", payload)]
 
 
 @pytest.mark.unit()

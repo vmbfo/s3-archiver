@@ -24,6 +24,7 @@ class FakeArchiveClient:
         self.tagging_calls: list[dict[str, object]] = []
         self.get_call: dict[str, object] = {}
         self.put_call: dict[str, object] = {}
+        self.head_call: dict[str, object] = {}
         self.source_body: bytes = b""
         self.head_error: ClientError | None = None
         self.tag_error: Exception | None = None
@@ -61,7 +62,7 @@ class FakeArchiveClient:
         }
 
     def head_object(self, **kwargs: object) -> Mapping[str, object]:
-        _ = kwargs
+        self.head_call = kwargs
         if self.head_error is not None:
             raise self.head_error
         return {
