@@ -6,13 +6,19 @@ import json
 import os
 import socket
 import subprocess
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 from typing import cast
 
 import pytest
+import s3_archiver_core.archive_s3 as archive_s3_module
 import s3_archiver_cli.main as cli_module
+from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.logging_config import configure_logging
+from s3_archiver_core.s3 import S3Client
+from s3_archiver_core.s3 import S3ObjectProperties
 from s3_archiver_core.settings import AppSettings
 
 from tests.integration.localstack_harness import (
@@ -20,6 +26,11 @@ from tests.integration.localstack_harness import (
     LocalstackBucketPair,
     localstack_test_env,
 )
+from tests.integration.localstack_object_helpers import (
+    listed_keys,
+    localstack_s3_client,
+)
+from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
 
 @pytest.mark.integration()
@@ -92,6 +103,106 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
     log_text = log_file.read_text(encoding="utf-8")
     assert '"event": "archive.lock.recovered"' in log_text
     assert '"reason": "stale_lock_prior_host"' in log_text
+
+
+@pytest.mark.integration()
+def test_schedule_retries_after_timeout_on_next_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    compose_env: dict[str, str],
+    tmp_path: Path,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _integration_env(tmp_path, localstack_bucket_pair)
+    env["ARCHIVER_MAX_WORKERS"] = "1"
+    env["ARCHIVER_RUN_TIMEOUT"] = "1s"
+    settings = AppSettings.from_env(env)
+    source_client = localstack_s3_client(env, "source")
+    destination_client = localstack_s3_client(env, "destination")
+    seed_now = datetime.now(tz=UTC).replace(microsecond=0)
+    prefix = "schedule-timeout"
+    key = f"{prefix}/age-61-days.txt"
+    _ = run_timestamp_seed_helper(compose_env, prefix=prefix, days=(61,), seed_now=seed_now)
+    lock_path = settings.log_dir / "archive.lock"
+    sleep_calls = 0
+    copy_attempts = 0
+    slow_copy_started = Event()
+    allow_slow_copy_exit = Event()
+    slow_copy_finished = Event()
+    original_copy = archive_s3_module.copy_s3_object
+
+    def slow_first_copy(
+        destination_client: S3Client,
+        source_client: S3Client,
+        source_bucket: str,
+        source_key: str,
+        source_version_id: str | None,
+        properties: S3ObjectProperties,
+        destination_bucket: str,
+        destination_key: str,
+        metadata: Mapping[str, str],
+        strategy: TransferStrategy,
+        temp_dir: Path,
+    ) -> None:
+        nonlocal copy_attempts
+        copy_attempts += 1
+        if copy_attempts == 1:
+            slow_copy_started.set()
+            try:
+                assert allow_slow_copy_exit.wait(timeout=5)
+                raise RuntimeError("delayed LocalStack copy released after timeout")
+            finally:
+                slow_copy_finished.set()
+        original_copy(
+            destination_client,
+            source_client,
+            source_bucket,
+            source_key,
+            source_version_id,
+            properties,
+            destination_bucket,
+            destination_key,
+            metadata,
+            strategy,
+            temp_dir,
+        )
+
+    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+        nonlocal sleep_calls
+        _ = (hour, minute)
+        sleep_calls += 1
+        if sleep_calls == 1:
+            return
+        if sleep_calls == 2:
+            assert slow_copy_started.wait(timeout=5)
+            assert not lock_path.exists()
+            assert listed_keys(destination_client, localstack_bucket_pair.destination) == set()
+            allow_slow_copy_exit.set()
+            assert slow_copy_finished.wait(timeout=5)
+            return
+        raise RuntimeError("stop scheduler integration test")
+
+    monkeypatch.setattr(os, "environ", env)
+    monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
+    monkeypatch.setattr(archive_s3_module, "copy_s3_object", slow_first_copy)
+
+    with pytest.raises(RuntimeError, match="stop scheduler integration test"):
+        cli_module.schedule(daily_at_utc="04:05")
+
+    captured = capsys.readouterr()
+    error_payload = _last_json(captured.err)
+    success_payload = _last_json(captured.out)
+    assert error_payload["phase"] == "archive.copy"
+    assert error_payload["field"] == "ARCHIVER_RUN_TIMEOUT"
+    assert error_payload["message"] == "archive run timed out"
+    assert error_payload["reason"] == "archive_run_timeout"
+    assert error_payload["timed_out"] is True
+    assert success_payload["status"] == "ok"
+    assert success_payload["manifest"]["object_count"] == 1
+    assert copy_attempts == 2
+    assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {key}
+    assert not lock_path.exists()
 
 
 def _integration_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
