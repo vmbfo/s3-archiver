@@ -6,17 +6,17 @@ import json
 import os
 import subprocess
 import textwrap
-import time
 from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
 
+from tests.e2e.compose_helpers import run_compose
 from tests.integration.localstack_harness import bucket_pair_from_env
 
-_COMPOSE_RETRY_DELAY_SECONDS = 2.0
-_COMPOSE_RUN_RETRIES = 4
+_COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
+_COMPOSE_RETRYABLE_RETURNCODES = (137, HEALTH_CHECK_ERROR_EXIT_CODE)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -236,48 +236,12 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test"]
-    if args[:1] == ("run",):
-        command.append("run")
-        command.append("--build")
-        command.extend(args[1:])
-    else:
-        command.extend(args)
-    for attempt in range(_COMPOSE_RUN_RETRIES + 1):
-        result = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result
-        if not check:
-            return result
-        if attempt == _COMPOSE_RUN_RETRIES or _is_non_retryable_compose_error(result):
-            raise subprocess.CalledProcessError(
-                result.returncode,
-                command,
-                output=result.stdout,
-                stderr=result.stderr,
-            )
-        time.sleep(_COMPOSE_RETRY_DELAY_SECONDS)
-    raise AssertionError("compose retry loop exhausted without returning")
-
-
-def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
-    retryable_messages = (
-        "No such container",
-        "marked for removal",
-        "HeadBucket operation: Not Found",
-        'Could not connect to the endpoint URL: "http://localstack:4566/',
-    )
-    if result.returncode in {137, HEALTH_CHECK_ERROR_EXIT_CODE}:
-        return False
-    return not any(
-        message in result.stderr or message in result.stdout for message in retryable_messages
+    return run_compose(
+        env,
+        *args,
+        check=check,
+        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
     )
 
 

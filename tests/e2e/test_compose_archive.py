@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import textwrap
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypedDict, cast
@@ -13,6 +12,7 @@ from typing import Literal, TypedDict, cast
 import pytest
 from s3_archiver_core.s3 import S3Client
 
+from tests.e2e.compose_helpers import run_compose
 from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
     LOCALSTACK_HOST_ENDPOINT,
@@ -26,9 +26,7 @@ from tests.integration.localstack_object_helpers import (
 )
 from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
-_COMPOSE_RETRY_DELAY_SECONDS = 2.0
-_COMPOSE_RUN_RETRIES = 4
-REPO_ROOT = Path(__file__).resolve().parents[2]
+_COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
 
 
 class ArchivePhasePayload(TypedDict):
@@ -271,54 +269,11 @@ def _client(
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test"]
-    if args[:1] == ("run",):
-        command.append("run")
-        command.append("--build")
-        command.extend(args[1:])
-    else:
-        command.extend(args)
-    for attempt in range(_COMPOSE_RUN_RETRIES + 1):
-        result = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result
-        if not check:
-            return result
-        if attempt == _COMPOSE_RUN_RETRIES or _is_non_retryable_compose_error(result):
-            error = subprocess.CalledProcessError(
-                result.returncode,
-                command,
-                output=result.stdout,
-                stderr=result.stderr,
-            )
-            message = "\n".join(
-                (
-                    f"compose command failed with exit code {result.returncode}: {command}",
-                    f"stdout:\n{result.stdout}",
-                    f"stderr:\n{result.stderr}",
-                )
-            )
-            raise AssertionError(message) from error
-        time.sleep(_COMPOSE_RETRY_DELAY_SECONDS)
-    raise AssertionError("compose retry loop exhausted without returning")
-
-
-def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
-    retryable_messages = (
-        "No such container",
-        "marked for removal",
-        "HeadBucket operation: Not Found",
-        'Could not connect to the endpoint URL: "http://localstack:4566/',
-    )
-    return not any(
-        message in result.stderr or message in result.stdout for message in retryable_messages
+    return run_compose(
+        env,
+        *args,
+        check=check,
+        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
     )
 
 
