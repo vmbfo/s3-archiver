@@ -5,20 +5,23 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
 import pytest
-from s3_archiver_core.s3 import S3Client, build_s3_client
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.s3 import S3Client
 
 from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
+)
+from tests.integration.localstack_object_helpers import (
+    listed_keys,
+    localstack_s3_client,
+    put_test_object,
 )
 from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
@@ -67,7 +70,7 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
         days=(2, 3),
         seed_now=datetime.now(tz=UTC).replace(microsecond=0),
     )
-    assert _listed_keys(source_client, bucket_pair.source) == source_keys
+    assert listed_keys(source_client, bucket_pair.source) == source_keys
     env_file = _write_archive_env_file(tmp_path, bucket_pair, cleanup_value)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
@@ -85,9 +88,57 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
         "verify": "ok",
         "cleanup": expected_cleanup_status,
     }
-    assert _listed_keys(destination_client, bucket_pair.destination) == source_keys
+    assert listed_keys(destination_client, bucket_pair.destination) == source_keys
     expected_source_keys = source_keys if source_should_remain else set[str]()
-    assert _listed_keys(source_client, bucket_pair.source) == expected_source_keys
+    assert listed_keys(source_client, bucket_pair.source) == expected_source_keys
+
+
+@pytest.mark.e2e()
+def test_compose_archive_debug_logs_strategy_and_preserves_source_properties(
+    tmp_path: Path,
+    compose_env: dict[str, str],
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    bucket_pair = localstack_bucket_pair
+    source_client = _client(tmp_path, bucket_pair, "source")
+    destination_client = _client(tmp_path, bucket_pair, "destination")
+    key = "compose-debug/strategy.txt"
+    _ = put_test_object(
+        source_client,
+        bucket_pair.source,
+        key,
+        body=b"strategy\n",
+        metadata={
+            "seed-key": key,
+            "s3-archiver-test-last-modified": (
+                datetime.now(tz=UTC) - timedelta(days=2)
+            ).isoformat(),
+        },
+        tags={"kind": "archive"},
+        ContentType="text/plain",
+        CacheControl="max-age=60",
+    )
+    env_file = _write_archive_env_file(tmp_path, bucket_pair, None)
+    _ = env_file.write_text(
+        env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG"),
+        encoding="utf-8",
+    )
+    run_env = dict(compose_env)
+    run_env["APP_ENV_FILE"] = str(env_file)
+
+    result = _run_compose(run_env, "run", "--rm", "app", "archive")
+    metadata = cast(
+        dict[str, str],
+        destination_client.head_object(Bucket=bucket_pair.destination, Key=key)["Metadata"],
+    )
+
+    assert '"event": "archive.transfer.strategy_selected"' in result.stdout
+    assert '"strategy": "multipart_streaming"' in result.stdout
+    assert metadata["seed-key"] == key
+    assert json.loads(metadata["s3-archiver-source-fingerprint"])["source_key"] == key
+    assert destination_client.get_object_tagging(Bucket=bucket_pair.destination, Key=key)[
+        "TagSet"
+    ] == [{"Key": "kind", "Value": "archive"}]
 
 
 def _case_source_prefix(cleanup_value: str | None) -> str:
@@ -141,26 +192,7 @@ def _client(
         endpoint=LOCALSTACK_HOST_ENDPOINT,
         log_dir=str(tmp_path / "host-logs"),
     )
-    settings = AppSettings.from_env(env)
-    if side == "source":
-        return build_s3_client(settings.source)
-    return build_s3_client(settings.destination)
-
-
-def _listed_keys(client: S3Client, bucket: str) -> set[str]:
-    response = client.list_objects_v2(Bucket=bucket)
-    contents = response.get("Contents")
-    if not isinstance(contents, list):
-        return set()
-    keys: set[str] = set()
-    for raw_entry in cast(list[object], contents):
-        if not isinstance(raw_entry, dict):
-            continue
-        entry = cast(Mapping[str, object], raw_entry)
-        key = entry.get("Key")
-        if isinstance(key, str):
-            keys.add(key)
-    return keys
+    return localstack_s3_client(env, side)
 
 
 def _run_compose(

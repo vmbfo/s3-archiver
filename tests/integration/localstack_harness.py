@@ -52,10 +52,7 @@ def new_localstack_bucket_pair() -> LocalstackBucketPair:
 
 
 def bucket_pair_from_env(env: dict[str, str]) -> LocalstackBucketPair:
-    return LocalstackBucketPair(
-        source=env["TEST_S3_SOURCE_BUCKET"],
-        destination=env["TEST_S3_DESTINATION_BUCKET"],
-    )
+    return LocalstackBucketPair(env["TEST_S3_SOURCE_BUCKET"], env["TEST_S3_DESTINATION_BUCKET"])
 
 
 def localstack_test_env(
@@ -135,6 +132,11 @@ def delete_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> No
         _delete_current_objects(client, bucket)
         _ = client.delete_bucket(Bucket=bucket)
     except (BotoCoreError, ClientError) as exc:
+        if (
+            isinstance(exc, ClientError)
+            and exc.response.get("Error", {}).get("Code") == "NoSuchBucket"
+        ):
+            return
         raise RuntimeError(f"Failed to delete LocalStack test bucket {bucket!r}: {exc}") from exc
 
 

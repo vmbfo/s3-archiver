@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Mapping
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Literal, cast
@@ -27,6 +26,7 @@ from tests.integration.localstack_harness import (
     assert_localstack_test_target,
     localstack_test_env,
 )
+from tests.integration.localstack_object_helpers import listed_keys
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_LOGS_VOLUME = f"{REPO_ROOT.name}_app_logs"
@@ -124,9 +124,8 @@ def test_s3_client_supports_bucket_listing(
     body = b"listed"
 
     _ = client.put_object(Bucket=settings.bucket, Key=key, Body=body)
-    response = client.list_objects_v2(Bucket=settings.bucket, Prefix="integration/")
 
-    assert key in _listed_keys(response)
+    assert key in listed_keys(client, settings.bucket)
 
 
 @pytest.mark.integration()
@@ -146,13 +145,46 @@ def test_s3_client_supports_isolated_object_round_trip(
 
 
 @pytest.mark.integration()
-def test_localstack_guard_rejects_live_s3_endpoint(
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://localhost:4566",
+        "http://localstack:4566",
+        "http://localhost.localstack.cloud:4566",
+    ],
+)
+def test_localstack_guard_accepts_known_localstack_hosts(
     localstack_bucket_pair: LocalstackBucketPair,
+    endpoint: str,
+) -> None:
+    safe_env = _integration_env(localstack_bucket_pair)
+    safe_env["S3_SOURCE_ENDPOINT_URL"] = endpoint
+    safe_env["S3_DESTINATION_ENDPOINT_URL"] = endpoint
+
+    assert_localstack_test_target(safe_env)
+
+
+@pytest.mark.integration()
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("S3_DESTINATION_ENDPOINT_URL", "https://s3.amazonaws.com", "not allowed"),
+        ("S3_SOURCE_ENDPOINT_URL", None, "must be set"),
+    ],
+)
+def test_localstack_guard_rejects_unsafe_endpoint_configuration(
+    localstack_bucket_pair: LocalstackBucketPair,
+    field: str,
+    value: str | None,
+    match: str,
 ) -> None:
     unsafe_env = _integration_env(localstack_bucket_pair)
-    unsafe_env["S3_DESTINATION_ENDPOINT_URL"] = "https://s3.amazonaws.com"
+    if value is None:
+        _ = unsafe_env.pop(field)
+    else:
+        unsafe_env[field] = value
 
-    with pytest.raises(RuntimeError, match="not allowed"):
+    with pytest.raises(RuntimeError, match=match):
         assert_localstack_test_target(unsafe_env)
 
 
@@ -184,21 +216,6 @@ def test_health_check_succeeds_for_source_bucket_versioning_states(
     assert state == expected_state
     assert report.status == "ok"
     assert (report.source_bucket, report.source_versioning) == (settings.bucket, expected_state)
-
-
-def _listed_keys(response: Mapping[str, object]) -> set[str]:
-    contents = response.get("Contents")
-    if not isinstance(contents, list):
-        return set()
-    keys: set[str] = set()
-    for entry_obj in cast(list[object], contents):
-        if not isinstance(entry_obj, dict):
-            continue
-        entry = cast(dict[str, object], entry_obj)
-        key = entry.get("Key")
-        if isinstance(key, str):
-            keys.add(key)
-    return keys
 
 
 def _log_records(log_file: Path) -> list[dict[str, object]]:
