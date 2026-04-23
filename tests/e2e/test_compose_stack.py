@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import textwrap
 import time
@@ -211,6 +212,25 @@ def test_compose_scheduler_service_runs_schedule_command(
     assert "command:" in result.stdout
     assert "- schedule" in result.stdout
     assert "restart: unless-stopped" in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
+    env = os.environ.copy()
+    _ = env.pop("APP_ENV_FILE", None)
+    _ = env.pop("ENV_FILE", None)
+
+    result = subprocess.run(
+        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "APP_ENV_FILE: /dev/null" in result.stdout
+    assert "path: .env" not in result.stdout
 
 
 def _run_compose(

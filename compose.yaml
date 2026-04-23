@@ -9,8 +9,9 @@ services:
         condition: service_healthy
         required: false
     env_file:
-      - ${APP_ENV_FILE:-.env}
+      - ${APP_ENV_FILE:-/dev/null}
     environment:
+      APP_ENV_FILE: ${APP_ENV_FILE:-/dev/null}
       LOG_DIR: /var/log/s3-archiver
     volumes:
       - app_logs:/var/log/s3-archiver
@@ -26,8 +27,9 @@ services:
         condition: service_healthy
         required: false
     env_file:
-      - ${APP_ENV_FILE:-.env}
+      - ${APP_ENV_FILE:-/dev/null}
     environment:
+      APP_ENV_FILE: ${APP_ENV_FILE:-/dev/null}
       LOG_DIR: /var/log/s3-archiver
     profiles: ["schedule"]
     restart: unless-stopped

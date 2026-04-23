@@ -136,6 +136,20 @@ def test_load_runtime_env_returns_process_env_when_env_file_is_missing(
     assert loaded["S3_BUCKET"] == "from-process"
 
 
+@pytest.mark.unit()
+def test_load_runtime_env_honors_explicit_dev_null_over_default_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _ = (tmp_path / ".env").write_text("S3_BUCKET=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(os, "environ", {"APP_ENV_FILE": "/dev/null"})
+
+    loaded = LOAD_RUNTIME_ENV()
+
+    assert "S3_BUCKET" not in loaded
+
+
 def _env_file_contents(tmp_path: Path) -> str:
     return "\n".join(
         (
