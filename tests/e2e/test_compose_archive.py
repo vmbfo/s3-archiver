@@ -139,13 +139,13 @@ def test_compose_archive_debug_logs_expected_strategy_and_preserves_source_prope
     run_env["APP_ENV_FILE"] = str(env_file)
 
     result = _run_compose(run_env, "run", "--rm", "app", "archive")
-    metadata = cast(
-        dict[str, str],
-        destination_client.head_object(Bucket=bucket_pair.destination, Key=key)["Metadata"],
-    )
+    destination_head = destination_client.head_object(Bucket=bucket_pair.destination, Key=key)
+    metadata = cast(dict[str, str], destination_head["Metadata"])
 
     assert '"event": "archive.transfer.strategy_selected"' in result.stdout
     assert f'"strategy": "{expected_strategy}"' in result.stdout
+    assert destination_head["ContentType"] == "text/plain"
+    assert destination_head["CacheControl"] == "max-age=60"
     assert metadata["seed-key"] == key
     assert json.loads(metadata["s3-archiver-source-fingerprint"])["source_key"] == key
     assert destination_client.get_object_tagging(Bucket=bucket_pair.destination, Key=key)[
