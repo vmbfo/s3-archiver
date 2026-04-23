@@ -21,7 +21,7 @@ from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
 @pytest.mark.unit()
-def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> None:
+def test_run_archive_waits_for_inflight_copy_worker_before_reporting_timeout() -> None:
     class SlowCopyBucket(FakeBucket):
         @override
         def copy_from(
@@ -45,7 +45,7 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
                 destination_metadata,
                 strategy,
             )
-            time.sleep(0.2)
+            time.sleep(0.1)
             self.copied.append(source_key)
 
     source = FakeBucket("source", (_listed("slow.txt", 90),))
@@ -66,7 +66,8 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
     )
 
     assert result.copy.failures == ("archive run timed out",)
-    assert time.monotonic() - began < 0.18
+    assert time.monotonic() - began >= 0.1
+    assert destination.copied == ["slow.txt"]
 
 
 @pytest.mark.unit()
@@ -81,7 +82,7 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
 
         class SlowCopyBucket(FakeBucket):
             def copy_from(self, *args, **kwargs):
-                time.sleep(2)
+                time.sleep(0.1)
 
         run_archive(
             FakeBucket("source", (listed_object("slow.txt", 90),)),
