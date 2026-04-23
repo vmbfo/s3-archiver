@@ -61,7 +61,9 @@ def run_timestamp_seed_helper(
     seed_now: datetime,
 ) -> subprocess.CompletedProcess[str]:
     days_value = " ".join(str(day) for day in days)
+    source_bucket = compose_env["TEST_S3_SOURCE_BUCKET"]
     command = (
+        f"TEST_S3_SOURCE_BUCKET={source_bucket} "
         f"TEST_TIMESTAMP_SEED_PREFIX={prefix} "
         f"TEST_TIMESTAMP_SEED_DAYS='{days_value}' "
         f"TEST_TIMESTAMP_SEED_NOW={seed_now.isoformat()} "

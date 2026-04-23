@@ -184,6 +184,23 @@ def test_localstack_guard_rejects_unsafe_endpoint_configuration(
 
 
 @pytest.mark.integration()
+def test_check_command_rejects_runtime_localstack_endpoint_outside_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _integration_env(localstack_bucket_pair)
+    env["S3_DESTINATION_ENDPOINT_URL"] = "https://s3.amazonaws.com"
+    monkeypatch.setattr(os, "environ", env)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
+    payload = cast(dict[str, object], json.loads(result.stderr))
+    assert payload["status"] == "error"
+    assert payload["field"] == "S3_DESTINATION_ENDPOINT_URL"
+
+
+@pytest.mark.integration()
 @pytest.mark.parametrize(
     ("status", "expected_state"),
     [(None, "Disabled"), ("Enabled", "Enabled"), ("Suspended", "Suspended")],

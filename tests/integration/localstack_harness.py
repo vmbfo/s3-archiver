@@ -14,7 +14,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 LOCALSTACK_HOST_ENDPOINT = "http://127.0.0.1:4566"
 LOCALSTACK_COMPOSE_ENDPOINT = "http://localstack:4566"
 LOCALSTACK_ENDPOINT_HOSTS = frozenset(
-    {"127.0.0.1", "localhost", "localstack", "localhost.localstack.cloud"}
+    {"127.0.0.1", "localhost", "localstack", "localstack-alt", "localhost.localstack.cloud"}
 )
 _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",

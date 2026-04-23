@@ -111,3 +111,30 @@ def test_oci_endpoint_resolution_requires_namespace() -> None:
 
     with pytest.raises(ConfigError, match="S3_NAMESPACE"):
         _ = location.resolved_endpoint_url()
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("endpoint_url", "allowed"),
+    [
+        ("http://localhost:4566", True),
+        ("http://localstack-alt:4566", True),
+        ("https://s3.amazonaws.com", False),
+    ],
+)
+def test_from_env_validates_localstack_endpoint_hosts(
+    tmp_path: Path,
+    endpoint_url: str,
+    allowed: bool,
+) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_PROVIDER"] = "localstack"
+    env["S3_DESTINATION_ENDPOINT_URL"] = endpoint_url
+
+    if allowed:
+        settings = AppSettings.from_env(env)
+        assert settings.destination.resolved_endpoint_url() == endpoint_url
+        return
+
+    with pytest.raises(ConfigError, match="S3_DESTINATION_ENDPOINT_URL"):
+        _ = AppSettings.from_env(env)

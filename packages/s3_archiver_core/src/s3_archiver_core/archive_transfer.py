@@ -245,9 +245,14 @@ def recover_fingerprinted_entry(
             return None
         if properties.etag != fingerprint.source_etag:
             return None
-        if fingerprint.source_checksums:
-            if dict(properties.checksums) != dict(fingerprint.source_checksums):
-                return None
+        if not _checksums_consistent(fingerprint.source_checksums, properties.checksums):
+            return None
+        if (
+            fingerprint.source_checksum_type is not None
+            and properties.checksum_type is not None
+            and fingerprint.source_checksum_type != properties.checksum_type
+        ):
+            return None
     listed = S3ListedObject(
         entry.key,
         fingerprint.source_size,
@@ -340,13 +345,20 @@ def _fingerprint_matches_entry(fingerprint: SourceFingerprint, entry: ManifestEn
         or fingerprint.source_etag != entry.etag
     ):
         return False
-    if fingerprint.source_checksums:
-        return (
-            dict(fingerprint.source_checksums) == dict(entry.object.properties.checksums)
-            and fingerprint.source_checksum_type == entry.object.properties.checksum_type
-        )
+    if not _checksums_consistent(fingerprint.source_checksums, entry.object.properties.checksums):
+        return False
+    if (
+        fingerprint.source_checksum_type is not None
+        and entry.object.properties.checksum_type is not None
+        and fingerprint.source_checksum_type != entry.object.properties.checksum_type
+    ):
+        return False
     return True
 
 
 def _iso(value: datetime) -> str:
     return value.isoformat()
+
+
+def _checksums_consistent(expected: Mapping[str, str], observed: Mapping[str, str]) -> bool:
+    return all(observed.get(algorithm, checksum) == checksum for algorithm, checksum in expected.items())

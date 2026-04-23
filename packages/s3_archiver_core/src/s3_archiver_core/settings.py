@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from s3_archiver_core._settings_parse import normalize_endpoint_url as _normalize_endpoint_url
 from s3_archiver_core._settings_parse import optional_env as _optional
@@ -34,6 +35,9 @@ class S3AddressingStyle(StrEnum):
 _VALID_PROVIDERS = frozenset({provider.value for provider in S3Provider})
 _VALID_ADDRESSING_STYLES = frozenset({style.value for style in S3AddressingStyle})
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
+_LOCALSTACK_ENDPOINT_HOSTS = frozenset(
+    {"127.0.0.1", "localhost", "localstack", "localstack-alt", "localhost.localstack.cloud"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +133,8 @@ class AppSettings:
 
         source = _load_s3_location(env, "SOURCE")
         destination = _load_s3_location(env, "DESTINATION")
+        _validate_localstack_endpoint(source, "S3_SOURCE_ENDPOINT_URL")
+        _validate_localstack_endpoint(destination, "S3_DESTINATION_ENDPOINT_URL")
         path_filters = _load_path_filters(env)
         retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=1)
         max_workers = _parse_int(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
@@ -235,3 +241,11 @@ def _load_path_filters(env: Mapping[str, str]) -> PathFilterSettings:
         whitelist=_parse_string_array(env, "S3_SOURCE_PATH_WHITELIST"),
         blacklist=_parse_string_array(env, "S3_SOURCE_PATH_BLACKLIST"),
     )
+
+
+def _validate_localstack_endpoint(location: S3LocationSettings, field: str) -> None:
+    if location.provider is not S3Provider.LOCALSTACK:
+        return
+    host = urlsplit(location.resolved_endpoint_url()).hostname
+    if host not in _LOCALSTACK_ENDPOINT_HOSTS:
+        raise ConfigError(f"{field} host {host!r} is not allowed when provider=localstack")

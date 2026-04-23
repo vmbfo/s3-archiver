@@ -217,6 +217,48 @@ def test_run_archive_falls_back_to_streaming_hash_for_composite_checksums() -> N
 
 
 @pytest.mark.unit()
+def test_rerun_accepts_persisted_checksums_when_current_source_no_longer_exposes_them() -> None:
+    checksummed_listed = replace(
+        _listed("old.txt", 90),
+        properties=_properties(
+            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
+            checksums={"sha256": "digest"},
+            checksum_type="FULL_OBJECT",
+        ),
+    )
+    stored_entry = ManifestEntry(
+        "source",
+        "old.txt",
+        10,
+        checksummed_listed.last_modified,
+        '"etag"',
+        "v1",
+        checksummed_listed,
+    )
+    current_listed = replace(
+        checksummed_listed,
+        properties=_properties(
+            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
+        ),
+    )
+    source = FakeBucket("source", (current_listed,))
+    destination = FakeBucket(
+        "destination",
+        destination={"old.txt": replace(current_listed.properties, metadata=archive_metadata(stored_entry))},
+    )
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.ok is True
+
+
+@pytest.mark.unit()
 def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90, "v1"),))
     destination = FakeBucket("destination")
