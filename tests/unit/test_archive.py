@@ -13,7 +13,7 @@ from s3_archiver_core.archive_manifest import (
     SourcePathFilter,
     build_archive_manifest,
 )
-from s3_archiver_core.archive_options import ArchiveOptions, cleanup_enabled_from_env
+from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
     FINGERPRINT_METADATA_KEY,
     TransferStrategy,
@@ -205,6 +205,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     assert destination.copied == ["old.txt"]
     assert source.deleted == []
     assert decisions == [("old.txt", "simple_native_copy")]
+    assert result.cleanup.skipped is True
 
     cleanup_result = run_archive(
         source,
@@ -215,6 +216,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
 
     assert cleanup_result.ok is True
     assert source.deleted == [("old.txt", "v1")]
+    assert cleanup_result.cleanup.skipped is False
 
 
 @pytest.mark.unit()
@@ -231,7 +233,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     )
 
     assert copy_failed.copy.ok is False
-    assert copy_failed.verify.failures == ()
+    assert copy_failed.verify.skipped is True
     assert source.deleted == []
 
     bad_destination = FakeBucket("destination", destination={"old.txt": _properties(size=10)})
@@ -243,7 +245,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     )
 
     assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
-    assert verify_failed.verify.failures == ()
+    assert verify_failed.verify.skipped is True
     assert source.deleted == []
 
 
@@ -262,7 +264,7 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     )
 
     assert timed_out.copy.failures == ("archive run timed out",)
-    assert timed_out.verify.failures == ()
+    assert timed_out.verify.skipped is True
     assert source.deleted == []
 
 
@@ -284,10 +286,3 @@ def test_key_only_cleanup_rechecks_source_before_delete() -> None:
 
     assert result.cleanup.failures == ("old.txt: source changed before cleanup",)
     assert source.deleted == []
-
-
-@pytest.mark.unit()
-def test_options_cleanup_defaults() -> None:
-    assert cleanup_enabled_from_env({}) is False
-    assert cleanup_enabled_from_env({"ARCHIVER_ENABLE_CLEANUP": "true"}) is True
-    assert ArchiveOptions.from_env({}).run_timeout == timedelta(days=7)

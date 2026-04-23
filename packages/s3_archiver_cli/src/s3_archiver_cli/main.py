@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import typer
@@ -115,7 +116,9 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
             source,
             destination,
             ArchiveOptions.from_settings(settings),
-            run_lock=FileArchiveRunLock(_archive_lock_path(settings)),
+            run_lock=FileArchiveRunLock(
+                _archive_lock_path(settings), recovery_logger=_log_lock_recovery
+            ),
             debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
         )
     except Exception as exc:
@@ -175,8 +178,9 @@ def _archive_failure_payload(
 
 
 def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
+    status = "error" if not result.ok else "skipped" if result.skipped else "ok"
     return {
-        "status": "ok" if result.ok else "error",
+        "status": status,
         "failure_count": len(result.failures),
         "failures": list(result.failures),
     }
@@ -226,6 +230,20 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
             "key": entry.key,
             "source_bucket": entry.source_bucket,
             "strategy": strategy,
+        },
+    )
+
+
+def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
+    logging.getLogger("s3_archiver.archive").warning(
+        "archive stale run lock recovered",
+        extra={
+            "event": "archive.lock.recovered",
+            "reason": reason,
+            "stale_run_id": payload.get("run_id"),
+            "stale_run_started_at_utc": payload.get("run_started_at_utc"),
+            "stale_hostname": payload.get("hostname"),
+            "stale_pid": payload.get("pid"),
         },
     )
 

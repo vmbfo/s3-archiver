@@ -66,26 +66,32 @@ def test_file_lock_records_process_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
-def test_file_lock_keeps_timed_out_lock_for_live_process(tmp_path: Path) -> None:
+def test_file_lock_recovers_timed_out_lock_for_live_process(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
+    payload = {
+        "hostname": socket.gethostname(),
+        "pid": os.getpid(),
+        "run_id": "active",
+        "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
+    }
     _write_lock(
         lock_path,
-        {
-            "hostname": socket.gethostname(),
-            "pid": os.getpid(),
-            "run_id": "active",
-            "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
-        },
+        payload,
     )
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
 
-    acquired = FileArchiveRunLock(lock_path).acquire(
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, logged_payload: recoveries.append((reason, logged_payload)),
+    ).acquire(
         run_id="next",
         run_started_at_utc=datetime.now(tz=UTC),
         timeout=timedelta(seconds=1),
     )
 
-    assert acquired is False
-    assert _read_lock(lock_path)["run_id"] == "active"
+    assert acquired is True
+    assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [("stale_lock_timed_out", payload)]
 
 
 @pytest.mark.unit()
@@ -104,8 +110,12 @@ def test_file_lock_recovers_timed_out_lock_for_dead_process(
         },
     )
     monkeypatch.setattr(archive_lock, "_process_is_alive", _dead_process_is_alive)
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
 
-    acquired = FileArchiveRunLock(lock_path).acquire(
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, payload: recoveries.append((reason, payload)),
+    ).acquire(
         run_id="next",
         run_started_at_utc=datetime.now(tz=UTC),
         timeout=timedelta(seconds=1),
@@ -113,6 +123,47 @@ def test_file_lock_recovers_timed_out_lock_for_dead_process(
 
     assert acquired is True
     assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [
+        (
+            "stale_lock_timed_out",
+            {
+                "hostname": socket.gethostname(),
+                "pid": 123456,
+                "run_id": "dead",
+                "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
+            },
+        )
+    ]
+
+
+@pytest.mark.unit()
+def test_file_lock_recovers_dead_process_before_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_path = tmp_path / "archive.lock"
+    payload = {
+        "hostname": socket.gethostname(),
+        "pid": 123456,
+        "run_id": "dead",
+        "run_started_at_utc": datetime.now(tz=UTC).isoformat(),
+    }
+    _write_lock(lock_path, payload)
+    monkeypatch.setattr(archive_lock, "_process_is_alive", _dead_process_is_alive)
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
+
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, logged_payload: recoveries.append((reason, logged_payload)),
+    ).acquire(
+        run_id="next",
+        run_started_at_utc=datetime.now(tz=UTC),
+        timeout=timedelta(days=7),
+    )
+
+    assert acquired is True
+    assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [("stale_lock_abandoned", payload)]
 
 
 @pytest.mark.unit()
@@ -163,8 +214,12 @@ def test_file_lock_recovers_invalid_process_metadata(tmp_path: Path) -> None:
 def test_file_lock_recovers_invalid_metadata(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
     _write_lock(lock_path, {"run_id": "broken", "run_started_at_utc": "not-a-date"})
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
 
-    acquired = FileArchiveRunLock(lock_path).acquire(
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, payload: recoveries.append((reason, payload)),
+    ).acquire(
         run_id="next",
         run_started_at_utc=datetime.now(tz=UTC),
         timeout=timedelta(days=7),
@@ -172,3 +227,29 @@ def test_file_lock_recovers_invalid_metadata(tmp_path: Path) -> None:
 
     assert acquired is True
     assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [
+        ("invalid_lock_metadata", {"run_id": "broken", "run_started_at_utc": "not-a-date"})
+    ]
+
+
+@pytest.mark.unit()
+def test_file_lock_recovers_parseable_naive_timestamp_as_invalid_metadata(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "archive.lock"
+    payload = {"run_id": "naive", "run_started_at_utc": "2024-04-20T12:00:00"}
+    _write_lock(lock_path, payload)
+    recoveries: list[tuple[str, Mapping[str, object]]] = []
+
+    acquired = FileArchiveRunLock(
+        lock_path,
+        recovery_logger=lambda reason, logged_payload: recoveries.append((reason, logged_payload)),
+    ).acquire(
+        run_id="next",
+        run_started_at_utc=datetime.now(tz=UTC),
+        timeout=timedelta(days=7),
+    )
+
+    assert acquired is True
+    assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [("invalid_lock_metadata", payload)]

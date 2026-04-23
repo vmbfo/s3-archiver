@@ -25,8 +25,11 @@ class ArchivePayload(TypedDict):
     status: str
     phase: NotRequired[str]
     key: NotRequired[str | None]
+    message: NotRequired[str]
+    details: NotRequired[str]
     source_bucket: NotRequired[str]
     destination_bucket: NotRequired[str]
+    phases: NotRequired[dict[str, object]]
 
 
 @pytest.mark.unit()
@@ -52,7 +55,7 @@ def test_archive_command_runs_core_workflow_with_lock(
         return object()
 
     class RecordingLock:
-        def __init__(self, path: Path) -> None:
+        def __init__(self, path: Path, **_kwargs: object) -> None:
             lock_paths.append(path)
 
         def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
@@ -187,6 +190,8 @@ def _load_payload(output: str) -> ArchivePayload:
 def _archive_result(
     *,
     copy: ArchivePhaseResult | None = None,
+    verify: ArchivePhaseResult | None = None,
+    cleanup: ArchivePhaseResult | None = None,
 ) -> ArchiveRunResult:
     return ArchiveRunResult(
         run_id="run-id",
@@ -196,6 +201,6 @@ def _archive_result(
             entries=(),
         ),
         copy=copy or ArchivePhaseResult("copy"),
-        verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
+        verify=verify or ArchivePhaseResult("verify"),
+        cleanup=cleanup or ArchivePhaseResult("cleanup"),
     )

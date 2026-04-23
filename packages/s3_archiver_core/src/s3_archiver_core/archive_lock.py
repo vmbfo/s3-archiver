@@ -5,19 +5,23 @@ from __future__ import annotations
 import json
 import os
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
+
+LockRecoveryLogger = Callable[[str, Mapping[str, object]], None]
 
 
 class FileArchiveRunLock:
     """File-backed run lock with timeout-based stale lock recovery."""
 
     _path: Path
+    _recovery_logger: LockRecoveryLogger | None
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, recovery_logger: LockRecoveryLogger | None = None) -> None:
         self._path = path
+        self._recovery_logger = recovery_logger
 
     def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: timedelta) -> bool:
         """Acquire the file lock unless a non-stale run owns it."""
@@ -57,17 +61,24 @@ class FileArchiveRunLock:
             _safe_unlink(self._path)
 
     def _existing_lock_is_stale(self, timeout: timedelta) -> bool:
-        started = _lock_started_at(self._path)
+        decoded = _lock_json(self._path)
+        started = _lock_started_at(decoded)
         if started is None:
+            self._log_recovery("invalid_lock_metadata", decoded)
             _safe_unlink(self._path)
             return True
-        stale = datetime.now(tz=UTC) - started > timeout
-        if not stale:
+        timed_out = datetime.now(tz=UTC) - started > timeout
+        abandoned = not _lock_process_is_alive_on_this_host(decoded)
+        if not timed_out and not abandoned:
             return False
-        if _lock_process_is_alive_on_this_host(self._path):
-            return False
+        reason = "stale_lock_timed_out" if timed_out else "stale_lock_abandoned"
+        self._log_recovery(reason, decoded)
         _safe_unlink(self._path)
         return True
+
+    def _log_recovery(self, reason: str, payload: Mapping[str, object]) -> None:
+        if self._recovery_logger is not None:
+            self._recovery_logger(reason, payload)
 
 
 def parse_duration(value: str) -> timedelta:
@@ -91,15 +102,17 @@ def parse_duration(value: str) -> timedelta:
     raise ValueError(f"invalid duration {value!r}")
 
 
-def _lock_started_at(path: Path) -> datetime | None:
-    decoded = _lock_json(path)
+def _lock_started_at(decoded: Mapping[str, object]) -> datetime | None:
     value = decoded.get("run_started_at_utc")
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value)
+        started = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if started.tzinfo is None or started.utcoffset() is None:
+        return None
+    return started.astimezone(UTC)
 
 
 def _lock_run_id(path: Path) -> str | None:
@@ -109,8 +122,7 @@ def _lock_run_id(path: Path) -> str | None:
     return None
 
 
-def _lock_process_is_alive_on_this_host(path: Path) -> bool:
-    decoded = _lock_json(path)
+def _lock_process_is_alive_on_this_host(decoded: Mapping[str, object]) -> bool:
     hostname = decoded.get("hostname")
     pid = decoded.get("pid")
     if hostname != socket.gethostname() or type(pid) is not int or pid <= 0:

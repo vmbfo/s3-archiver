@@ -76,6 +76,7 @@ class ArchivePhaseResult:
 
     phase: str
     failures: tuple[str, ...] = ()
+    skipped: bool = False
 
     @property
     def ok(self) -> bool:
@@ -116,11 +117,11 @@ def run_archive(
 ) -> ArchiveRunResult:
     """Run strict list, copy, verify, cleanup phases."""
 
-    started = run_started_at_utc or datetime.now(tz=UTC)
+    now = clock or (lambda: datetime.now(tz=UTC))
+    started = run_started_at_utc or now()
     deadline = started + options.run_timeout
     if clock is None and run_started_at_utc is not None:
         deadline = datetime.max.replace(tzinfo=UTC)
-    now = clock or (lambda: datetime.now(tz=UTC))
     run_id = uuid4().hex
     if run_lock is not None and not run_lock.acquire(
         run_id=run_id, run_started_at_utc=started, timeout=options.run_timeout
@@ -286,7 +287,7 @@ def _future_result(future: Future[str | None]) -> str | None:
 
 
 def _skipped(phase: str) -> ArchivePhaseResult:
-    return ArchivePhaseResult(phase)
+    return ArchivePhaseResult(phase, skipped=True)
 
 
 def _timed_out(clock: Callable[[], datetime], deadline: datetime) -> bool:
