@@ -95,12 +95,19 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     payload = _load_payload(result.stderr)
     phases = _phase_payloads(payload)
     assert payload.get("phase") == "archive.copy"
+    assert payload.get("field") == "ARCHIVER_RUN_TIMEOUT"
+    assert payload.get("message") == "archive run timed out"
     assert payload.get("details") == "archive run timed out"
     assert payload.get("key") is None
+    assert payload.get("reason") == "archive_run_timeout"
+    assert payload.get("timed_out") is True
     assert phases["copy"]["status"] == "error"
     assert phases["verify"]["status"] == "skipped"
     assert phases["cleanup"]["status"] == "skipped"
-    assert any(payload.get("phase") == "archive.copy" for payload in logged_error_payloads)
+    assert any(
+        payload.get("phase") == "archive.copy" and payload.get("timed_out") is True
+        for payload in logged_error_payloads
+    )
 
 
 @pytest.mark.unit()
@@ -145,6 +152,13 @@ def test_archive_command_wires_lock_recovery_logger(
     class RecordingLock:
         def __init__(self, _path: Path, **kwargs: object) -> None:
             recovery_loggers.append(kwargs.get("recovery_logger"))
+
+        def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            _ = run_id
 
     def run_core_archive(
         source: object,

@@ -67,6 +67,10 @@ class FileArchiveRunLock:
             self._log_recovery("invalid_lock_metadata", decoded)
             _safe_unlink(self._path)
             return True
+        if _lock_is_from_prior_host(decoded):
+            self._log_recovery("stale_lock_prior_host", decoded)
+            _safe_unlink(self._path)
+            return True
         timed_out = datetime.now(tz=UTC) - started > timeout
         if not timed_out and _lock_process_is_alive_on_this_host(decoded):
             return False
@@ -121,6 +125,11 @@ def _lock_run_id(path: Path) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _lock_is_from_prior_host(decoded: Mapping[str, object]) -> bool:
+    hostname = decoded.get("hostname")
+    return isinstance(hostname, str) and hostname != socket.gethostname()
 
 
 def _lock_process_is_alive_on_this_host(decoded: Mapping[str, object]) -> bool:

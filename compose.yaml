@@ -15,6 +15,25 @@ services:
     volumes:
       - app_logs:/var/log/s3-archiver
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["schedule"]
+    depends_on:
+      localstack:
+        condition: service_healthy
+        required: false
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      LOG_DIR: /var/log/s3-archiver
+    profiles: ["schedule"]
+    restart: unless-stopped
+    volumes:
+      - app_logs:/var/log/s3-archiver
+
   localstack:
     image: localstack/localstack:4.8.1
     profiles: ["test"]

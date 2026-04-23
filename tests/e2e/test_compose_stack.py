@@ -195,6 +195,24 @@ def test_runtime_image_excludes_test_and_localstack_assets(compose_env: dict[str
     assert result.returncode == 0
 
 
+@pytest.mark.e2e()
+def test_compose_scheduler_service_runs_schedule_command(
+    compose_env: dict[str, str],
+) -> None:
+    result = subprocess.run(
+        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config", "scheduler"],
+        cwd=REPO_ROOT,
+        env=compose_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "command:" in result.stdout
+    assert "- schedule" in result.stdout
+    assert "restart: unless-stopped" in result.stdout
+
+
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:

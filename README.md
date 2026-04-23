@@ -38,7 +38,7 @@ docker compose --profile test down -v
 ```
 
 Running the app container without an explicit command prints CLI help and exits `0`.
-Use `s3-archiver check` for startup validation and `s3-archiver archive` for one archive invocation.
+Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
@@ -113,6 +113,8 @@ Run the production-style local wrapper:
 ```bash
 ENV_FILE=.env ./scripts/run_archive.sh
 make archive
+ARCHIVER_SCHEDULE_UTC=02:00 ENV_FILE=.env ./scripts/run_archive.sh schedule
+ARCHIVER_SCHEDULE_UTC=02:00 make archive-schedule
 ```
 
 Run checks:
@@ -170,14 +172,25 @@ LocalStack test-only helpers live under `docker/localstack/test-support` and are
 
 ## Local Scheduling
 
-Schedule exactly one local archive task on the production machine. The intended unit of work is one `s3-archiver archive` process, for example from a systemd timer that runs:
+Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick, so missed days are skipped instead of replayed.
 
 ```bash
 cd /opt/s3-archiver
-ENV_FILE=/opt/s3-archiver/.env ./scripts/run_archive.sh
+ARCHIVER_SCHEDULE_UTC=02:00 ENV_FILE=/opt/s3-archiver/.env ./scripts/run_archive.sh schedule
 ```
 
-Do not schedule the same archive from GitHub Actions, host cron, and a container at the same time. Each invocation takes a fresh UTC run timestamp, acquires the archive lock in `LOG_DIR`, and exits non-zero if another run is active. Missed timer ticks while the lock is held should be left skipped by the scheduler; do not configure catch-up replay.
+The same loop is available in Docker Compose:
+
+```bash
+ARCHIVER_SCHEDULE_UTC=02:00 docker compose --profile schedule up -d scheduler
+docker compose --profile schedule logs -f scheduler
+```
+
+If you prefer a host scheduler such as systemd, point it at one `archive` invocation and keep catch-up disabled. For a timer unit, set `Persistent=false` so missed runs are not replayed.
+
+Do not schedule the same archive from GitHub Actions, host cron, systemd, and a container at the same time. Archive exclusivity is acquired before S3 preflight work starts, the lock lives in `LOG_DIR`, and the current host will reclaim a stale lock left behind by a prior host or container instance under the single-container assumption.
+
+Timeout failures now surface explicitly with `field="ARCHIVER_RUN_TIMEOUT"`, `reason="archive_run_timeout"`, and `timed_out=true` in the archive JSON payload and structured error logs.
 
 ## Conventional Commits And Releases
 

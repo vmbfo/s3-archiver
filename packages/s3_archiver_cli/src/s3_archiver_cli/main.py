@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Annotated
+from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult, run_archive
+from s3_archiver_core.archive import ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -27,7 +31,18 @@ from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
-from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
+from s3_archiver_cli.error_logging import (
+    archive_failure_payload as _archive_failure_payload,
+)
+from s3_archiver_cli.error_logging import (
+    archive_result_payload as _archive_result_payload,
+)
+from s3_archiver_cli.error_logging import (
+    error_payload as _error_payload,
+)
+from s3_archiver_cli.error_logging import (
+    log_error_payload as _log_error_payload,
+)
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -77,19 +92,41 @@ def archive() -> None:
         settings = AppSettings.from_env(_load_runtime_env())
         prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
-        _ = run_health_check(settings, log_file)
         payload = _run_archive(settings, log_file)
     except S3ArchiverError as exc:
         payload = _error_payload(exc, settings)
         _log_error_payload(payload, exc)
         typer.echo(json.dumps(payload, sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
-
-    if payload.get("status") == "error":
-        _log_error_payload(payload)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
+    if not _emit_archive_payload(payload):
         raise typer.Exit(code=1)
-    typer.echo(json.dumps(payload, sort_keys=True))
+
+
+@app.command()
+def schedule(
+    daily_at_utc: Annotated[str, typer.Option(envvar="ARCHIVER_SCHEDULE_UTC")] = "02:00",
+) -> None:
+    """Run one archive invocation per UTC day without catch-up replay."""
+
+    settings: AppSettings | None = None
+    try:
+        settings = AppSettings.from_env(_load_runtime_env())
+        prepare_runtime_temp_dir(settings.temp_dir)
+        log_file = configure_logging(settings)
+    except S3ArchiverError as exc:
+        payload = _error_payload(exc, settings)
+        _log_error_payload(payload, exc)
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
+        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+    hour, minute = _parse_daily_at_utc(daily_at_utc)
+    while True:
+        _sleep_until_next_daily_tick(hour, minute)
+        try:
+            _ = _emit_archive_payload(_run_archive(settings, log_file))
+        except S3ArchiverError as exc:
+            payload = _error_payload(exc, settings)
+            _log_error_payload(payload, exc)
+            typer.echo(json.dumps(payload, sort_keys=True), err=True)
 
 
 def main() -> None:
@@ -109,7 +146,17 @@ def _exit_code_for_error(error: S3ArchiverError) -> int:
 
 
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
+    started = datetime.now(tz=UTC)
+    locked_run_id = uuid4().hex
+    run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=_log_lock_recovery)
+    if not run_lock.acquire(
+        run_id=locked_run_id,
+        run_started_at_utc=started,
+        timeout=settings.run_timeout,
+    ):
+        raise ArchiveRunError("archive run lock is already held")
     try:
+        _ = run_health_check(settings, log_file)
         source = S3ArchiveBucket(
             build_s3_client(settings.source), settings.source.bucket, settings.temp_dir
         )
@@ -122,13 +169,24 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
             source,
             destination,
             ArchiveOptions.from_settings(settings),
-            run_lock=FileArchiveRunLock(
-                _archive_lock_path(settings), recovery_logger=_log_lock_recovery
-            ),
+            run_started_at_utc=started,
             debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
         )
+        if result.run_id != locked_run_id:
+            result = ArchiveRunResult(
+                locked_run_id,
+                result.manifest,
+                result.copy,
+                result.verify,
+                result.cleanup,
+                result.list,
+            )
+    except S3ArchiverError:
+        raise
     except Exception as exc:
         raise ArchiveRunError(str(exc)) from exc
+    finally:
+        run_lock.release(run_id=locked_run_id)
     if result.ok:
         return _archive_result_payload("ok", result, settings, log_file)
     return _archive_failure_payload(result, settings, log_file)
@@ -138,95 +196,13 @@ def _archive_lock_path(settings: AppSettings) -> Path:
     return settings.log_dir / "archive.lock"
 
 
-def _archive_result_payload(
-    status: str,
-    result: ArchiveRunResult,
-    settings: AppSettings,
-    log_file: Path,
-) -> dict[str, JsonValue]:
-    return {
-        "status": status,
-        "run_id": result.run_id,
-        "source_bucket": settings.source.bucket,
-        "destination_bucket": settings.destination.bucket,
-        "log_file": str(log_file),
-        "manifest": {
-            "object_count": len(result.manifest.entries),
-            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
-            "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
-        },
-        "phases": {
-            "list": _phase_payload(result.list),
-            "copy": _phase_payload(result.copy),
-            "verify": _phase_payload(result.verify),
-            "cleanup": _phase_payload(result.cleanup),
-        },
-    }
-
-
-def _archive_failure_payload(
-    result: ArchiveRunResult,
-    settings: AppSettings,
-    log_file: Path,
-) -> dict[str, JsonValue]:
-    phase, detail = _first_archive_failure(result)
-    payload = _archive_result_payload("error", result, settings, log_file)
-    payload.update(
-        {
-            "phase": f"archive.{phase}",
-            "field": None,
-            "message": "archive run failed",
-            "details": detail,
-            "key": _failure_key(detail),
-            "mismatch": detail,
-        }
-    )
-    return payload
-
-
-def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
-    status = "error" if not result.ok else "skipped" if result.skipped else "ok"
-    return {
-        "status": status,
-        "failure_count": len(result.failures),
-        "failures": list(result.failures),
-    }
-
-
-def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
-    for phase in (result.list, result.copy, result.verify, result.cleanup):
-        if phase.failures:
-            return phase.phase, phase.failures[0]
-    return "unknown", "archive run failed"
-
-
-def _failure_key(detail: str) -> str | None:
-    key, separator, _remainder = detail.partition(":")
-    if separator == "":
-        return None
-    return key
-
-
-def _error_payload(
-    error: S3ArchiverError, settings: AppSettings | None = None
-) -> dict[str, JsonValue]:
-    if isinstance(error, ConfigError):
-        phase = "startup.env_validation"
-    elif isinstance(error, ArchiveRunError):
-        phase = "archive.run"
-    else:
-        phase = "startup.preflight"
-    return {
-        "status": "error",
-        "phase": phase,
-        "field": _error_field(error),
-        "message": str(error),
-        "details": str(error),
-        "source_bucket": settings.source.bucket if settings is not None else None,
-        "destination_bucket": settings.destination.bucket if settings is not None else None,
-        "key": None,
-        "mismatch": None,
-    }
+def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:
+    if payload.get("status") == "error":
+        _log_error_payload(payload)
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
+        return False
+    typer.echo(json.dumps(payload, sort_keys=True))
+    return True
 
 
 def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
@@ -255,33 +231,28 @@ def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
     )
 
 
-def _field_from_error_message(message: str) -> str | None:
-    first_token = message.partition(" ")[0]
-    if (
-        first_token.isidentifier()
-        or first_token.startswith("S3_")
-        or first_token.startswith("ARCHIVER_")
-    ):
-        return first_token
-    return None
+def _parse_daily_at_utc(value: str) -> tuple[int, int]:
+    hour_text, separator, minute_text = value.partition(":")
+    if separator != ":" or not hour_text.isdigit() or not minute_text.isdigit():
+        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if hour not in range(24) or minute not in range(60):
+        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
+    return hour, minute
 
 
-def _error_field(error: S3ArchiverError) -> str | None:
-    if isinstance(error, ConfigError):
-        return _field_from_error_message(str(error))
-    if isinstance(error, LoggingError):
-        return "logging"
-    if isinstance(error, HealthCheckError):
-        return _preflight_field_from_health_error(str(error))
-    return None
-
-
-def _preflight_field_from_health_error(message: str) -> str | None:
-    lowered = message.lower()
-    if "source bucket versioning" in lowered:
-        return "source_bucket_versioning"
-    if "source bucket" in lowered:
-        return "source_bucket_access"
-    if "destination bucket" in lowered:
-        return "destination_bucket_access"
-    return "s3_connectivity"
+def _sleep_until_next_daily_tick(hour: int, minute: int) -> None:
+    now = datetime.now(tz=UTC)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    logging.getLogger("s3_archiver.archive").info(
+        "archive schedule waiting for next tick",
+        extra={
+            "event": "archive.schedule.waiting",
+            "scheduled_at_utc": target.isoformat(),
+            "sleep_seconds": max(int((target - now).total_seconds()), 0),
+        },
+    )
+    time.sleep(max((target - now).total_seconds(), 0.0))

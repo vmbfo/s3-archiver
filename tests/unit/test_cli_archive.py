@@ -39,6 +39,7 @@ def test_archive_command_runs_core_workflow_with_lock(
 ) -> None:
     monkeypatch.setattr(os, "environ", base_env)
     built_locations: list[str] = []
+    call_order: list[str] = []
     lock_paths: list[Path] = []
     option_retention_days: list[int] = []
     health_checked: list[Path] = []
@@ -51,6 +52,7 @@ def test_archive_command_runs_core_workflow_with_lock(
         return object()
 
     def run_health(_settings: AppSettings, log_file: Path) -> object:
+        call_order.append("health")
         health_checked.append(log_file)
         return object()
 
@@ -60,10 +62,12 @@ def test_archive_command_runs_core_workflow_with_lock(
 
         def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
             _ = (run_id, run_started_at_utc, timeout)
+            call_order.append("lock.acquire")
             return True
 
         def release(self, *, run_id: str) -> None:
             _ = run_id
+            call_order.append("lock.release")
 
     def run_core_archive(
         source: object,
@@ -74,6 +78,7 @@ def test_archive_command_runs_core_workflow_with_lock(
         **_kwargs: object,
     ) -> ArchiveRunResult:
         _unused = (source, destination, run_lock, _kwargs)
+        call_order.append("run_archive")
         option_retention_days.append(options.retention_days)
         return _archive_result()
 
@@ -94,6 +99,7 @@ def test_archive_command_runs_core_workflow_with_lock(
     assert health_checked == [Path("/tmp/s3-archiver.log")]
     assert lock_paths == [Path(base_env["LOG_DIR"]) / "archive.lock"]
     assert option_retention_days == [60]
+    assert call_order == ["lock.acquire", "health", "run_archive", "lock.release"]
 
 
 @pytest.mark.unit()
@@ -181,6 +187,41 @@ def test_archive_command_wires_debug_transfer_logger(
 
     assert result.exit_code == 0
     assert callable(debug_loggers[0])
+
+
+@pytest.mark.unit()
+def test_schedule_command_runs_archive_after_first_tick(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    scheduled_runs: list[dict[str, str]] = []
+    sleep_calls = 0
+
+    def configure(_settings: AppSettings) -> Path:
+        return Path("/tmp/log")
+
+    def fake_sleep_until_tick(hour: int, minute: int) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            raise RuntimeError("stop scheduler test")
+        assert (hour, minute) == (4, 5)
+
+    def fake_run_archive(_settings: AppSettings, _log_file: Path) -> dict[str, str]:
+        payload = {"status": "ok", "run_id": "scheduled-run"}
+        scheduled_runs.append(payload)
+        return payload
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
+    monkeypatch.setattr(cli_module, "_run_archive", fake_run_archive)
+
+    result = RUNNER.invoke(cli_module.app, ["schedule", "--daily-at-utc", "04:05"])
+
+    assert isinstance(result.exception, RuntimeError)
+    assert "stop scheduler test" in str(result.exception)
+    assert scheduled_runs == [{"status": "ok", "run_id": "scheduled-run"}]
 
 
 def _load_payload(output: str) -> ArchivePayload:

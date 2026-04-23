@@ -5,6 +5,17 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
+from pathlib import Path
+
+from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
+from s3_archiver_core.errors import (
+    ArchiveRunError,
+    ConfigError,
+    HealthCheckError,
+    LoggingError,
+    S3ArchiverError,
+)
+from s3_archiver_core.settings import AppSettings
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -32,3 +43,128 @@ def _error_log_extra(payload: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
         if isinstance(value, (str, int, float, bool)) or value is None:
             extra[f"error_{key}"] = value
     return extra
+
+
+def archive_result_payload(
+    status: str,
+    result: ArchiveRunResult,
+    settings: AppSettings,
+    log_file: Path,
+) -> dict[str, JsonValue]:
+    return {
+        "status": status,
+        "run_id": result.run_id,
+        "source_bucket": settings.source.bucket,
+        "destination_bucket": settings.destination.bucket,
+        "log_file": str(log_file),
+        "manifest": {
+            "object_count": len(result.manifest.entries),
+            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
+            "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
+        },
+        "phases": {
+            "list": _phase_payload(result.list),
+            "copy": _phase_payload(result.copy),
+            "verify": _phase_payload(result.verify),
+            "cleanup": _phase_payload(result.cleanup),
+        },
+    }
+
+
+def archive_failure_payload(
+    result: ArchiveRunResult,
+    settings: AppSettings,
+    log_file: Path,
+) -> dict[str, JsonValue]:
+    phase, detail = _first_archive_failure(result)
+    timed_out = detail == "archive run timed out"
+    payload = archive_result_payload("error", result, settings, log_file)
+    payload.update(
+        {
+            "phase": f"archive.{phase}",
+            "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else None,
+            "message": detail if timed_out else "archive run failed",
+            "details": detail,
+            "key": _failure_key(detail),
+            "mismatch": detail,
+            "reason": "archive_run_timeout" if timed_out else None,
+            "timed_out": timed_out,
+        }
+    )
+    return payload
+
+
+def error_payload(
+    error: S3ArchiverError, settings: AppSettings | None = None
+) -> dict[str, JsonValue]:
+    phase = (
+        "startup.env_validation"
+        if isinstance(error, ConfigError)
+        else "archive.run"
+        if isinstance(error, ArchiveRunError)
+        else "startup.preflight"
+    )
+    return {
+        "status": "error",
+        "phase": phase,
+        "field": _error_field(error),
+        "message": str(error),
+        "details": str(error),
+        "source_bucket": settings.source.bucket if settings is not None else None,
+        "destination_bucket": settings.destination.bucket if settings is not None else None,
+        "key": None,
+        "mismatch": None,
+    }
+
+
+def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
+    status = "error" if not result.ok else "skipped" if result.skipped else "ok"
+    return {
+        "status": status,
+        "failure_count": len(result.failures),
+        "failures": list(result.failures),
+    }
+
+
+def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
+    for phase in (result.list, result.copy, result.verify, result.cleanup):
+        if phase.failures:
+            return phase.phase, phase.failures[0]
+    return "unknown", "archive run failed"
+
+
+def _failure_key(detail: str) -> str | None:
+    key, separator, _ = detail.partition(":")
+    return key if separator else None
+
+
+def _error_field(error: S3ArchiverError) -> str | None:
+    if isinstance(error, ConfigError):
+        return _field_from_error_message(str(error))
+    if isinstance(error, LoggingError):
+        return "logging"
+    if isinstance(error, HealthCheckError):
+        return _preflight_field_from_health_error(str(error))
+    return None
+
+
+def _field_from_error_message(message: str) -> str | None:
+    first_token = message.partition(" ")[0]
+    if (
+        first_token.isidentifier()
+        or first_token.startswith("S3_")
+        or first_token.startswith("ARCHIVER_")
+    ):
+        return first_token
+    return None
+
+
+def _preflight_field_from_health_error(message: str) -> str | None:
+    lowered = message.lower()
+    if "source bucket versioning" in lowered:
+        return "source_bucket_versioning"
+    if "source bucket" in lowered:
+        return "source_bucket_access"
+    if "destination bucket" in lowered:
+        return "destination_bucket_access"
+    return "s3_connectivity"
