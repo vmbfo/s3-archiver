@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import textwrap
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import override
+from threading import Event, Thread
+from typing import cast, override
 
 import pytest
-from s3_archiver_core.archive import run_archive
+from s3_archiver_core.archive import ArchiveRunResult, run_archive
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ObjectProperties
@@ -21,7 +19,7 @@ from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
 @pytest.mark.unit()
-def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> None:
+def test_run_archive_waits_for_active_copy_worker_before_timeout_returns() -> None:
     class SlowCopyBucket(FakeBucket):
         @override
         def copy_from(
@@ -66,31 +64,80 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
     )
 
     assert result.copy.failures == ("archive run timed out",)
-    assert time.monotonic() - began < 0.18
+    assert time.monotonic() - began >= 0.18
 
 
 @pytest.mark.unit()
-def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
-    script = textwrap.dedent(
-        """
-        import time
-        from datetime import UTC, datetime, timedelta
-        from tests.unit.archive_workflow_fakes import FakeBucket, listed_object
-        from s3_archiver_core.archive import run_archive
-        from s3_archiver_core.archive_options import ArchiveOptions
+def test_run_archive_releases_lock_after_timed_out_copy_worker_finishes() -> None:
+    copy_started = Event()
+    allow_copy_exit = Event()
+    copy_finished = Event()
 
-        class SlowCopyBucket(FakeBucket):
-            def copy_from(self, *args, **kwargs):
-                time.sleep(2)
+    class RecordingRunLock:
+        def __init__(self) -> None:
+            self.released: list[str] = []
 
-        run_archive(
-            FakeBucket("source", (listed_object("slow.txt", 90),)),
-            SlowCopyBucket("destination"),
+        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: timedelta) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            self.released.append(run_id)
+
+    class BlockingCopyBucket(FakeBucket):
+        @override
+        def copy_from(
+            self,
+            source: object,
+            source_bucket: str,
+            source_key: str,
+            source_version_id: str | None,
+            properties: S3ObjectProperties,
+            destination_key: str,
+            destination_metadata: Mapping[str, str],
+            strategy: TransferStrategy,
+        ) -> None:
+            _ = (
+                source,
+                source_bucket,
+                source_key,
+                source_version_id,
+                properties,
+                destination_key,
+                destination_metadata,
+                strategy,
+            )
+            copy_started.set()
+            try:
+                assert allow_copy_exit.wait(timeout=5)
+            finally:
+                copy_finished.set()
+
+    lock = RecordingRunLock()
+    result: dict[str, object] = {}
+
+    def run() -> None:
+        result["value"] = run_archive(
+            FakeBucket("source", (_listed("slow.txt", 90),)),
+            BlockingCopyBucket("destination"),
             ArchiveOptions(retention_days=60, run_timeout=timedelta(milliseconds=50)),
             run_started_at_utc=datetime.now(tz=UTC),
+            run_lock=lock,
             clock=lambda: datetime.now(tz=UTC),
         )
-        """
-    )
 
-    _ = subprocess.run([sys.executable, "-c", script], check=True, timeout=1.0)
+    archive_thread = Thread(target=run)
+    archive_thread.start()
+
+    assert copy_started.wait(timeout=5)
+    time.sleep(0.1)
+    assert lock.released == []
+
+    allow_copy_exit.set()
+    assert copy_finished.wait(timeout=5)
+    archive_thread.join(timeout=5)
+
+    assert not archive_thread.is_alive()
+    archive_result = cast(ArchiveRunResult, result["value"])
+    assert archive_result.copy.failures == ("archive run timed out",)
+    assert lock.released == [archive_result.run_id]

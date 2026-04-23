@@ -6,19 +6,19 @@ import json
 import os
 import socket
 import subprocess
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from typing import cast
 
 import pytest
-import s3_archiver_core.archive_s3 as archive_s3_module
 import s3_archiver_cli.main as cli_module
+import s3_archiver_core.archive_s3 as archive_s3_module
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.logging_config import configure_logging
-from s3_archiver_core.s3 import S3Client
-from s3_archiver_core.s3 import S3ObjectProperties
+from s3_archiver_core.s3 import S3Client, S3ObjectProperties
 from s3_archiver_core.settings import AppSettings
 
 from tests.integration.localstack_harness import (
@@ -29,8 +29,8 @@ from tests.integration.localstack_harness import (
 from tests.integration.localstack_object_helpers import (
     listed_keys,
     localstack_s3_client,
+    seed_timestamped_objects,
 )
-from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
 
 @pytest.mark.integration()
@@ -109,7 +109,6 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
 def test_schedule_retries_after_timeout_on_next_tick(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    compose_env: dict[str, str],
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
@@ -122,13 +121,21 @@ def test_schedule_retries_after_timeout_on_next_tick(
     seed_now = datetime.now(tz=UTC).replace(microsecond=0)
     prefix = "schedule-timeout"
     key = f"{prefix}/age-61-days.txt"
-    _ = run_timestamp_seed_helper(compose_env, prefix=prefix, days=(61,), seed_now=seed_now)
+    seed_timestamped_objects(
+        source_client,
+        localstack_bucket_pair.source,
+        prefix=prefix,
+        days=(61,),
+        seed_now=seed_now,
+    )
     lock_path = settings.log_dir / "archive.lock"
     sleep_calls = 0
     copy_attempts = 0
     slow_copy_started = Event()
     allow_slow_copy_exit = Event()
     slow_copy_finished = Event()
+    timeout_observations: dict[str, object] = {}
+    observer_errors: list[str] = []
     original_copy = archive_s3_module.copy_s3_object
 
     def slow_first_copy(
@@ -167,31 +174,48 @@ def test_schedule_retries_after_timeout_on_next_tick(
             temp_dir,
         )
 
+    def observe_timeout_window() -> None:
+        try:
+            if not slow_copy_started.wait(timeout=5):
+                observer_errors.append("slow copy never started")
+                return
+            time.sleep(1.2)
+            timeout_observations["copy_attempts"] = copy_attempts
+            timeout_observations["destination_keys"] = listed_keys(
+                destination_client, localstack_bucket_pair.destination
+            )
+            timeout_observations["lock_exists"] = lock_path.exists()
+        finally:
+            allow_slow_copy_exit.set()
+
     def fake_sleep_until_tick(hour: int, minute: int) -> None:
         nonlocal sleep_calls
         _ = (hour, minute)
         sleep_calls += 1
-        if sleep_calls == 1:
-            return
-        if sleep_calls == 2:
-            assert slow_copy_started.wait(timeout=5)
-            assert not lock_path.exists()
-            assert listed_keys(destination_client, localstack_bucket_pair.destination) == set()
-            allow_slow_copy_exit.set()
-            assert slow_copy_finished.wait(timeout=5)
+        if sleep_calls <= 2:
             return
         raise RuntimeError("stop scheduler integration test")
 
     monkeypatch.setattr(os, "environ", env)
     monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
     monkeypatch.setattr(archive_s3_module, "copy_s3_object", slow_first_copy)
+    observer = Thread(target=observe_timeout_window)
+    observer.start()
 
     with pytest.raises(RuntimeError, match="stop scheduler integration test"):
         cli_module.schedule(daily_at_utc="04:05")
+    observer.join(timeout=5)
 
+    assert not observer.is_alive()
     captured = capsys.readouterr()
     error_payload = _last_json(captured.err)
     success_payload = _last_json(captured.out)
+    assert observer_errors == []
+    assert timeout_observations == {
+        "copy_attempts": 1,
+        "destination_keys": set(),
+        "lock_exists": True,
+    }
     assert error_payload["phase"] == "archive.copy"
     assert error_payload["field"] == "ARCHIVER_RUN_TIMEOUT"
     assert error_payload["message"] == "archive run timed out"
@@ -200,6 +224,7 @@ def test_schedule_retries_after_timeout_on_next_tick(
     assert success_payload["status"] == "ok"
     assert success_payload["manifest"]["object_count"] == 1
     assert copy_attempts == 2
+    assert slow_copy_finished.is_set()
     assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {key}
     assert not lock_path.exists()
