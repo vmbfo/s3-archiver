@@ -13,6 +13,7 @@ import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
 from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
@@ -55,6 +56,26 @@ def test_archive_command_uses_timeout_enforced_wrapper(
 
     assert result.exit_code == 0
     assert recorded_logs == [Path("/tmp/s3-archiver.log")]
+
+
+@pytest.mark.unit()
+def test_archive_command_reports_startup_error_before_wrapper_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def raise_config_error(_env: dict[str, str]) -> AppSettings:
+        raise ConfigError("ARCHIVER_RUN_TIMEOUT is invalid")
+
+    monkeypatch.setattr(AppSettings, "from_env", raise_config_error)
+
+    result = RUNNER.invoke(cli_module.app, ["archive"])
+
+    assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload.get("field") == "ARCHIVER_RUN_TIMEOUT"
 
 
 @pytest.mark.unit()
