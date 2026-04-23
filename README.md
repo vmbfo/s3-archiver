@@ -197,7 +197,7 @@ docker compose --profile schedule logs -f scheduler
 
 If you prefer a host scheduler such as systemd, point it at one `archive` invocation and keep catch-up disabled. For a timer unit, set `Persistent=false` so missed runs are not replayed.
 
-Do not schedule the same archive from GitHub Actions, host cron, systemd, and a container at the same time. Archive exclusivity is acquired before S3 preflight work starts, the lock lives in `LOG_DIR`, and the current host will reclaim a stale lock left behind by a prior host or container instance under the single-container assumption.
+Do not schedule the same archive from GitHub Actions, host cron, systemd, and a container at the same time. Archive exclusivity is acquired before S3 preflight work starts, the lock lives in `LOG_DIR`, and stale-lock recovery is limited to timed-out runs, invalid lock metadata, or a dead owner process proven on the current host.
 
 Timeout failures now surface explicitly with `field="ARCHIVER_RUN_TIMEOUT"`, `reason="archive_run_timeout"`, and `timed_out=true` in the archive JSON payload and structured error logs.
 
