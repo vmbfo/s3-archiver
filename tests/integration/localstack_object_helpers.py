@@ -113,14 +113,14 @@ def _object_entries(value: object) -> list[dict[str, object]]:
 
 
 def _retry_localstack_call(
-    operation: Callable[[], dict[str, object]],
+    operation: Callable[[], Mapping[str, object]],
     *,
     attempts: int = 5,
     delay_seconds: float = 0.5,
-) -> dict[str, object]:
+) -> Mapping[str, object]:
     for attempt in range(attempts):
         try:
-            return cast(dict[str, object], operation())
+            return operation()
         except (BotoCoreError, ClientError) as exc:
             if attempt == attempts - 1 or not _is_retryable_localstack_error(exc):
                 raise
