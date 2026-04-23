@@ -55,7 +55,7 @@ def test_archive_command_reports_lock_refusal_payload(
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
     payload = _load_payload(result.stderr)
@@ -93,7 +93,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
     monkeypatch.setattr(cli_module, "_log_error_payload", logged_error_payloads.append)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
     payload = _load_payload(result.stderr)
@@ -136,7 +136,7 @@ def test_archive_command_reports_error_when_skipped_phase_has_failures(
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
     copy_phase = _phase_payloads(_load_payload(result.stderr))["copy"]

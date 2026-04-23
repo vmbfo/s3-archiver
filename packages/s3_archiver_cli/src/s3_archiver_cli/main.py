@@ -43,7 +43,10 @@ from s3_archiver_cli.error_logging import (
 from s3_archiver_cli.error_logging import (
     log_error_payload as _log_error_payload,
 )
-from s3_archiver_cli.scheduled_archive import run_scheduled_archive
+from s3_archiver_cli.scheduled_archive import (
+    run_archive_subprocess,
+    run_scheduled_archive,
+)
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -86,6 +89,25 @@ def check() -> None:
 
 @app.command()
 def archive() -> None:
+    """Run one archive workflow invocation via a timeout-enforced child process."""
+
+    settings: AppSettings | None = None
+    try:
+        settings = AppSettings.from_env(_load_runtime_env())
+        prepare_runtime_temp_dir(settings.temp_dir)
+        log_file = configure_logging(settings)
+    except S3ArchiverError as exc:
+        payload = _error_payload(exc, settings)
+        _log_error_payload(payload, exc)
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
+        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+    exit_code = _run_archive_command(settings, log_file)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+@app.command("archive-once", hidden=True)
+def archive_once() -> None:
     """Run one archive workflow invocation."""
 
     settings: AppSettings | None = None
@@ -191,6 +213,10 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     if result.ok:
         return _archive_result_payload("ok", result, settings, log_file)
     return _archive_failure_payload(result, settings, log_file)
+
+
+def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
+    return run_archive_subprocess(settings, log_file, recovery_logger=_log_lock_recovery)
 
 
 def _archive_lock_path(settings: AppSettings) -> Path:

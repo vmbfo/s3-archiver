@@ -33,7 +33,32 @@ class ArchivePayload(TypedDict):
 
 
 @pytest.mark.unit()
-def test_archive_command_runs_core_workflow_with_lock(
+def test_archive_command_uses_timeout_enforced_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    recorded_logs: list[Path] = []
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def run_archive_command(settings: AppSettings, log_file: Path) -> int:
+        assert settings.source.bucket == "archive-bucket"
+        recorded_logs.append(log_file)
+        return 0
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "_run_archive_command", run_archive_command)
+
+    result = RUNNER.invoke(cli_module.app, ["archive"])
+
+    assert result.exit_code == 0
+    assert recorded_logs == [Path("/tmp/s3-archiver.log")]
+
+
+@pytest.mark.unit()
+def test_archive_once_command_runs_core_workflow_with_lock(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
@@ -88,7 +113,7 @@ def test_archive_command_runs_core_workflow_with_lock(
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
@@ -136,7 +161,7 @@ def test_archive_command_reports_phase_failure_on_stderr(
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -183,7 +208,7 @@ def test_archive_command_wires_debug_transfer_logger(
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
     assert callable(debug_loggers[0])

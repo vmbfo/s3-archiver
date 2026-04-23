@@ -23,10 +23,56 @@ type RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 type Echo = Callable[[str], None]
 
 
+def archive_child_command() -> list[str]:
+    """Return the in-process archive child command used by wrappers."""
+
+    return [sys.executable, "-c", "from s3_archiver_cli.main import main; main()", "archive-once"]
+
+
 def scheduled_archive_command() -> list[str]:
     """Return the archive command used by the scheduler."""
 
-    return [sys.executable, "-c", "from s3_archiver_cli.main import main; main()", "archive"]
+    return archive_child_command()
+
+
+def run_archive_subprocess(
+    settings: AppSettings,
+    log_file: Path,
+    *,
+    recovery_logger: LockRecoveryLogger | None = None,
+    command: Sequence[str] | None = None,
+    run_command: RunCommand = subprocess.run,
+    stdout_echo: Echo | None = None,
+    stderr_echo: Echo | None = None,
+    log_error: Callable[[Mapping[str, JsonValue]], None] = _log_error_payload,
+    now: Callable[[], datetime] | None = None,
+) -> int:
+    """Run one archive child process and relay its output."""
+
+    emit_stdout = _stdout_echo if stdout_echo is None else stdout_echo
+    emit_stderr = _stderr_echo if stderr_echo is None else stderr_echo
+    clock = _utc_now if now is None else now
+    process_command = list(command or archive_child_command())
+    try:
+        result = run_command(
+            process_command,
+            env=dict(os.environ),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=settings.run_timeout.total_seconds(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _relay_output(_as_text(exc.stdout), emit_stdout)
+        _relay_output(_as_text(exc.stderr), emit_stderr)
+        _recover_stale_archive_lock(settings, recovery_logger, clock)
+        payload = _timeout_payload(settings, log_file)
+        log_error(payload)
+        emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
+        return 1
+    _relay_output(result.stdout, emit_stdout)
+    _relay_output(result.stderr, emit_stderr)
+    return result.returncode
 
 
 def run_scheduled_archive(
@@ -43,29 +89,17 @@ def run_scheduled_archive(
 ) -> None:
     """Run one scheduled archive child process and relay its output."""
 
-    emit_stdout = _stdout_echo if stdout_echo is None else stdout_echo
-    emit_stderr = _stderr_echo if stderr_echo is None else stderr_echo
-    clock = _utc_now if now is None else now
-    process_command = list(command or scheduled_archive_command())
-    try:
-        result = run_command(
-            process_command,
-            env=dict(os.environ),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=settings.run_timeout.total_seconds(),
-        )
-    except subprocess.TimeoutExpired as exc:
-        _relay_output(_as_text(exc.stdout), emit_stdout)
-        _relay_output(_as_text(exc.stderr), emit_stderr)
-        _recover_stale_archive_lock(settings, recovery_logger, clock)
-        payload = _timeout_payload(settings, log_file)
-        log_error(payload)
-        emit_stderr(json.dumps(payload, sort_keys=True))
-        return
-    _relay_output(result.stdout, emit_stdout)
-    _relay_output(result.stderr, emit_stderr)
+    _ = run_archive_subprocess(
+        settings,
+        log_file,
+        recovery_logger=recovery_logger,
+        command=command or scheduled_archive_command(),
+        run_command=run_command,
+        stdout_echo=stdout_echo,
+        stderr_echo=stderr_echo,
+        log_error=log_error,
+        now=now,
+    )
 
 
 def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:

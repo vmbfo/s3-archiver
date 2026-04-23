@@ -62,7 +62,7 @@ def test_archive_command_wires_lock_recovery_logger(
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
     assert callable(recovery_loggers[0])

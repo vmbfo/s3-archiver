@@ -257,7 +257,7 @@ def test_scheduled_archive_command_targets_archive_cli() -> None:
         sys.executable,
         "-c",
         "from s3_archiver_cli.main import main; main()",
-        "archive",
+        "archive-once",
     ]
 
 

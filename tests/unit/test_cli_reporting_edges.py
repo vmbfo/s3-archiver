@@ -50,7 +50,7 @@ def test_archive_failure_payload_falls_back_when_no_phase_has_failures(
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
     payload = load_payload(result.stderr)
@@ -127,7 +127,7 @@ def test_debug_archive_run_logs_transfer_decision(
 
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
     context = contexts[-1]
@@ -182,7 +182,7 @@ def test_archive_lock_recovery_logger_adds_structured_context(
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecoveringLock)
     monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
-    result = RUNNER.invoke(cli_module.app, ["archive"])
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
     context = contexts[-1]

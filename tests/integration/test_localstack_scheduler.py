@@ -16,6 +16,7 @@ import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 from s3_archiver_core.settings import AppSettings
+from typer.testing import CliRunner
 
 from tests.integration.archive_cli_test_support import ArchiveCommandPayload
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
@@ -29,6 +30,8 @@ from tests.integration.localstack_object_helpers import (
     localstack_s3_client,
     seed_timestamped_objects,
 )
+
+RUNNER = CliRunner()
 
 
 class SchedulerErrorPayload(TypedDict):
@@ -111,6 +114,65 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
     log_text = log_file.read_text(encoding="utf-8")
     assert '"event": "archive.lock.recovered"' in log_text
     assert '"reason": "stale_lock_prior_host"' in log_text
+
+
+@pytest.mark.integration()
+def test_archive_command_times_out_without_late_child_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _integration_env(tmp_path, localstack_bucket_pair)
+    env["ARCHIVER_RUN_TIMEOUT"] = "1s"
+    settings = AppSettings.from_env(env)
+    lock_path = settings.log_dir / "archive.lock"
+    marker_path = tmp_path / "late-mutation.txt"
+    timeout_probe = textwrap.dedent(
+        f"""
+        import json
+        import time
+        from datetime import UTC, datetime, timedelta
+        from pathlib import Path
+
+        from s3_archiver_core.archive_lock import FileArchiveRunLock
+
+        lock = FileArchiveRunLock(Path({str(lock_path)!r}))
+        if not lock.acquire(
+            run_id="timed-out-run",
+            run_started_at_utc=datetime.now(tz=UTC),
+            timeout=timedelta(seconds=1),
+        ):
+            raise SystemExit("failed to acquire archive lock")
+        print(json.dumps({{"lock_acquired": True}}), flush=True)
+        time.sleep(2)
+        Path({str(marker_path)!r}).write_text("late mutation\\n", encoding="utf-8")
+        print(json.dumps({{"mutated": True}}), flush=True)
+        """
+    ).strip()
+
+    def fake_archive_child_command() -> list[str]:
+        return [sys.executable, "-c", timeout_probe]
+
+    monkeypatch.setattr(os, "environ", env)
+    monkeypatch.setattr(
+        scheduled_archive_module,
+        "archive_child_command",
+        fake_archive_child_command,
+    )
+
+    result = RUNNER.invoke(cli_module.app, ["archive"])
+
+    assert result.exit_code == 1
+    assert '"lock_acquired": true' in result.stdout
+    assert '"mutated": true' not in result.stdout
+    payload = _last_error_payload(result.stderr)
+    assert payload["phase"] == "archive.run"
+    assert payload["field"] == "ARCHIVER_RUN_TIMEOUT"
+    assert payload["message"] == "archive run timed out"
+    assert payload["reason"] == "archive_run_timeout"
+    assert payload["timed_out"] is True
+    assert not marker_path.exists()
+    assert not lock_path.exists()
 
 
 @pytest.mark.integration()
