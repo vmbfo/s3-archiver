@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 from mypy_boto3_s3.type_defs import VersioningConfigurationTypeDef
+from s3_archiver_core.archive_s3 import S3ArchiveBucket
 
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
@@ -144,3 +145,59 @@ def test_archive_command_cleans_up_null_version_when_localstack_supports_it(
             source_client, localstack_bucket_pair.source, key
         )
     )
+
+
+@pytest.mark.integration()
+def test_versioned_listing_paginates_across_pages_and_filters_delete_markers(
+    tmp_path: Path,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _archive_env(tmp_path, localstack_bucket_pair)
+    source_client = _client(env, "source")
+    _ = source_client.put_bucket_versioning(
+        Bucket=localstack_bucket_pair.source,
+        VersioningConfiguration={"Status": "Enabled"},
+    )
+    early_deleted_keys = {f"aaa-deleted-{index:04d}.txt" for index in range(2)}
+    live_keys = {f"mmm-live-{index:04d}.txt" for index in range(998)}
+    late_deleted_keys = {f"zzz-deleted-{index:04d}.txt" for index in range(2)}
+    for key in sorted(early_deleted_keys):
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
+        _ = source_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
+    for key in sorted(live_keys):
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
+    for key in sorted(late_deleted_keys):
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
+        _ = source_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
+
+    first_page = source_client.list_object_versions(
+        Bucket=localstack_bucket_pair.source,
+        MaxKeys=1000,
+    )
+    second_page = source_client.list_object_versions(
+        Bucket=localstack_bucket_pair.source,
+        MaxKeys=1000,
+        KeyMarker=str(first_page["NextKeyMarker"]),
+        VersionIdMarker=str(first_page["NextVersionIdMarker"]),
+    )
+    listed = list(
+        S3ArchiveBucket(source_client, localstack_bucket_pair.source).list_source_objects("Enabled")
+    )
+
+    assert first_page["IsTruncated"] is True
+    assert _delete_marker_keys(first_page) == early_deleted_keys
+    assert _delete_marker_keys(second_page) == late_deleted_keys
+    assert {entry.key for entry in listed} == live_keys
+    assert len(listed) == len(live_keys)
+    assert all(entry.version_id is not None for entry in listed)
+
+
+def _delete_marker_keys(page: dict[str, object]) -> set[str]:
+    delete_markers = page.get("DeleteMarkers")
+    if not isinstance(delete_markers, list):
+        return set()
+    return {
+        str(marker["Key"])
+        for marker in delete_markers
+        if isinstance(marker, dict) and marker.get("Key") is not None
+    }

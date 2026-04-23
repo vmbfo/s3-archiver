@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Literal, cast
 
 import pytest
+import s3_archiver_cli.main as cli_module
 from botocore.response import StreamingBody
 from mypy_boto3_s3.type_defs import VersioningConfigurationTypeDef
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.s3 import VersioningState, build_s3_client
 from s3_archiver_core.settings import AppSettings
+from typer.testing import CliRunner
 
 from tests.integration.localstack_harness import (
     LOCALSTACK_HOST_ENDPOINT,
@@ -33,6 +35,7 @@ APP_LOGS_VOLUME = f"{REPO_ROOT.name}_app_logs"
 INTEGRATION_RUNTIME_LOG_DIR = (
     REPO_ROOT / ".local" / "integration-runtime" / "var" / "log" / "s3-archiver"
 )
+RUNNER = CliRunner()
 
 
 def _integration_env(bucket_pair: LocalstackBucketPair) -> dict[str, str]:
@@ -216,6 +219,24 @@ def test_health_check_succeeds_for_source_bucket_versioning_states(
     assert state == expected_state
     assert report.status == "ok"
     assert (report.source_bucket, report.source_versioning) == (settings.bucket, expected_state)
+
+
+@pytest.mark.integration()
+def test_check_command_rejects_same_localstack_bucket_with_dual_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _integration_env(localstack_bucket_pair)
+    env["S3_DESTINATION_BUCKET"] = localstack_bucket_pair.source
+    monkeypatch.setattr(os, "environ", env)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
+    payload = cast(dict[str, object], json.loads(result.stderr))
+    assert payload["status"] == "error"
+    assert payload["field"] == "ARCHIVER_STORAGE_LOCATION"
+    assert "ARCHIVER_STORAGE_LOCATION" in str(payload["message"])
 
 
 def _log_records(log_file: Path) -> list[dict[str, object]]:
