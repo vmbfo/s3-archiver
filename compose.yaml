@@ -55,6 +55,10 @@ services:
       retries: 20
     ports:
       - "${LOCALSTACK_HOST_PORT:-4566}:4566"
+    networks:
+      default:
+        aliases:
+          - localstack-alt
     volumes:
       - ./docker/localstack/init/boot.d:/etc/localstack/init/boot.d:ro
       - ./docker/localstack/init/ready.d:/etc/localstack/init/ready.d:ro

@@ -95,10 +95,19 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
 
 
 @pytest.mark.e2e()
-def test_compose_archive_debug_logs_native_copy_and_preserves_source_properties(
+@pytest.mark.parametrize(
+    ("destination_endpoint", "expected_strategy"),
+    [
+        (LOCALSTACK_COMPOSE_ENDPOINT, "simple_native_copy"),
+        ("http://localstack-alt:4566", "multipart_streaming"),
+    ],
+)
+def test_compose_archive_debug_logs_expected_strategy_and_preserves_source_properties(
     tmp_path: Path,
     compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
+    destination_endpoint: str,
+    expected_strategy: str,
 ) -> None:
     bucket_pair = localstack_bucket_pair
     source_client = _client(tmp_path, bucket_pair, "source")
@@ -120,10 +129,12 @@ def test_compose_archive_debug_logs_native_copy_and_preserves_source_properties(
         CacheControl="max-age=60",
     )
     env_file = _write_archive_env_file(tmp_path, bucket_pair, None)
-    _ = env_file.write_text(
-        env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG"),
-        encoding="utf-8",
+    env_text = env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG")
+    env_text = env_text.replace(
+        f"S3_DESTINATION_ENDPOINT_URL={LOCALSTACK_COMPOSE_ENDPOINT}",
+        f"S3_DESTINATION_ENDPOINT_URL={destination_endpoint}",
     )
+    _ = env_file.write_text(env_text, encoding="utf-8")
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
 
@@ -134,7 +145,7 @@ def test_compose_archive_debug_logs_native_copy_and_preserves_source_properties(
     )
 
     assert '"event": "archive.transfer.strategy_selected"' in result.stdout
-    assert '"strategy": "simple_native_copy"' in result.stdout
+    assert f'"strategy": "{expected_strategy}"' in result.stdout
     assert metadata["seed-key"] == key
     assert json.loads(metadata["s3-archiver-source-fingerprint"])["source_key"] == key
     assert destination_client.get_object_tagging(Bucket=bucket_pair.destination, Key=key)[
@@ -185,9 +196,9 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         "-e",
         "APP_ENV_FILE=/dev/null",
         "-e",
-        "S3_SOURCE_ENDPOINT_URL=http://localstack-a:4566",
+        "S3_SOURCE_ENDPOINT_URL=http://localstack:4566",
         "-e",
-        "S3_DESTINATION_ENDPOINT_URL=http://localstack-b:4566",
+        "S3_DESTINATION_ENDPOINT_URL=http://localstack-alt:4566",
         "--entrypoint",
         "sh",
         "app",
@@ -196,8 +207,8 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
     )
     payload = _probe_payload(result.stdout)
 
-    assert payload["source_endpoint"] == "http://localstack-a:4566"
-    assert payload["destination_endpoint"] == "http://localstack-b:4566"
+    assert payload["source_endpoint"] == "http://localstack:4566"
+    assert payload["destination_endpoint"] == "http://localstack-alt:4566"
     assert payload["native_copy"] is False
     assert payload["multipart_copy"] is False
     assert payload["strategy"] == "multipart_streaming"
