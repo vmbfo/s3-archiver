@@ -27,6 +27,12 @@ from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
+STARTED = datetime(2024, 4, 20, tzinfo=UTC)
+
+
+def _clock() -> datetime:
+    return STARTED
+
 
 @pytest.mark.unit()
 def test_manifest_uses_frozen_cutoff_filters_and_preserves_versions() -> None:
@@ -41,7 +47,7 @@ def test_manifest_uses_frozen_cutoff_filters_and_preserves_versions() -> None:
 
     manifest = build_archive_manifest(
         source,
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
         retention_days=60,
         versioning_state="Enabled",
         source_filter=SourcePathFilter("whitelist", ("keep/",)),
@@ -118,7 +124,8 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
         source,
         destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
     )
 
@@ -132,7 +139,8 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
         source,
         destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert cleanup_result.ok is True
@@ -150,7 +158,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
         source,
         failing_destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=2),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert copy_failed.copy.ok is False
@@ -162,7 +171,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
         source,
         bad_destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
@@ -183,7 +193,8 @@ def test_concurrent_worker_failures_keep_object_key_for_reporting() -> None:
         source,
         destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=2),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert result.copy.failures == (
@@ -223,7 +234,8 @@ def test_list_failure_blocks_archive_phases() -> None:
         BrokenListBucket("source"),
         FakeBucket("destination"),
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert result.list.failures == ("source.txt: list failed",)
@@ -245,7 +257,8 @@ def test_key_only_cleanup_rechecks_source_before_delete() -> None:
         source,
         destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
-        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+        run_started_at_utc=STARTED,
+        clock=_clock,
     )
 
     assert result.cleanup.failures == ("old.txt: source changed before cleanup",)

@@ -27,6 +27,7 @@ from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
+from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -251,17 +252,6 @@ def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
             "stale_hostname": payload.get("hostname"),
             "stale_pid": payload.get("pid"),
         },
-    )
-
-
-def _log_error_payload(payload: Mapping[str, JsonValue], error: Exception | None = None) -> None:
-    if payload.get("phase") == "startup.env_validation":
-        return
-    logger = logging.getLogger("s3_archiver.archive")
-    log_method = logger.exception if error is not None else logger.error
-    log_method(
-        str(payload.get("message", "s3 archiver error")),
-        extra={"event": "s3_archiver.error", "error_payload": dict(payload)},
     )
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -20,14 +20,9 @@ from s3_archiver_core.archive_transfer import (
     verify_source_unchanged,
 )
 
-__all__ = (
-    "ArchiveBucket",
-    "ArchivePhaseResult",
-    "ArchiveRunLock",
-    "ArchiveRunResult",
-    "DebugLogger",
-    "run_archive",
-)
+# fmt: off
+__all__ = ("ArchiveBucket", "ArchivePhaseResult", "ArchiveRunLock", "ArchiveRunResult", "DebugLogger", "run_archive")  # noqa: E501
+# fmt: on
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,8 +76,6 @@ def run_archive(
     now = clock or (lambda: datetime.now(tz=UTC))
     started = run_started_at_utc or now()
     deadline = started + options.run_timeout
-    if clock is None and run_started_at_utc is not None:
-        deadline = datetime.max.replace(tzinfo=UTC)
     run_id = uuid4().hex
     if run_lock is not None and not run_lock.acquire(
         run_id=run_id, run_started_at_utc=started, timeout=options.run_timeout
@@ -114,8 +107,11 @@ def run_archive(
         def timeout() -> bool:
             return _timed_out(now, deadline)
 
+        def time_remaining() -> float:
+            return max((deadline - now()).total_seconds(), 0.0)
+
         copy_result = _copy_phase(
-            source, destination, options, manifest.entries, debug_logger, timeout
+            source, destination, options, manifest.entries, debug_logger, timeout, time_remaining
         )
         if _timed_out(now, deadline):
             return ArchiveRunResult(
@@ -124,14 +120,14 @@ def run_archive(
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
-            else _verify_phase(destination, options, manifest.entries, timeout)
+            else _verify_phase(destination, options, manifest.entries, timeout, time_remaining)
         )
         if copy_result.ok and _timed_out(now, deadline):
             return ArchiveRunResult(
                 run_id, manifest, copy_result, _timeout("verify"), _skipped("cleanup")
             )
         cleanup_result = (
-            _cleanup_phase(source, options, manifest.entries, timeout)
+            _cleanup_phase(source, options, manifest.entries, timeout, time_remaining)
             if copy_result.ok and verify_result.ok
             else _skipped("cleanup")
         )
@@ -150,13 +146,14 @@ def _copy_phase(
     entries: tuple[ManifestEntry, ...],
     debug_logger: DebugLogger | None,
     timed_out: Callable[[], bool],
+    time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
     def worker(entry: ManifestEntry) -> str | None:
         return _copy_one(source, destination, options, entry, debug_logger)
 
     return ArchivePhaseResult(
         "copy",
-        _run_workers(entries, options.max_workers, worker, timed_out),
+        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
@@ -192,13 +189,14 @@ def _verify_phase(
     options: ArchiveOptions,
     entries: tuple[ManifestEntry, ...],
     timed_out: Callable[[], bool],
+    time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
     def worker(entry: ManifestEntry) -> str | None:
         return _verify_one(destination, entry)
 
     return ArchivePhaseResult(
         "verify",
-        _run_workers(entries, options.max_workers, worker, timed_out),
+        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
@@ -214,6 +212,7 @@ def _cleanup_phase(
     options: ArchiveOptions,
     entries: tuple[ManifestEntry, ...],
     timed_out: Callable[[], bool],
+    time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
     if not options.cleanup_enabled:
         return _skipped("cleanup")
@@ -223,7 +222,7 @@ def _cleanup_phase(
 
     return ArchivePhaseResult(
         "cleanup",
-        _run_workers(entries, options.max_workers, worker, timed_out),
+        _run_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
 
 
@@ -241,32 +240,31 @@ def _run_workers(
     max_workers: int,
     worker: Callable[[ManifestEntry], str | None],
     timed_out: Callable[[], bool],
+    time_remaining: Callable[[], float],
 ) -> tuple[str, ...]:
-    if max_workers <= 1:
-        sequential_failures: list[str] = []
-        for entry in entries:
+    failures: list[str] = []
+    worker_count = max(1, max_workers)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for batch_start in range(0, len(entries), worker_count):
             if timed_out():
-                sequential_failures.append("archive run timed out")
+                failures.append("archive run timed out")
                 break
-            failure = _call_worker(worker, entry)
-            if failure is not None:
-                sequential_failures.append(failure)
-        return tuple(sequential_failures)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        concurrent_failures: list[str] = []
-        for batch_start in range(0, len(entries), max_workers):
-            if timed_out():
-                concurrent_failures.append("archive run timed out")
-                break
-            batch = entries[batch_start : batch_start + max_workers]
+            batch = entries[batch_start : batch_start + worker_count]
             futures: list[Future[str | None]] = [
                 executor.submit(_call_worker, worker, entry) for entry in batch
             ]
-            for future in as_completed(futures):
+            done, pending = wait(futures, timeout=time_remaining())
+            for future in done:
                 failure = _future_result(future)
                 if failure is not None:
-                    concurrent_failures.append(failure)
-        return tuple(concurrent_failures)
+                    failures.append(failure)
+            if pending:
+                for future in pending:
+                    _ = future.cancel()
+                failures.append("archive run timed out")
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+        return tuple(failures)
 
 
 def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry) -> str | None:

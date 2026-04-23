@@ -220,5 +220,5 @@ def _phase_statuses(payload: ArchivePayload) -> dict[str, object]:
     return {
         name: phase["status"]
         for name, phase in payload["phases"].items()
-        if name in {"copy", "verify", "cleanup"}
+        if name in {"list", "copy", "verify", "cleanup"}
     }

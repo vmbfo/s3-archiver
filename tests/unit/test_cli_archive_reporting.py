@@ -100,10 +100,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     assert phases["copy"]["status"] == "error"
     assert phases["verify"]["status"] == "skipped"
     assert phases["cleanup"]["status"] == "skipped"
-    logged_payloads = [
-        cast(dict[str, object], record.__dict__.get("error_payload", {}))
-        for record in caplog.records
-    ]
+    logged_payloads = [_record_error_payload(record) for record in caplog.records]
     assert any(payload.get("phase") == "archive.copy" for payload in logged_payloads)
 
 
@@ -195,6 +192,14 @@ def _phase_payloads(payload: ArchivePayload) -> dict[str, dict[str, object]]:
     phases = payload.get("phases")
     assert isinstance(phases, dict)
     return {key: cast(dict[str, object], value) for key, value in phases.items()}
+
+
+def _record_error_payload(record: logging.LogRecord) -> dict[str, object]:
+    raw_value = cast(object, record.__dict__.get("error_payload_json", "{}"))
+    raw = raw_value if isinstance(raw_value, str) else "{}"
+    decoded = cast(object, json.loads(raw))
+    assert isinstance(decoded, dict)
+    return cast(dict[str, object], decoded)
 
 
 def _archive_result(

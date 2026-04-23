@@ -66,7 +66,7 @@ def test_file_lock_records_process_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
-def test_file_lock_blocks_timed_out_lock_for_live_process(tmp_path: Path) -> None:
+def test_file_lock_recovers_timed_out_lock_for_live_process(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
     payload = {
         "hostname": socket.gethostname(),
@@ -89,9 +89,9 @@ def test_file_lock_blocks_timed_out_lock_for_live_process(tmp_path: Path) -> Non
         timeout=timedelta(seconds=1),
     )
 
-    assert acquired is False
-    assert _read_lock(lock_path)["run_id"] == "active"
-    assert recoveries == []
+    assert acquired is True
+    assert _read_lock(lock_path)["run_id"] == "next"
+    assert recoveries == [("stale_lock_timed_out", payload)]
 
 
 @pytest.mark.unit()

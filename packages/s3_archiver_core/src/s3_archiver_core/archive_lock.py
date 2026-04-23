@@ -68,7 +68,7 @@ class FileArchiveRunLock:
             _safe_unlink(self._path)
             return True
         timed_out = datetime.now(tz=UTC) - started > timeout
-        if _lock_process_is_alive_on_this_host(decoded):
+        if not timed_out and _lock_process_is_alive_on_this_host(decoded):
             return False
         if not timed_out and not _lock_process_is_dead_on_this_host(decoded):
             return False
