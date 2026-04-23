@@ -70,6 +70,7 @@ def test_archive_command_copies_isolated_localstack_keys_and_honors_cleanup_gate
     assert payload["manifest"]["object_count"] == len(source_keys)
     expected_cleanup_status = "ok" if cleanup_value == "true" else "skipped"
     assert _phase_statuses(payload) == {
+        "list": "ok",
         "copy": "ok",
         "verify": "ok",
         "cleanup": expected_cleanup_status,
@@ -143,7 +144,7 @@ def _archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str,
         endpoint=os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
         log_dir=str(tmp_path / "logs"),
     )
-    env["ARCHIVER_RETENTION_DAYS"] = "0"
+    env["ARCHIVER_RETENTION_DAYS"] = "1"
     env["ARCHIVER_MAX_WORKERS"] = "1"
     return env
 

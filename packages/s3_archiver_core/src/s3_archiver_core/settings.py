@@ -1,25 +1,32 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import cast
-from urllib.parse import urlsplit, urlunsplit
 
-from s3_archiver_core.archive_lock import parse_duration
+from s3_archiver_core._settings_parse import normalize_endpoint_url as _normalize_endpoint_url
+from s3_archiver_core._settings_parse import optional_env as _optional
+from s3_archiver_core._settings_parse import parse_bool as _parse_bool
+from s3_archiver_core._settings_parse import parse_int as _parse_int
+from s3_archiver_core._settings_parse import parse_runtime_duration as _parse_duration
+from s3_archiver_core._settings_parse import parse_string_array as _parse_string_array
+from s3_archiver_core._settings_parse import require_env as _require
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.temp_files import default_temp_dir
 
 
 class S3Provider(StrEnum):
+    """Supported S3-compatible storage providers."""
+
     OCI = "oci"
     LOCALSTACK = "localstack"
 
 
 class S3AddressingStyle(StrEnum):
+    """Supported S3 addressing styles."""
+
     PATH = "path"
     VIRTUAL = "virtual"
 
@@ -31,6 +38,8 @@ _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
 @dataclass(frozen=True, slots=True)
 class StorageLocationIdentity:
+    """Normalized physical storage location for source/destination safety checks."""
+
     provider: S3Provider
     endpoint_url: str
     region: str | None
@@ -40,6 +49,8 @@ class StorageLocationIdentity:
 
 @dataclass(frozen=True, slots=True)
 class S3LocationSettings:
+    """Validated settings for one S3 source or destination location."""
+
     provider: S3Provider
     access_key_id: str
     secret_access_key: str
@@ -51,6 +62,8 @@ class S3LocationSettings:
     addressing_style: S3AddressingStyle
 
     def resolved_endpoint_url(self) -> str:
+        """Return the explicit or provider-default endpoint URL."""
+
         if self.endpoint_url is not None:
             return self.endpoint_url
         if self.provider is S3Provider.LOCALSTACK:
@@ -61,6 +74,8 @@ class S3LocationSettings:
         return f"https://{namespace}.compat.objectstorage.{self.region}.oraclecloud.com"
 
     def storage_identity(self) -> StorageLocationIdentity:
+        """Return the normalized physical bucket identity."""
+
         return StorageLocationIdentity(
             provider=self.provider,
             endpoint_url=_normalize_endpoint_url(self.resolved_endpoint_url()),
@@ -72,12 +87,16 @@ class S3LocationSettings:
 
 @dataclass(frozen=True, slots=True)
 class PathFilterSettings:
+    """Validated source path filter configuration."""
+
     whitelist_enabled: bool
     blacklist_enabled: bool
     whitelist: tuple[str, ...]
     blacklist: tuple[str, ...]
 
     def includes(self, key: str) -> bool:
+        """Return whether a source key is allowed by the configured filters."""
+
         if self.whitelist_enabled:
             return any(key.startswith(prefix) for prefix in self.whitelist)
         if self.blacklist_enabled:
@@ -87,6 +106,8 @@ class PathFilterSettings:
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
+    """Validated runtime settings for the CLI and archive workflow."""
+
     source: S3LocationSettings
     destination: S3LocationSettings
     path_filters: PathFilterSettings
@@ -100,6 +121,8 @@ class AppSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
+        """Parse and validate application settings from environment values."""
+
         log_level = env.get("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in _VALID_LOG_LEVELS:
             raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
@@ -155,6 +178,8 @@ class AppSettings:
         return self.source.addressing_style
 
     def resolved_endpoint_url(self) -> str:
+        """Return the source endpoint URL for legacy callers."""
+
         return self.source.resolved_endpoint_url()
 
 
@@ -210,87 +235,3 @@ def _load_path_filters(env: Mapping[str, str]) -> PathFilterSettings:
         whitelist=_parse_string_array(env, "S3_SOURCE_PATH_WHITELIST"),
         blacklist=_parse_string_array(env, "S3_SOURCE_PATH_BLACKLIST"),
     )
-
-
-def _parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
-    raw = env.get(key)
-    if raw is None or raw.strip() == "":
-        return default
-    value = raw.strip().lower()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise ConfigError(f"{key} must be true or false")
-
-
-def _parse_int(env: Mapping[str, str], key: str, *, default: int, minimum: int) -> int:
-    raw = env.get(key)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ConfigError(f"{key} must be an integer") from exc
-    if value < minimum:
-        raise ConfigError(f"{key} must be greater than or equal to {minimum}")
-    return value
-
-
-def _parse_duration(raw: str, key: str) -> timedelta:
-    try:
-        return parse_duration(raw)
-    except ValueError as exc:
-        raise ConfigError(f"{key} must be a positive duration such as 7d") from exc
-
-
-def _parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:
-    raw = env.get(key, "[]")
-    if raw.strip() == "":
-        raw = "[]"
-    try:
-        parsed = cast(object, json.loads(raw))
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"{key} must be a JSON array of strings") from exc
-    if not isinstance(parsed, list):
-        raise ConfigError(f"{key} must be a JSON array of strings")
-    items: list[str] = []
-    for item in cast(list[object], parsed):
-        if not isinstance(item, str):
-            raise ConfigError(f"{key} must be a JSON array of strings")
-        items.append(item)
-    return tuple(items)
-
-
-def _normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT_URL") -> str:
-    parsed = urlsplit(raw)
-    if parsed.scheme == "" or parsed.hostname is None:
-        raise ConfigError(f"{field} must include a URL scheme and host, got {raw!r}")
-    if parsed.query != "" or parsed.fragment != "":
-        raise ConfigError(f"{field} must not include query or fragment components")
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        raise ConfigError(f"{field} scheme must be http or https, got {scheme!r}")
-    hostname = (parsed.hostname or "").lower()
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ConfigError(f"{field} has an invalid port") from exc
-    default_port = 80 if scheme == "http" else 443
-    netloc = hostname if port in {None, default_port} else f"{hostname}:{port}"
-    path = parsed.path.rstrip("/")
-    return urlunsplit((scheme, netloc, path, "", ""))
-
-
-def _require(env: Mapping[str, str], key: str) -> str:
-    value = env.get(key)
-    if value is None or value.strip() == "":
-        raise ConfigError(f"{key} is required")
-    return value.strip()
-
-
-def _optional(env: Mapping[str, str], key: str) -> str | None:
-    value = env.get(key)
-    if value is None or value.strip() == "":
-        return None
-    return value.strip()

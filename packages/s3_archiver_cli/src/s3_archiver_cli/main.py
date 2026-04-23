@@ -58,7 +58,9 @@ def check() -> None:
         log_file = configure_logging(settings)
         report = run_health_check(settings, log_file)
     except S3ArchiverError as exc:
-        typer.echo(json.dumps(_error_payload(exc, settings), sort_keys=True), err=True)
+        payload = _error_payload(exc, settings)
+        _log_error_payload(payload, exc)
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
 
     payload = report.as_dict()
@@ -77,10 +79,13 @@ def archive() -> None:
         _ = run_health_check(settings, log_file)
         payload = _run_archive(settings, log_file)
     except S3ArchiverError as exc:
-        typer.echo(json.dumps(_error_payload(exc, settings), sort_keys=True), err=True)
+        payload = _error_payload(exc, settings)
+        _log_error_payload(payload, exc)
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
 
     if payload.get("status") == "error":
+        _log_error_payload(payload)
         typer.echo(json.dumps(payload, sort_keys=True), err=True)
         raise typer.Exit(code=1)
     typer.echo(json.dumps(payload, sort_keys=True))
@@ -150,6 +155,7 @@ def _archive_result_payload(
             "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
         },
         "phases": {
+            "list": _phase_payload(result.list),
             "copy": _phase_payload(result.copy),
             "verify": _phase_payload(result.verify),
             "cleanup": _phase_payload(result.cleanup),
@@ -187,7 +193,7 @@ def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
 
 
 def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
-    for phase in (result.copy, result.verify, result.cleanup):
+    for phase in (result.list, result.copy, result.verify, result.cleanup):
         if phase.failures:
             return phase.phase, phase.failures[0]
     return "unknown", "archive run failed"
@@ -245,6 +251,17 @@ def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
             "stale_hostname": payload.get("hostname"),
             "stale_pid": payload.get("pid"),
         },
+    )
+
+
+def _log_error_payload(payload: Mapping[str, JsonValue], error: Exception | None = None) -> None:
+    if payload.get("phase") == "startup.env_validation":
+        return
+    logger = logging.getLogger("s3_archiver.archive")
+    log_method = logger.exception if error is not None else logger.error
+    log_method(
+        str(payload.get("message", "s3 archiver error")),
+        extra={"event": "s3_archiver.error", "error_payload": dict(payload)},
     )
 
 

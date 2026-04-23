@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -66,8 +67,10 @@ def test_archive_command_reports_lock_refusal_payload(
 def test_archive_command_reports_timeout_and_skipped_later_phases(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _stub_runtime(monkeypatch, base_env)
+    caplog.set_level(logging.ERROR, logger="s3_archiver.archive")
 
     def run_core_archive(
         source: object,
@@ -97,6 +100,11 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     assert phases["copy"]["status"] == "error"
     assert phases["verify"]["status"] == "skipped"
     assert phases["cleanup"]["status"] == "skipped"
+    logged_payloads = [
+        cast(dict[str, object], record.__dict__.get("error_payload", {}))
+        for record in caplog.records
+    ]
+    assert any(payload.get("phase") == "archive.copy" for payload in logged_payloads)
 
 
 @pytest.mark.unit()

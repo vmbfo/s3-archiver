@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import override
 
 import pytest
 from s3_archiver_core.archive import run_archive
@@ -20,7 +21,7 @@ from s3_archiver_core.archive_transfer import (
     verify_destination,
     verify_source_unchanged,
 )
-from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.s3 import S3TransferCapabilities, VersioningState
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -209,6 +210,26 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     assert timed_out.copy.failures == ("archive run timed out",)
     assert timed_out.verify.skipped is True
     assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_list_failure_blocks_archive_phases() -> None:
+    class BrokenListBucket(FakeBucket):
+        @override
+        def versioning_state(self) -> VersioningState:
+            raise RuntimeError("source.txt: list failed")
+
+    result = run_archive(
+        BrokenListBucket("source"),
+        FakeBucket("destination"),
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+    )
+
+    assert result.list.failures == ("source.txt: list failed",)
+    assert result.copy.skipped is True
+    assert result.verify.skipped is True
+    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()

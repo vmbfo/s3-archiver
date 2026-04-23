@@ -12,6 +12,7 @@ AUTHORED_SOURCE_ROOTS = (
     REPO_ROOT / "packages",
     REPO_ROOT / "tests",
     REPO_ROOT / "scripts",
+    REPO_ROOT / "docker",
 )
 AUTHORED_PYTHON_ROOTS = AUTHORED_SOURCE_ROOTS
 

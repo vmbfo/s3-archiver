@@ -6,10 +6,11 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 
 from botocore.exceptions import ClientError
 
+from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
     S3Client,
@@ -19,26 +20,6 @@ from s3_archiver_core.s3 import (
 )
 from s3_archiver_core.s3_transfer import copy_s3_object
 from s3_archiver_core.temp_files import default_temp_dir
-
-
-class ArchiveS3Client(Protocol):
-    """Runtime S3 protocol used by the archive adapter."""
-
-    def get_bucket_versioning(self, *, Bucket: str) -> Mapping[str, object]: ...  # noqa: N803
-    def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]: ...
-    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]: ...
-    def head_object(self, **kwargs: object) -> Mapping[str, object]: ...
-    def get_object_tagging(self, **kwargs: object) -> Mapping[str, object]: ...
-    def copy_object(self, **kwargs: object) -> Mapping[str, object]: ...
-    def create_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
-    def upload_part_copy(self, **kwargs: object) -> Mapping[str, object]: ...
-    def upload_part(self, **kwargs: object) -> Mapping[str, object]: ...
-    def complete_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
-    def abort_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
-    def get_object(self, **kwargs: object) -> Mapping[str, object]: ...
-    def put_object(self, **kwargs: object) -> Mapping[str, object]: ...
-    def put_object_tagging(self, **kwargs: object) -> Mapping[str, object]: ...
-    def delete_object(self, **kwargs: object) -> Mapping[str, object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +65,7 @@ class S3ArchiveBucket:
     def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
         properties = self.head_object(key, version_id)
         if properties is None:
-            raise FileNotFoundError(f"listed source object disappeared before metadata read: {key}")
+            raise FileNotFoundError(f"{key}: listed source object disappeared before metadata read")
         return properties
 
     def get_tags(self, key: str, version_id: str | None = None) -> Mapping[str, str]:

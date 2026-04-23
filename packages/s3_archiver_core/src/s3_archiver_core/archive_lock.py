@@ -68,8 +68,9 @@ class FileArchiveRunLock:
             _safe_unlink(self._path)
             return True
         timed_out = datetime.now(tz=UTC) - started > timeout
-        abandoned = not _lock_process_is_alive_on_this_host(decoded)
-        if not timed_out and not abandoned:
+        if _lock_process_is_alive_on_this_host(decoded):
+            return False
+        if not timed_out and not _lock_process_is_dead_on_this_host(decoded):
             return False
         reason = "stale_lock_timed_out" if timed_out else "stale_lock_abandoned"
         self._log_recovery(reason, decoded)
@@ -128,6 +129,17 @@ def _lock_process_is_alive_on_this_host(decoded: Mapping[str, object]) -> bool:
     if hostname != socket.gethostname() or type(pid) is not int or pid <= 0:
         return False
     return _process_is_alive(pid)
+
+
+def _lock_process_is_dead_on_this_host(decoded: Mapping[str, object]) -> bool:
+    hostname = decoded.get("hostname")
+    pid = decoded.get("pid")
+    return (
+        hostname == socket.gethostname()
+        and type(pid) is int
+        and pid > 0
+        and not _process_is_alive(pid)
+    )
 
 
 def _process_is_alive(pid: int) -> bool:

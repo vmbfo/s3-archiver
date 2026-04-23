@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
@@ -17,8 +16,8 @@ from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
-PARSE_ENV_FILE = cast(Callable[[Path], dict[str, str]], parse_env_file)
-LOAD_RUNTIME_ENV = cast(Callable[[], dict[str, str]], load_runtime_env)
+PARSE_ENV_FILE = parse_env_file
+LOAD_RUNTIME_ENV = load_runtime_env
 
 
 class HealthPayload(TypedDict):

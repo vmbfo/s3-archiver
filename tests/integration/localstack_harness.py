@@ -65,6 +65,7 @@ def localstack_test_env(
     log_dir: str,
 ) -> dict[str, str]:
     env = {
+        "APP_ENV_FILE": "/dev/null",
         "S3_SOURCE_PROVIDER": "localstack",
         "S3_SOURCE_ACCESS_KEY_ID": "source-test",
         "S3_SOURCE_SECRET_ACCESS_KEY": "source-test",
