@@ -47,7 +47,9 @@ def test_options_reject_invalid_env_values() -> None:
 
 
 @pytest.mark.unit()
-def test_options_disable_native_copy_when_credentials_differ(tmp_path: Path) -> None:
+def test_options_enable_native_copy_when_credentials_differ_on_same_endpoint(
+    tmp_path: Path,
+) -> None:
     env = dual_env(tmp_path)
     env["S3_SOURCE_PROVIDER"] = "localstack"
     env["S3_SOURCE_ENDPOINT_URL"] = "http://localhost:4566"
@@ -57,8 +59,8 @@ def test_options_disable_native_copy_when_credentials_differ(tmp_path: Path) -> 
 
     options = ArchiveOptions.from_settings(AppSettings.from_env(env))
 
-    assert options.transfer_capabilities.native_copy is False
-    assert options.transfer_capabilities.multipart_copy is False
+    assert options.transfer_capabilities.native_copy is True
+    assert options.transfer_capabilities.multipart_copy is True
 
 
 @pytest.mark.unit()
