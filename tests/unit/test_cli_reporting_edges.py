@@ -185,12 +185,17 @@ def test_archive_lock_recovery_logger_adds_structured_context(
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
-    context = contexts[-1]
-    assert context["event"] == "archive.lock.recovered"
-    assert context["reason"] == "stale_lock_timed_out"
-    assert context["stale_run_id"] == "run-1"
-    assert context["stale_hostname"] == "host"
-    assert context["stale_pid"] == 123
+    recovery_context = next(context for context in contexts if context.get("event") == "archive.lock.recovered")
+    assert recovery_context["reason"] == "stale_lock_timed_out"
+    assert recovery_context["stale_run_id"] == "run-1"
+    assert recovery_context["stale_hostname"] == "host"
+    assert recovery_context["stale_pid"] == 123
+    failure_context = next(context for context in contexts if context.get("event") == "s3_archiver.error")
+    assert failure_context["error_phase"] == "archive.run"
+    assert failure_context["error_reason"] == "archive_run_timeout"
+    assert failure_context["error_run_id"] == "run-1"
+    assert failure_context["error_lock_recovery_reason"] == "stale_lock_timed_out"
+    assert failure_context["error_recovered"] is True
 
 
 def stub_runtime(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
@@ -232,8 +237,10 @@ def capture_logger_context(monkeypatch: pytest.MonkeyPatch) -> list[Mapping[str,
         def emit(self, record: logging.LogRecord) -> None:
             contexts.append(cast(Mapping[str, object], record.__dict__))
 
+    root_logger = logging.getLogger("s3_archiver")
     logger = logging.getLogger("s3_archiver.archive")
     handler = RecordingHandler()
+    monkeypatch.setattr(root_logger, "handlers", [logging.NullHandler()])
     monkeypatch.setattr(logger, "handlers", [*logger.handlers, handler])
     monkeypatch.setattr(logger, "level", logging.DEBUG)
     return contexts

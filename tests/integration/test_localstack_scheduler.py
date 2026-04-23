@@ -85,7 +85,7 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
 
 
 @pytest.mark.integration()
-def test_run_archive_recovers_prior_host_lock_before_archive_work(
+def test_run_archive_recovers_timed_out_prior_host_lock_before_archive_work(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
@@ -98,7 +98,7 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
         "hostname": "prior-container-host",
         "pid": 4321,
         "run_id": "stale-run",
-        "run_started_at_utc": datetime(2026, 4, 20, tzinfo=UTC).isoformat(),
+        "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     _ = lock_path.write_text(json.dumps(stale_payload), encoding="utf-8")
@@ -109,7 +109,7 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
     assert not lock_path.exists()
     log_text = log_file.read_text(encoding="utf-8")
     assert '"event": "archive.lock.recovered"' in log_text
-    assert '"reason": "stale_lock_prior_host"' in log_text
+    assert '"reason": "stale_lock_timed_out"' in log_text
 
 
 @pytest.mark.integration()

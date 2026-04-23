@@ -65,7 +65,7 @@ def run_archive_subprocess(
     except subprocess.TimeoutExpired as exc:
         _relay_output(_as_text(exc.stdout), emit_stdout)
         _relay_output(_as_text(exc.stderr), emit_stderr)
-        _recover_stale_archive_lock(settings, recovery_logger, clock)
+        reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
         payload = _timeout_payload(settings, log_file)
         log_error(payload)
         emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
@@ -89,6 +89,7 @@ def run_scheduled_archive(
 ) -> None:
     """Run one scheduled archive child process and relay its output."""
 
+    reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=now)
     _ = run_archive_subprocess(
         settings,
         log_file,
@@ -119,19 +120,25 @@ def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonVal
     }
 
 
-def _recover_stale_archive_lock(
+def reconcile_archive_lock(
     settings: AppSettings,
-    recovery_logger: LockRecoveryLogger | None,
-    now: Callable[[], datetime],
-) -> None:
+    *,
+    recovery_logger: LockRecoveryLogger | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> bool:
+    """Attempt stale-lock reconciliation without taking ownership of an active run."""
+
+    clock = _utc_now if now is None else now
     run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=recovery_logger)
     recovery_run_id = uuid4().hex
     if run_lock.acquire(
         run_id=recovery_run_id,
-        run_started_at_utc=now(),
+        run_started_at_utc=clock(),
         timeout=settings.run_timeout,
     ):
         run_lock.release(run_id=recovery_run_id)
+        return True
+    return False
 
 
 def _archive_lock_path(settings: AppSettings) -> Path:

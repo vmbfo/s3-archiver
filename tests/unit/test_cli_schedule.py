@@ -53,11 +53,15 @@ def test_schedule_command_runs_scheduled_archive_after_first_tick(
     base_env: dict[str, str],
 ) -> None:
     monkeypatch.setattr(os, "environ", base_env)
-    scheduled_runs: list[str] = []
+    events: list[str] = []
     sleep_calls = 0
 
     def configure(_settings: AppSettings) -> Path:
         return Path("/tmp/log")
+
+    def reconcile_lock(_settings: AppSettings, **_kwargs: object) -> bool:
+        events.append("reconcile")
+        return True
 
     def fake_sleep_until_tick(hour: int, minute: int) -> None:
         nonlocal sleep_calls
@@ -65,15 +69,17 @@ def test_schedule_command_runs_scheduled_archive_after_first_tick(
         if sleep_calls > 1:
             raise RuntimeError("stop scheduler test")
         assert (hour, minute) == (4, 5)
+        events.append("sleep")
 
     def fake_run_scheduled_archive(
         settings: AppSettings, log_file: Path, **_kwargs: object
     ) -> None:
         _ = settings
         assert log_file == Path("/tmp/log")
-        scheduled_runs.append("run")
+        events.append("run")
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "reconcile_archive_lock", reconcile_lock)
     monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
     monkeypatch.setattr(cli_module, "run_scheduled_archive", fake_run_scheduled_archive)
 
@@ -81,7 +87,7 @@ def test_schedule_command_runs_scheduled_archive_after_first_tick(
 
     assert isinstance(result.exception, RuntimeError)
     assert "stop scheduler test" in str(result.exception)
-    assert scheduled_runs == ["run"]
+    assert events == ["reconcile", "sleep", "run"]
 
 
 @pytest.mark.unit()

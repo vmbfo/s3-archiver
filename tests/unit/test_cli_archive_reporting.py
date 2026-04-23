@@ -146,7 +146,7 @@ def test_archive_command_reports_error_when_skipped_phase_has_failures(
 
 
 @pytest.mark.unit()
-def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
+def test_run_archive_recovers_timed_out_prior_host_lock_before_archive_work(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
@@ -157,7 +157,7 @@ def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
         "hostname": "prior-host",
         "pid": 4321,
         "run_id": "stale-run",
-        "run_started_at_utc": datetime(2026, 4, 20, tzinfo=UTC).isoformat(),
+        "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
     }
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     _ = lock_path.write_text(json.dumps(stale_payload), encoding="utf-8")
@@ -200,7 +200,7 @@ def test_run_archive_recovers_stale_prior_host_lock_before_archive_work(
 
     assert payload["status"] == "ok"
     assert events == [
-        "recovery:stale_lock_prior_host",
+        "recovery:stale_lock_timed_out",
         "health",
         "build:archive-bucket",
         "build:destination-bucket",

@@ -74,6 +74,47 @@ def test_run_scheduled_archive_relays_child_process_streams(
 
 
 @pytest.mark.unit()
+def test_run_scheduled_archive_reconciles_lock_before_child_run(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    settings = AppSettings.from_env(base_env)
+    events: list[str] = []
+
+    class RecordingLock:
+        def __init__(self, path: Path, **_kwargs: object) -> None:
+            assert path == Path(base_env["LOG_DIR"]) / "archive.lock"
+
+        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
+            assert run_started_at_utc.tzinfo == UTC
+            _ = timeout
+            events.append(f"lock.acquire:{run_id}")
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            events.append(f"lock.release:{run_id}")
+
+    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        events.append(f"run:{command[0]}")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RecordingLock)
+
+    scheduled_archive_module.run_scheduled_archive(
+        settings,
+        Path("/tmp/log"),
+        command=["archive"],
+        run_command=fake_run_command,
+    )
+
+    assert len(events) == 3
+    assert events[0].startswith("lock.acquire:")
+    assert events[1] == events[0].replace("acquire", "release")
+    assert events[2] == "run:archive"
+
+
+@pytest.mark.unit()
 def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
@@ -112,7 +153,7 @@ def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
         log_error=lambda payload: logged_payloads.append(cast(dict[str, object], dict(payload))),
     )
 
-    assert len(acquired) == 1
+    assert len(acquired) == 2
     assert released == acquired
     payload = _load_payload(stderr_messages[-1])
     assert payload["field"] == "ARCHIVER_RUN_TIMEOUT"

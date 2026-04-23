@@ -44,6 +44,7 @@ from s3_archiver_cli.error_logging import (
     log_error_payload as _log_error_payload,
 )
 from s3_archiver_cli.scheduled_archive import (
+    reconcile_archive_lock,
     run_archive_subprocess,
     run_scheduled_archive,
 )
@@ -142,6 +143,7 @@ def schedule(
         typer.echo(json.dumps(payload, sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
     hour, minute = _parse_daily_at_utc(daily_at_utc)
+    reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
     while True:
         _sleep_until_next_daily_tick(hour, minute)
         try:
@@ -245,7 +247,8 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
 
 
 def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
-    logging.getLogger("s3_archiver.archive").warning(
+    logger = logging.getLogger("s3_archiver.archive")
+    logger.warning(
         "archive stale run lock recovered",
         extra={
             "event": "archive.lock.recovered",
@@ -256,6 +259,43 @@ def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
             "stale_pid": payload.get("pid"),
         },
     )
+    failure_payload = _recovered_run_failure_payload(reason, payload)
+    if failure_payload is not None:
+        _log_error_payload(failure_payload)
+
+
+def _recovered_run_failure_payload(
+    reason: str,
+    payload: Mapping[str, object],
+) -> dict[str, JsonValue] | None:
+    timed_out = reason == "stale_lock_timed_out"
+    if reason not in {"stale_lock_abandoned", "stale_lock_timed_out"}:
+        return None
+    return {
+        "status": "error",
+        "phase": "archive.run",
+        "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else None,
+        "message": "prior archive run failed and was recovered from a stale lock",
+        "details": "archive run timed out" if timed_out else "archive run was abandoned",
+        "source_bucket": None,
+        "destination_bucket": None,
+        "key": None,
+        "mismatch": None,
+        "reason": "archive_run_timeout" if timed_out else "archive_run_abandoned",
+        "timed_out": timed_out,
+        "run_id": _json_scalar(payload.get("run_id")),
+        "run_started_at_utc": _json_scalar(payload.get("run_started_at_utc")),
+        "hostname": _json_scalar(payload.get("hostname")),
+        "pid": _json_scalar(payload.get("pid")),
+        "lock_recovery_reason": reason,
+        "recovered": True,
+    }
+
+
+def _json_scalar(value: object) -> JsonScalar:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return None
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:
