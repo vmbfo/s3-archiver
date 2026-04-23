@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor, wait
+from queue import Empty, Queue
+from threading import Thread
 
 from s3_archiver_core.archive_manifest import ManifestEntry
 
@@ -19,27 +20,26 @@ def run_archive_workers(
 
     failures: list[str] = []
     worker_count = max(1, max_workers)
-    executor = ThreadPoolExecutor(max_workers=worker_count)
-    try:
-        for batch_start in range(0, len(entries), worker_count):
-            if timed_out():
+    for batch_start in range(0, len(entries), worker_count):
+        if timed_out():
+            failures.append("archive run timed out")
+            break
+        batch = entries[batch_start : batch_start + worker_count]
+        results: Queue[str | None] = Queue()
+        for entry in batch:
+            thread = Thread(target=_put_worker_result, args=(results, worker, entry), daemon=True)
+            thread.start()
+        pending = len(batch)
+        while pending:
+            try:
+                failure = results.get(timeout=time_remaining())
+            except Empty:
                 failures.append("archive run timed out")
-                break
-            batch = entries[batch_start : batch_start + worker_count]
-            futures = [executor.submit(_call_worker, worker, entry) for entry in batch]
-            done, pending = wait(futures, timeout=time_remaining())
-            for future in done:
-                failure = _future_result(future)
-                if failure is not None:
-                    failures.append(failure)
-            if pending:
-                for future in pending:
-                    _ = future.cancel()
-                failures.append("archive run timed out")
-                break
-        return tuple(failures)
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+                return tuple(failures)
+            pending -= 1
+            if failure is not None:
+                failures.append(failure)
+    return tuple(failures)
 
 
 def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry) -> str | None:
@@ -49,8 +49,13 @@ def _call_worker(worker: Callable[[ManifestEntry], str | None], entry: ManifestE
         return f"{entry.key}: {exc}"
 
 
-def _future_result(future: Future[str | None]) -> str | None:
+def _put_worker_result(
+    results: Queue[str | None],
+    worker: Callable[[ManifestEntry], str | None],
+    entry: ManifestEntry,
+) -> None:
     try:
-        return future.result()
+        failure = _call_worker(worker, entry)
     except Exception as exc:
-        return f"worker failure: {exc}"
+        failure = f"worker failure: {exc}"
+    results.put(failure)

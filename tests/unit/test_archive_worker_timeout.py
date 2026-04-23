@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -64,3 +67,30 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
 
     assert result.copy.failures == ("archive run timed out",)
     assert time.monotonic() - began < 0.18
+
+
+@pytest.mark.unit()
+def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
+    script = textwrap.dedent(
+        """
+        import time
+        from datetime import UTC, datetime, timedelta
+        from tests.unit.archive_workflow_fakes import FakeBucket, listed_object
+        from s3_archiver_core.archive import run_archive
+        from s3_archiver_core.archive_options import ArchiveOptions
+
+        class SlowCopyBucket(FakeBucket):
+            def copy_from(self, *args, **kwargs):
+                time.sleep(2)
+
+        run_archive(
+            FakeBucket("source", (listed_object("slow.txt", 90),)),
+            SlowCopyBucket("destination"),
+            ArchiveOptions(retention_days=60, run_timeout=timedelta(milliseconds=50)),
+            run_started_at_utc=datetime.now(tz=UTC),
+            clock=lambda: datetime.now(tz=UTC),
+        )
+        """
+    )
+
+    _ = subprocess.run([sys.executable, "-c", script], check=True, timeout=1.0)
