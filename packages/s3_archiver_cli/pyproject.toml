@@ -19,5 +19,9 @@ build-backend = "uv_build"
 [tool.uv]
 package = true
 
+[tool.uv.build-backend]
+source-exclude = ["/tests", "/docker", "localstack", "test-support"]
+wheel-exclude = ["/tests", "/docker", "localstack", "test-support"]
+
 [tool.uv.sources]
 s3-archiver-core = { workspace = true }

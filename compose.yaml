@@ -42,13 +42,11 @@ services:
     environment:
       AWS_DEFAULT_REGION: us-east-1
       SERVICES: s3
-      TEST_S3_SOURCE_BUCKET: ${TEST_S3_SOURCE_BUCKET:-}
-      TEST_S3_DESTINATION_BUCKET: ${TEST_S3_DESTINATION_BUCKET:-}
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "awslocal s3api list-buckets >/dev/null 2>&1 && { [ -z \"$${TEST_S3_SOURCE_BUCKET}\" ] || awslocal s3api head-bucket --bucket \"$${TEST_S3_SOURCE_BUCKET}\" >/dev/null 2>&1; } && { [ -z \"$${TEST_S3_DESTINATION_BUCKET}\" ] || awslocal s3api head-bucket --bucket \"$${TEST_S3_DESTINATION_BUCKET}\" >/dev/null 2>&1; }",
+          "awslocal s3api list-buckets >/dev/null 2>&1",
         ]
       interval: 5s
       timeout: 5s

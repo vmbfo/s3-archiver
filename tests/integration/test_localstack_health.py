@@ -25,6 +25,7 @@ from tests.integration.localstack_harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     assert_localstack_test_target,
+    bucket_pair_from_env,
     localstack_test_env,
 )
 from tests.integration.localstack_object_helpers import listed_keys
@@ -90,14 +91,22 @@ def test_health_check_succeeds_against_isolated_localstack_buckets(
 
 
 @pytest.mark.integration()
-def test_localstack_ready_hook_creates_isolated_buckets(
-    localstack_bucket_pair: LocalstackBucketPair,
+def test_localstack_service_readiness_requires_only_s3_api(
+    compose_env: dict[str, str],
+    localstack_service: None,
 ) -> None:
-    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
+    _ = localstack_service
+    bucket_pair = bucket_pair_from_env(compose_env)
+    settings = AppSettings.from_env(_integration_env(bucket_pair))
     client = build_s3_client(settings)
+    bucket_names = {
+        str(bucket["Name"])
+        for bucket in cast(list[dict[str, object]], client.list_buckets().get("Buckets", []))
+        if "Name" in bucket
+    }
 
-    assert client.head_bucket(Bucket=localstack_bucket_pair.source) is not None
-    assert client.head_bucket(Bucket=localstack_bucket_pair.destination) is not None
+    assert bucket_pair.source not in bucket_names
+    assert bucket_pair.destination not in bucket_names
 
 
 @pytest.mark.integration()

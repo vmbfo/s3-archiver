@@ -25,14 +25,18 @@ Run the canonical compose-backed health check flow:
 ```bash
 docker compose build app
 suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-export TEST_S3_SOURCE_BUCKET="s3-archiver-source-${suffix}"
-export TEST_S3_DESTINATION_BUCKET="s3-archiver-destination-${suffix}"
+source_bucket="s3-archiver-source-${suffix}"
+destination_bucket="s3-archiver-destination-${suffix}"
 mkdir -p .local
 sed \
-  -e "s/s3-archiver-source-replace-with-uuid/${TEST_S3_SOURCE_BUCKET}/" \
-  -e "s/s3-archiver-destination-replace-with-uuid/${TEST_S3_DESTINATION_BUCKET}/" \
+  -e "s/s3-archiver-source-replace-with-uuid/${source_bucket}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${destination_bucket}/" \
   .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${source_bucket}"
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${destination_bucket}"
 APP_ENV_FILE=".local/e2e-${suffix}.env" docker compose --profile test run --rm app s3-archiver check
 docker compose --profile test down -v
 ```
@@ -45,7 +49,7 @@ The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match th
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
 Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, `ARCHIVER_TEMP_DIR=/tmp/s3-archiver`, and disabled source whitelist/blacklist filters.
-The pytest integration and e2e harnesses do not load the production `.env`; they generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test.
+LocalStack readiness now only proves the S3 API is reachable. The pytest integration and e2e harnesses generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test, then create and tear down those buckets in fixtures.
 
 ## Local Development
 
@@ -69,14 +73,18 @@ If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
 suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-export TEST_S3_SOURCE_BUCKET="s3-archiver-source-${suffix}"
-export TEST_S3_DESTINATION_BUCKET="s3-archiver-destination-${suffix}"
+source_bucket="s3-archiver-source-${suffix}"
+destination_bucket="s3-archiver-destination-${suffix}"
 mkdir -p .local
 sed \
-  -e "s/s3-archiver-source-replace-with-uuid/${TEST_S3_SOURCE_BUCKET}/" \
-  -e "s/s3-archiver-destination-replace-with-uuid/${TEST_S3_DESTINATION_BUCKET}/" \
+  -e "s/s3-archiver-source-replace-with-uuid/${source_bucket}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${destination_bucket}/" \
   .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${source_bucket}"
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${destination_bucket}"
 ENV_FILE=".local/e2e-${suffix}.env" \
   S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
   S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
@@ -164,11 +172,12 @@ docker run --rm \
 ## Tests
 
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
-- Integration tests run against LocalStack S3 with per-test source and destination buckets, LocalStack endpoint guard rails, and object round-trips.
+- Integration tests run against LocalStack S3 with fixture-managed per-test source and destination buckets, LocalStack endpoint guard rails, and object round-trips.
 - E2E tests build and run the compose stack, assert the rootless container can complete `s3-archiver check` and persist logs, and verify the runtime image excludes repo tests and LocalStack test support.
 - CI is currently intended to run locally through the documented scripts and Make targets.
 
 LocalStack test-only helpers live under `docker/localstack/test-support` and are mounted only into the LocalStack service by the `test` compose profile. They are not copied into the application runtime image.
+Built source distributions and wheels also carry explicit exclusions for test and LocalStack-only assets.
 
 ## Local Scheduling
 

@@ -43,9 +43,9 @@ def test_compose_app_without_command_shows_help(compose_env: dict[str, str]) -> 
 @pytest.mark.e2e()
 def test_compose_app_check_succeeds(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     result = _run_compose(compose_env, "run", "--rm", "app", "check")
     final_line = result.stdout.strip().splitlines()[-1]
 
@@ -57,28 +57,39 @@ def test_compose_app_check_succeeds(
 
 
 @pytest.mark.e2e()
-def test_compose_run_starts_localstack_without_pytest_orchestration(
-    compose_env: dict[str, str],
-) -> None:
+def test_compose_localstack_startup_does_not_precreate_test_buckets(compose_env: dict[str, str]) -> None:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
-        result = _run_compose(compose_env, "run", "--rm", "app", "check")
+        _ = _run_compose(compose_env, "up", "-d", "localstack")
+        result = _run_compose(
+            compose_env,
+            "exec",
+            "-T",
+            "localstack",
+            "awslocal",
+            "s3api",
+            "list-buckets",
+        )
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
-    final_line = result.stdout.strip().splitlines()[-1]
+    payload = cast(dict[str, object], json.loads(result.stdout))
+    bucket_names = {
+        str(bucket["Name"])
+        for bucket in cast(list[dict[str, object]], payload.get("Buckets", []))
+        if "Name" in bucket
+    }
+    bucket_pair = bucket_pair_from_env(compose_env)
 
-    assert '"event": "health.started"' in result.stdout
-    assert '"event": "health.succeeded"' in result.stdout
-    assert '"status": "ok"' in final_line
-    assert f'"bucket": "{bucket_pair_from_env(compose_env).source}"' in final_line
+    assert bucket_pair.source not in bucket_names
+    assert bucket_pair.destination not in bucket_names
 
 
 @pytest.mark.e2e()
 def test_compose_app_writes_persisted_logs(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     _ = _run_compose(compose_env, "run", "--rm", "app", "check")
     result = _run_compose(
         compose_env,
@@ -97,9 +108,9 @@ def test_compose_app_writes_persisted_logs(
 @pytest.mark.e2e()
 def test_compose_app_persists_rotated_logs(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     rotation_probe = textwrap.dedent(
         """
         /opt/venv/bin/python - <<'PY'
@@ -154,9 +165,9 @@ def test_compose_app_persists_rotated_logs(
 @pytest.mark.e2e()
 def test_compose_app_fails_fast_when_log_dir_is_unwritable(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     result = _run_compose(
         compose_env,
         "run",
