@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import textwrap
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -141,6 +142,67 @@ def test_compose_archive_debug_logs_strategy_and_preserves_source_properties(
     ] == [{"Key": "kind", "Value": "archive"}]
 
 
+@pytest.mark.e2e()
+def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_settings(
+    compose_env: dict[str, str],
+) -> None:
+    probe = textwrap.dedent(
+        """
+        /opt/venv/bin/python - <<'PY'
+        import json
+
+        from s3_archiver_cli import main as cli
+        from s3_archiver_core.archive_options import ArchiveOptions
+        from s3_archiver_core.archive_transfer import select_transfer_strategy
+        from s3_archiver_core.settings import AppSettings
+
+        settings = AppSettings.from_env(cli._load_runtime_env())
+        capabilities = ArchiveOptions.from_settings(settings).transfer_capabilities
+        print(
+            json.dumps(
+                {
+                    "multipart_copy": capabilities.multipart_copy,
+                    "native_copy": capabilities.native_copy,
+                    "source_endpoint": settings.source.resolved_endpoint_url(),
+                    "destination_endpoint": settings.destination.resolved_endpoint_url(),
+                    "strategy": select_transfer_strategy(
+                        11,
+                        capabilities,
+                        simple_copy_limit_bytes=10,
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        PY
+        """
+    ).strip()
+    result = _run_compose(
+        compose_env,
+        "run",
+        "--rm",
+        "--no-deps",
+        "-e",
+        "APP_ENV_FILE=/dev/null",
+        "-e",
+        "S3_SOURCE_ENDPOINT_URL=http://localstack-a:4566",
+        "-e",
+        "S3_DESTINATION_ENDPOINT_URL=http://localstack-b:4566",
+        "--entrypoint",
+        "sh",
+        "app",
+        "-lc",
+        probe,
+    )
+    payload = _probe_payload(result.stdout)
+
+    assert payload["source_endpoint"] == "http://localstack-a:4566"
+    assert payload["destination_endpoint"] == "http://localstack-b:4566"
+    assert payload["native_copy"] is False
+    assert payload["multipart_copy"] is False
+    assert payload["strategy"] == "multipart_streaming"
+
+
 def _case_source_prefix(cleanup_value: str | None) -> str:
     return f"compose-archive/{_case_name(cleanup_value)}"
 
@@ -254,3 +316,8 @@ def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
         for name, phase in payload["phases"].items()
         if name in {"list", "copy", "verify", "cleanup"}
     }
+
+
+def _probe_payload(output: str) -> dict[str, object]:
+    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
+    return cast(dict[str, object], json.loads(json_line))
