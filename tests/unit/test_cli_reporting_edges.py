@@ -161,6 +161,13 @@ def test_archive_lock_recovery_logger_adds_structured_context(
                 },
             )
 
+        def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            _ = run_id
+
     def run_core_archive(
         source: object,
         destination: object,
