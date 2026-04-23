@@ -236,7 +236,13 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", *args]
+    command = ["docker", "compose", "--profile", "test"]
+    if args[:1] == ("run",):
+        command.append("run")
+        command.append("--build")
+        command.extend(args[1:])
+    else:
+        command.extend(args)
     for attempt in range(_COMPOSE_RUN_RETRIES + 1):
         result = subprocess.run(
             command,

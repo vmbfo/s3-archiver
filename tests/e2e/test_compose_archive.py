@@ -95,7 +95,7 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
 
 
 @pytest.mark.e2e()
-def test_compose_archive_debug_logs_strategy_and_preserves_source_properties(
+def test_compose_archive_debug_logs_native_copy_and_preserves_source_properties(
     tmp_path: Path,
     compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
@@ -134,7 +134,7 @@ def test_compose_archive_debug_logs_strategy_and_preserves_source_properties(
     )
 
     assert '"event": "archive.transfer.strategy_selected"' in result.stdout
-    assert '"strategy": "multipart_streaming"' in result.stdout
+    assert '"strategy": "simple_native_copy"' in result.stdout
     assert metadata["seed-key"] == key
     assert json.loads(metadata["s3-archiver-source-fingerprint"])["source_key"] == key
     assert destination_client.get_object_tagging(Bucket=bucket_pair.destination, Key=key)[
@@ -260,7 +260,13 @@ def _client(
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", *args]
+    command = ["docker", "compose", "--profile", "test"]
+    if args[:1] == ("run",):
+        command.append("run")
+        command.append("--build")
+        command.extend(args[1:])
+    else:
+        command.extend(args)
     for attempt in range(_COMPOSE_RUN_RETRIES + 1):
         result = subprocess.run(
             command,
