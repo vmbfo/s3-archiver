@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from itertools import chain
 
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
@@ -55,8 +56,10 @@ class FakeBucket:
     deleted: list[tuple[str, str | None]]
     fail_copy: bool
     _objects: dict[str, S3ListedObject]
+    _versions: dict[tuple[str, str | None], S3ListedObject]
     _destination: dict[str, S3ObjectProperties]
     _payloads: dict[str, bytes]
+    _version_payloads: dict[tuple[str, str | None], bytes]
     _destination_payloads: dict[str, bytes]
     _versioning_state: VersioningState
 
@@ -64,8 +67,10 @@ class FakeBucket:
         self,
         bucket: str,
         objects: Iterable[S3ListedObject] = (),
+        versions: Iterable[S3ListedObject] = (),
         destination: Mapping[str, S3ObjectProperties] | None = None,
         payloads: Mapping[str, bytes] | None = None,
+        version_payloads: Mapping[tuple[str, str | None], bytes] | None = None,
         versioning_state: VersioningState = "Enabled",
     ) -> None:
         self.bucket = bucket
@@ -73,9 +78,19 @@ class FakeBucket:
         self.deleted = []
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
+        self._versions = {
+            (item.key, item.version_id): item for item in chain(objects, versions)
+        }
         self._destination = dict(destination or {})
         self._payloads = {
             key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._objects
+        }
+        self._version_payloads = {
+            (key, version_id): (version_payloads or {}).get(
+                (key, version_id),
+                self._payloads.get(key, f"payload:{key}".encode()),
+            )
+            for key, version_id in self._versions
         }
         self._destination_payloads = {
             key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._destination
@@ -90,12 +105,16 @@ class FakeBucket:
         return tuple(self._objects.values())
 
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-        _ = version_id
+        if version_id is not None and (item := self._versions.get((key, version_id))) is not None:
+            return item.properties
         return self._destination.get(key)
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
-        _ = version_id
-        payload = self._payloads.get(key) or self._destination_payloads.get(key)
+        payload = (
+            self._version_payloads.get((key, version_id))
+            if version_id is not None
+            else self._payloads.get(key) or self._destination_payloads.get(key)
+        )
         return None if payload is None else hashlib.sha256(payload).hexdigest()
 
     def copy_from(
@@ -116,7 +135,12 @@ class FakeBucket:
             raise RuntimeError("copy failed")
         self.copied.append(source_key)
         self._destination[destination_key] = replace(properties, metadata=destination_metadata)
-        self._destination_payloads[destination_key] = source._payloads[source_key]
+        payload = (
+            source._version_payloads.get((source_key, source_version_id))
+            if source_version_id is not None
+            else source._payloads[source_key]
+        )
+        self._destination_payloads[destination_key] = payload
 
     def delete_source(self, key: str, version_id: str | None) -> None:
         self.deleted.append((key, version_id))

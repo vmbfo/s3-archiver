@@ -123,7 +123,6 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90, "v1"),))
     destination = FakeBucket("destination")
     decisions: list[tuple[str, str]] = []
-
     result = run_archive(
         source,
         destination,
@@ -132,13 +131,11 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
     )
-
     assert result.ok is True
     assert destination.copied == ["old.txt"]
     assert source.deleted == []
     assert decisions == [("old.txt", "simple_native_copy")]
     assert result.cleanup.skipped is True
-
     cleanup_result = run_archive(
         source,
         destination,

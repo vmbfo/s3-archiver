@@ -15,6 +15,7 @@ from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
     VerificationResult,
     archive_metadata,
+    recover_archived_entry,
     select_transfer_strategy,
     verify_destination,
     verify_destination_content,
@@ -112,7 +113,7 @@ def run_archive(
         def time_remaining() -> float:
             return max((deadline - now()).total_seconds(), 0.0)
 
-        copy_result = _copy_phase(
+        copy_result, phase_entries = _copy_phase(
             source, destination, options, manifest.entries, debug_logger, timeout, time_remaining
         )
         if _timed_out(now, deadline):
@@ -123,7 +124,7 @@ def run_archive(
             _skipped("verify")
             if not copy_result.ok
             else _verify_phase(
-                source, destination, options, manifest.entries, timeout, time_remaining
+                source, destination, options, phase_entries, timeout, time_remaining
             )
         )
         if copy_result.ok and _timed_out(now, deadline):
@@ -131,7 +132,7 @@ def run_archive(
                 run_id, manifest, copy_result, _timeout("verify"), _skipped("cleanup")
             )
         cleanup_result = (
-            _cleanup_phase(source, options, manifest.entries, timeout, time_remaining)
+            _cleanup_phase(source, options, phase_entries, timeout, time_remaining)
             if copy_result.ok and verify_result.ok
             else _skipped("cleanup")
         )
@@ -151,14 +152,20 @@ def _copy_phase(
     debug_logger: DebugLogger | None,
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
-) -> ArchivePhaseResult:
-    def worker(entry: ManifestEntry) -> str | None:
-        return _copy_one(source, destination, options, entry, debug_logger)
+) -> tuple[ArchivePhaseResult, tuple[ManifestEntry, ...]]:
+    recovered: dict[str, ManifestEntry] = {}
 
-    return ArchivePhaseResult(
+    def worker(entry: ManifestEntry) -> str | None:
+        failure, effective = _copy_one(source, destination, options, entry, debug_logger)
+        if effective != entry:
+            recovered[entry.key] = effective
+        return failure
+
+    phase = ArchivePhaseResult(
         "copy",
         run_archive_workers(entries, options.max_workers, worker, timed_out, time_remaining),
     )
+    return phase, tuple(recovered.get(entry.key, entry) for entry in entries)
 
 
 def _copy_one(
@@ -167,11 +174,14 @@ def _copy_one(
     options: ArchiveOptions,
     entry: ManifestEntry,
     debug_logger: DebugLogger | None,
-) -> str | None:
+) -> tuple[str | None, ManifestEntry]:
     existing = destination.head_object(entry.key)
     if existing is not None:
-        verified = _verify_archive_copy(source, destination, entry)
-        return None if verified.ok else f"{entry.key}: {verified.detail}"
+        effective = recover_archived_entry(
+            entry, existing, lambda version_id: source.head_object(entry.key, version_id)
+        )
+        verified = _verify_archive_copy(source, destination, effective)
+        return (None if verified.ok else f"{entry.key}: {verified.detail}", effective)
     strategy = select_transfer_strategy(entry.size, options.transfer_capabilities)
     if debug_logger is not None:
         debug_logger(entry, strategy)
@@ -185,7 +195,7 @@ def _copy_one(
         archive_metadata(entry),
         strategy,
     )
-    return None
+    return None, entry
 
 
 def _verify_phase(

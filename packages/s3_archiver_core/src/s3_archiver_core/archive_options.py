@@ -78,9 +78,8 @@ def _transfer_capabilities(settings: AppSettings) -> S3TransferCapabilities:
     native_copy = (
         source.provider == destination.provider
         and source.endpoint_url == destination.endpoint_url
+        and source.region == destination.region
         and source.namespace == destination.namespace
-        and settings.source.access_key_id == settings.destination.access_key_id
-        and settings.source.secret_access_key == settings.destination.secret_access_key
     )
     return S3TransferCapabilities(native_copy=native_copy, multipart_copy=native_copy)
 

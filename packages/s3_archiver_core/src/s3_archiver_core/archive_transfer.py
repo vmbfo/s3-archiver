@@ -1,15 +1,15 @@
-"""Transfer strategy selection and destination verification."""
+"""Transfer strategy selection, destination verification, and rerun recovery."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.s3 import S3ObjectProperties, S3TransferCapabilities
+from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, S3TransferCapabilities
 
 TransferStrategy = Literal[
     "simple_native_copy",
@@ -171,6 +171,44 @@ def fingerprint_from_metadata(metadata: Mapping[str, str]) -> SourceFingerprint 
     if not isinstance(decoded, dict):
         return None
     return _fingerprint_from_mapping(cast(Mapping[str, object], decoded))
+
+
+def recover_archived_entry(
+    entry: ManifestEntry,
+    destination: S3ObjectProperties,
+    source_properties: Callable[[str | None], S3ObjectProperties | None],
+) -> ManifestEntry:
+    """Recover a prior archived source version from destination fingerprint metadata."""
+
+    fingerprint = fingerprint_from_metadata(destination.metadata)
+    if fingerprint is None:
+        return entry
+    if fingerprint.source_bucket != entry.source_bucket or fingerprint.source_key != entry.key:
+        return entry
+    properties = source_properties(fingerprint.source_version_id)
+    if properties is None:
+        return entry
+    try:
+        last_modified = datetime.fromisoformat(fingerprint.source_last_modified)
+    except ValueError:
+        return entry
+    listed = S3ListedObject(
+        entry.key,
+        fingerprint.source_size,
+        last_modified,
+        fingerprint.source_etag,
+        fingerprint.source_version_id,
+        properties,
+    )
+    return ManifestEntry(
+        entry.source_bucket,
+        entry.key,
+        fingerprint.source_size,
+        last_modified,
+        fingerprint.source_etag,
+        fingerprint.source_version_id,
+        listed,
+    )
 
 
 def _fingerprint_from_mapping(value: Mapping[str, object]) -> SourceFingerprint | None:

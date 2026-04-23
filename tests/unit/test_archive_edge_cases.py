@@ -72,7 +72,6 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
             run_lock=FakeRunLock(acquired=False),
             clock=lambda: STARTED,
         )
-
     lock = FakeRunLock()
     result = run_archive(
         FakeBucket("source"),
@@ -82,7 +81,6 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
         run_lock=lock,
         clock=lambda: STARTED,
     )
-
     assert result.ok is True
     assert lock.released == [result.run_id]
 
@@ -90,7 +88,6 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
 @pytest.mark.unit()
 def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90),))
-
     batch_timeout = run_archive(
         source,
         FakeBucket("destination"),
@@ -100,7 +97,6 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     )
     assert batch_timeout.copy.failures == ("archive run timed out",)
     assert batch_timeout.verify.skipped is True
-
     copy_timeout = run_archive(
         source,
         FakeBucket("destination"),
@@ -110,7 +106,6 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     )
     assert copy_timeout.copy.failures == ("archive run timed out",)
     assert copy_timeout.verify.skipped is True
-
     verify_timeout = run_archive(
         source,
         FakeBucket("destination"),
@@ -126,7 +121,6 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
 @pytest.mark.unit()
 def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90),))
-
     result = run_archive(
         source,
         FakeBucket("destination"),
@@ -134,7 +128,6 @@ def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=9),
     )
-
     assert result.copy.ok is True
     assert result.verify.ok is True
     assert result.cleanup.failures == ("archive run timed out",)
@@ -165,9 +158,7 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
                 strategy,
             )
             self.copied.append(source_key)
-
     source = FakeBucket("source", (_listed("old.txt", 90),))
-
     result = run_archive(
         source,
         VanishingDestination("destination"),
@@ -175,7 +166,6 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
-
     assert result.copy.ok is True
     assert result.verify.failures == ("old.txt: destination missing",)
     assert result.cleanup.skipped is True
@@ -188,9 +178,7 @@ def test_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) ->
     ) -> str | None:
         _ = (worker, entry)
         raise RuntimeError("executor failed")
-
     monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
-
     result = run_archive(
         FakeBucket("source", (_listed("old.txt", 90),)),
         FakeBucket("destination"),
@@ -198,33 +186,47 @@ def test_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) ->
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
-
     assert result.copy.failures == ("worker failure: executor failed",)
     assert result.verify.skipped is True
 
 
 @pytest.mark.unit()
-def test_key_only_cleanup_deletes_when_source_is_unchanged() -> None:
-    listed = _listed("old.txt", 90, None)
-    source = FakeBucket("source", (listed,), destination={"old.txt": listed.properties})
-
+def test_rerun_uses_archived_version_for_cleanup() -> None:
+    archived = _listed("old.txt", 95, "v1")
+    current = replace(_listed("old.txt", 90, "v2"), properties=archived.properties)
+    source = FakeBucket(
+        "source",
+        (current,),
+        versions=(archived,),
+        version_payloads={("old.txt", "v1"): b"archived", ("old.txt", "v2"): b"current"},
+    )
+    archived_entry = ManifestEntry(
+        "source", "old.txt", 10, archived.last_modified, '"etag"', "v1", archived
+    )
+    destination = FakeBucket(
+        "destination",
+        destination={
+            "old.txt": replace(archived.properties, metadata=archive_metadata(archived_entry))
+        },
+        payloads={"old.txt": b"archived"},
+    )
     result = run_archive(
         source,
-        FakeBucket("destination"),
+        destination,
         ArchiveOptions(retention_days=60, cleanup_enabled=True),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
-
+    assert result.manifest.entries[0].version_id == "v2"
     assert result.ok is True
-    assert source.deleted == [("old.txt", None)]
+    assert destination.copied == []
+    assert source.deleted == [("old.txt", "v1")]
 
 
 @pytest.mark.unit()
 def test_verify_destination_reports_each_mismatch_detail() -> None:
     entry = _entry()
     destination = replace(entry.object.properties, metadata=archive_metadata(entry))
-
     assert verify_destination(entry, None).detail == "destination missing"
     assert (
         verify_destination(entry, replace(destination, content_type="application/json")).detail
@@ -247,7 +249,6 @@ def test_verify_destination_reports_each_mismatch_detail() -> None:
 def test_verify_source_unchanged_reports_missing_and_property_changes() -> None:
     entry = _entry()
     current = entry.object.properties
-
     assert verify_source_unchanged(entry, None).detail == "source missing before cleanup"
     assert verify_source_unchanged(entry, replace(current, size=11)).ok is False
     assert verify_source_unchanged(entry, replace(current, content_type=None)).ok is False
@@ -259,7 +260,6 @@ def test_verify_source_unchanged_reports_missing_and_property_changes() -> None:
 @pytest.mark.unit()
 def test_fingerprint_metadata_rejects_invalid_shapes() -> None:
     metadata_key = FINGERPRINT_METADATA_KEY
-
     assert fingerprint_from_metadata({metadata_key: "not-json"}) is None
     assert fingerprint_from_metadata({metadata_key: "[]"}) is None
     assert fingerprint_from_metadata({metadata_key: '{"source_bucket": 3}'}) is None
@@ -282,9 +282,7 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
         @override
         def versioning_state(self) -> VersioningState:
             raise RuntimeError("list failed")
-
     lock = FakeRunLock()
-
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
@@ -292,6 +290,5 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
         run_started_at_utc=STARTED,
         run_lock=lock,
     )
-
     assert result.list.failures == ("list failed",)
     assert lock.released == [result.run_id]

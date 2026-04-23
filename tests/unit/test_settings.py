@@ -61,12 +61,24 @@ def test_from_env_parses_archive_runtime_options(tmp_path: Path) -> None:
 def test_archive_options_disable_native_copy_for_mixed_endpoints(tmp_path: Path) -> None:
     env = _dual_env(tmp_path)
     settings = AppSettings.from_env(env)
-
     options = ArchiveOptions.from_settings(settings)
-
     assert options.transfer_capabilities.native_copy is False
     assert options.transfer_capabilities.multipart_copy is False
     assert options.transfer_capabilities.streaming_upload is True
+
+
+@pytest.mark.unit()
+def test_archive_options_allow_native_copy_with_dual_credentials(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_PROVIDER"] = env["S3_SOURCE_PROVIDER"]
+    env["S3_DESTINATION_REGION"] = env["S3_SOURCE_REGION"]
+    env["S3_DESTINATION_NAMESPACE"] = env["S3_SOURCE_NAMESPACE"]
+    env["S3_DESTINATION_IAM_USER_OCID"] = "ocid1.user.oc1..destination"
+    settings = AppSettings.from_env(env)
+    options = ArchiveOptions.from_settings(settings)
+    assert settings.source.access_key_id != settings.destination.access_key_id
+    assert options.transfer_capabilities.native_copy is True
+    assert options.transfer_capabilities.multipart_copy is True
 
 
 @pytest.mark.unit()
