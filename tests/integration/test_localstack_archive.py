@@ -3,40 +3,21 @@
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import TypedDict
 
 import pytest
-import s3_archiver_cli.main as cli_module
-from s3_archiver_core.archive import (
-    ArchiveBucket,
-    ArchiveRunLock,
-    ArchiveRunResult,
-    DebugLogger,
-)
-from s3_archiver_core.archive import (
-    run_archive as run_core_archive,
-)
-from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.s3 import S3Client, build_s3_client
-from s3_archiver_core.settings import AppSettings
-from typer.testing import CliRunner
 
-from tests.integration.localstack_harness import (
-    LOCALSTACK_HOST_ENDPOINT,
-    LocalstackBucketPair,
-    localstack_test_env,
+from tests.integration.archive_cli_test_support import archive_client as _client
+from tests.integration.archive_cli_test_support import archive_env as _archive_env
+from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
+from tests.integration.localstack_harness import LocalstackBucketPair
+from tests.integration.localstack_object_helpers import (
+    listed_keys,
+    put_test_object,
+    seed_timestamped_objects,
 )
-from tests.integration.test_localstack_timestamp_seed import (
-    SEED_NOW,
-    run_timestamp_seed_helper,
-)
-
-RUNNER = CliRunner()
-FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2100, 1, 1, tzinfo=UTC)
+from tests.integration.test_localstack_timestamp_seed import SEED_NOW
 
 
 class ArchivePayload(TypedDict):
@@ -45,7 +26,6 @@ class ArchivePayload(TypedDict):
     destination_bucket: str
     manifest: dict[str, object]
     phases: dict[str, dict[str, object]]
-    key: NotRequired[str | None]
 
 
 @pytest.mark.integration()
@@ -64,7 +44,8 @@ def test_archive_command_copies_isolated_localstack_keys_and_honors_cleanup_gate
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
     source_keys = {"archive/a.txt", "archive/b.txt"}
-    _put_source_objects(source_client, localstack_bucket_pair.source, source_keys)
+    for key in source_keys:
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
@@ -79,9 +60,9 @@ def test_archive_command_copies_isolated_localstack_keys_and_honors_cleanup_gate
         "verify": "ok",
         "cleanup": expected_cleanup_status,
     }
-    assert _listed_keys(destination_client, localstack_bucket_pair.destination) == source_keys
-    expected_source_keys: set[str] = set() if cleanup_value == "true" else source_keys
-    assert _listed_keys(source_client, localstack_bucket_pair.source) == expected_source_keys
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == source_keys
+    expected_source_keys = set() if cleanup_value == "true" else source_keys
+    assert listed_keys(source_client, localstack_bucket_pair.source) == expected_source_keys
 
 
 @pytest.mark.integration()
@@ -96,21 +77,18 @@ def test_archive_command_whitelist_filter_controls_copy_and_cleanup_scope(
     env["S3_SOURCE_PATH_WHITELIST"] = json.dumps(["include/"])
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    _put_source_objects(
-        source_client,
-        localstack_bucket_pair.source,
-        {"include/a.txt", "include/nested/b.txt", "exclude/c.txt"},
-    )
+    for key in {"include/a.txt", "include/nested/b.txt", "exclude/c.txt"}:
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
     assert payload["manifest"]["object_count"] == 2
-    assert _listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         "include/a.txt",
         "include/nested/b.txt",
     }
-    assert _listed_keys(source_client, localstack_bucket_pair.source) == {"exclude/c.txt"}
+    assert listed_keys(source_client, localstack_bucket_pair.source) == {"exclude/c.txt"}
 
 
 @pytest.mark.integration()
@@ -125,132 +103,56 @@ def test_archive_command_blacklist_filter_controls_copy_and_cleanup_scope(
     env["S3_SOURCE_PATH_BLACKLIST"] = json.dumps(["blocked/"])
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    _put_source_objects(
-        source_client,
-        localstack_bucket_pair.source,
-        {"allowed/a.txt", "blocked/b.txt", "blocked/nested/c.txt"},
-    )
+    for key in {"allowed/a.txt", "blocked/b.txt", "blocked/nested/c.txt"}:
+        _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
     assert payload["manifest"]["object_count"] == 1
-    assert _listed_keys(destination_client, localstack_bucket_pair.destination) == {"allowed/a.txt"}
-    assert _listed_keys(source_client, localstack_bucket_pair.source) == {
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {"allowed/a.txt"}
+    assert listed_keys(source_client, localstack_bucket_pair.source) == {
         "blocked/b.txt",
         "blocked/nested/c.txt",
     }
 
 
 @pytest.mark.integration()
-def test_archive_command_retention_uses_seeded_last_modified_boundary(
+@pytest.mark.parametrize(
+    ("retention_days", "expected_days"),
+    [(1, {59, 60, 61}), (60, {61})],
+)
+def test_archive_command_retention_matrix_uses_seeded_last_modified_boundary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
+    retention_days: int,
+    expected_days: set[int],
 ) -> None:
     prefix = "retention-boundary"
-    _ = run_timestamp_seed_helper(
-        compose_env,
+    source_seed_env = _archive_env(tmp_path, localstack_bucket_pair)
+    seed_timestamped_objects(
+        _client(source_seed_env, "source"),
+        localstack_bucket_pair.source,
         prefix=prefix,
         days=(59, 60, 61),
         seed_now=SEED_NOW,
     )
     env = _archive_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_RETENTION_DAYS"] = "60"
+    env["ARCHIVER_RETENTION_DAYS"] = str(retention_days)
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 1
-    assert _listed_keys(destination_client, localstack_bucket_pair.destination) == {
-        f"{prefix}/age-61-days.txt"
+    assert payload["manifest"]["object_count"] == len(expected_days)
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+        f"{prefix}/age-{day}-days.txt" for day in expected_days
     }
-    assert _listed_keys(source_client, localstack_bucket_pair.source) == {
-        f"{prefix}/age-59-days.txt",
-        f"{prefix}/age-60-days.txt",
-        f"{prefix}/age-61-days.txt",
+    assert listed_keys(source_client, localstack_bucket_pair.source) == {
+        f"{prefix}/age-{day}-days.txt" for day in {59, 60, 61}
     }
-
-
-def _archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
-        log_dir=str(tmp_path / "logs"),
-    )
-    env["ARCHIVER_RETENTION_DAYS"] = "1"
-    env["ARCHIVER_MAX_WORKERS"] = "1"
-    return env
-
-
-def _run_archive(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> ArchivePayload:
-    monkeypatch.setattr(os, "environ", env)
-
-    def run_archive_with_frozen_timestamp(
-        source: ArchiveBucket,
-        destination: ArchiveBucket,
-        options: ArchiveOptions,
-        *,
-        run_lock: ArchiveRunLock | None = None,
-        debug_logger: DebugLogger | None = None,
-        clock: Callable[[], datetime] | None = None,
-    ) -> ArchiveRunResult:
-        return run_core_archive(
-            source,
-            destination,
-            options,
-            run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
-            run_lock=run_lock,
-            debug_logger=debug_logger,
-            clock=clock,
-        )
-
-    monkeypatch.setattr(cli_module, "run_archive", run_archive_with_frozen_timestamp)
-    result = RUNNER.invoke(cli_module.app, ["archive"])
-
-    assert result.exit_code == 0, result.stderr
-    assert result.stderr == ""
-    json_line = next(line for line in reversed(result.stdout.splitlines()) if line.startswith("{"))
-    return cast(ArchivePayload, json.loads(json_line))
-
-
-def _client(env: Mapping[str, str], side: str) -> S3Client:
-    settings = AppSettings.from_env(env)
-    if side == "source":
-        return build_s3_client(settings.source)
-    if side == "destination":
-        return build_s3_client(settings.destination)
-    raise ValueError(f"unknown S3 side {side!r}")
-
-
-def _put_source_objects(client: S3Client, bucket: str, keys: set[str]) -> None:
-    for key in sorted(keys):
-        _ = client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=f"payload for {key}\n".encode(),
-            ContentType="text/plain",
-            Metadata={"seed-key": key},
-        )
-
-
-def _listed_keys(client: S3Client, bucket: str) -> set[str]:
-    response = client.list_objects_v2(Bucket=bucket)
-    contents = response.get("Contents")
-    if not isinstance(contents, list):
-        return set()
-    keys: set[str] = set()
-    for raw_entry in cast(list[object], contents):
-        if not isinstance(raw_entry, dict):
-            continue
-        entry = cast(dict[str, object], raw_entry)
-        key = entry.get("Key")
-        if isinstance(key, str):
-            keys.add(key)
-    return keys
 
 
 def _phase_statuses(payload: ArchivePayload) -> dict[str, object]:
