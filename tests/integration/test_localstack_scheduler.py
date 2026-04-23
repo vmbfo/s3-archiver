@@ -72,8 +72,10 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
             _ = active_lock.wait(timeout=5)
 
     captured = capsys.readouterr()
+    error_payload = _last_json(captured.err)
     success_payload = _last_json(captured.out)
-    assert captured.err == ""
+    assert error_payload["reason"] == "archive_run_abandoned"
+    assert error_payload["recovered"] is True
     assert success_payload["status"] == "ok"
     log_file = settings.log_dir / "s3-archiver.log"
     assert log_file.exists()

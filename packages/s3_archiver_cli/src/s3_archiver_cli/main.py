@@ -259,6 +259,7 @@ def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
     failure_payload = _recovered_run_failure_payload(reason, payload)
     if failure_payload is not None:
         _log_error_payload(failure_payload)
+        typer.echo(json.dumps(failure_payload, sort_keys=True), err=True)
 
 
 def _recovered_run_failure_payload(

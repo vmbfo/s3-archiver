@@ -259,6 +259,47 @@ def test_rerun_accepts_persisted_checksums_when_current_source_no_longer_exposes
 
 
 @pytest.mark.unit()
+def test_rerun_rejects_unversioned_destination_when_source_last_modified_changed() -> None:
+    archived_listed = replace(
+        _listed("old.txt", 90, None),
+        properties=_properties(
+            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
+        ),
+    )
+    stored_entry = ManifestEntry(
+        "source",
+        "old.txt",
+        10,
+        archived_listed.last_modified,
+        '"etag"',
+        None,
+        archived_listed,
+    )
+    current_listed = replace(
+        archived_listed,
+        last_modified=archived_listed.last_modified + timedelta(seconds=1),
+        properties=_properties(
+            last_modified=archived_listed.last_modified + timedelta(seconds=1),
+        ),
+    )
+    source = FakeBucket("source", (current_listed,))
+    destination = FakeBucket(
+        "destination",
+        destination={"old.txt": replace(current_listed.properties, metadata=archive_metadata(stored_entry))},
+    )
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.copy.failures == ("old.txt: source fingerprint mismatch",)
+
+
+@pytest.mark.unit()
 def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90, "v1"),))
     destination = FakeBucket("destination")

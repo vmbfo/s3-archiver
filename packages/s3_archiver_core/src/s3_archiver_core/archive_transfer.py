@@ -212,7 +212,12 @@ def recover_archived_entry(
 ) -> ManifestEntry:
     """Recover a prior archived source version from destination fingerprint metadata."""
 
-    recovered = recover_fingerprinted_entry(entry, destination, source_properties)
+    recovered = recover_fingerprinted_entry(
+        entry,
+        destination,
+        source_properties,
+        require_current_source_match=True,
+    )
     return entry if recovered is None else recovered
 
 
@@ -220,6 +225,8 @@ def recover_fingerprinted_entry(
     entry: ManifestEntry,
     destination: S3ObjectProperties,
     source_properties: Callable[[str | None], S3ObjectProperties | None],
+    *,
+    require_current_source_match: bool = False,
 ) -> ManifestEntry | None:
     """Recover the source version pinned in destination fingerprint metadata."""
 
@@ -228,16 +235,31 @@ def recover_fingerprinted_entry(
         return None
     if fingerprint.source_bucket != entry.source_bucket or fingerprint.source_key != entry.key:
         return None
-    if fingerprint.source_version_id is None:
-        properties = source_properties(None) or entry.object.properties
-    else:
-        properties = source_properties(fingerprint.source_version_id)
-        if properties is None:
-            return None
     try:
         last_modified = datetime.fromisoformat(fingerprint.source_last_modified)
     except ValueError:
         return None
+    if fingerprint.source_version_id is None:
+        properties = source_properties(None) or entry.object.properties
+        if require_current_source_match:
+            if properties.last_modified is not None and properties.last_modified != last_modified:
+                return None
+            if properties.size != fingerprint.source_size:
+                return None
+            if properties.etag != fingerprint.source_etag:
+                return None
+            if not _checksums_consistent(fingerprint.source_checksums, properties.checksums):
+                return None
+            if (
+                fingerprint.source_checksum_type is not None
+                and properties.checksum_type is not None
+                and fingerprint.source_checksum_type != properties.checksum_type
+            ):
+                return None
+    else:
+        properties = source_properties(fingerprint.source_version_id)
+        if properties is None:
+            return None
     if fingerprint.source_version_id is not None:
         if properties.last_modified is not None and properties.last_modified != last_modified:
             return None
