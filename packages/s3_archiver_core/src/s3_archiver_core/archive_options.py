@@ -9,6 +9,7 @@ from datetime import timedelta
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.archive_manifest import SourcePathFilter
 from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.settings import AppSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +34,44 @@ class ArchiveOptions:
             run_timeout=parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d")),
         )
 
+    @classmethod
+    def from_settings(cls, settings: AppSettings) -> ArchiveOptions:
+        """Build archive options from validated application settings."""
+
+        return cls(
+            retention_days=settings.retention_days,
+            cleanup_enabled=settings.cleanup_enabled,
+            max_workers=settings.max_workers,
+            run_timeout=settings.run_timeout,
+            source_filter=_source_filter(settings),
+            transfer_capabilities=_transfer_capabilities(settings),
+        )
+
 
 def cleanup_enabled_from_env(env: Mapping[str, str]) -> bool:
     """Return whether cleanup is globally enabled by ``ARCHIVER_ENABLE_CLEANUP``."""
 
     return env.get("ARCHIVER_ENABLE_CLEANUP", "").strip().lower() == "true"
+
+
+def _source_filter(settings: AppSettings) -> SourcePathFilter:
+    filters = settings.path_filters
+    if filters.whitelist_enabled:
+        return SourcePathFilter("whitelist", filters.whitelist)
+    if filters.blacklist_enabled:
+        return SourcePathFilter("blacklist", filters.blacklist)
+    return SourcePathFilter()
+
+
+def _transfer_capabilities(settings: AppSettings) -> S3TransferCapabilities:
+    source = settings.source.storage_identity()
+    destination = settings.destination.storage_identity()
+    native_copy = (
+        source.provider == destination.provider
+        and source.endpoint_url == destination.endpoint_url
+        and source.namespace == destination.namespace
+    )
+    return S3TransferCapabilities(native_copy=native_copy, multipart_copy=native_copy)
 
 
 def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:

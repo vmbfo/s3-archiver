@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from mypy_boto3_s3.client import S3Client
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.health import run_health_check
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
 
 class SuccessfulClient:
@@ -21,6 +21,10 @@ class SuccessfulClient:
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         self.called_bucket = Bucket
 
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        self.called_bucket = Bucket
+        return {"Status": "Enabled"}
+
 
 class AuthFailingClient:
     """Minimal client double for authentication failures."""
@@ -28,6 +32,10 @@ class AuthFailingClient:
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         _ = Bucket
         raise ClientError({"Error": {"Code": "403", "Message": "denied"}}, "HeadBucket")
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        _ = Bucket
+        return {"Status": "Enabled"}
 
 
 class ConnectivityFailingClient:
@@ -37,16 +45,20 @@ class ConnectivityFailingClient:
         _ = Bucket
         raise EndpointConnectionError(endpoint_url="http://localstack:4566")
 
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        _ = Bucket
+        return {"Status": "Enabled"}
+
 
 @pytest.mark.unit()
 def test_run_health_check_reports_success(
     monkeypatch: pytest.MonkeyPatch, base_env: dict[str, str]
 ) -> None:
     settings = AppSettings.from_env(base_env)
-    client = SuccessfulClient()
+    clients = [SuccessfulClient(), SuccessfulClient()]
 
-    def build_client(_: AppSettings) -> S3Client:
-        return cast(S3Client, cast(object, client))
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
 
     monkeypatch.setattr(
         "s3_archiver_core.health.build_s3_client",
@@ -55,7 +67,10 @@ def test_run_health_check_reports_success(
 
     report = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
 
-    assert client.called_bucket == "archive-bucket"
+    assert report.source_bucket == "archive-bucket"
+    assert report.destination_bucket == "destination-bucket"
+    assert report.source_versioning == "Enabled"
+    assert clients == []
     assert report.status == "ok"
 
 
@@ -66,7 +81,7 @@ def test_run_health_check_raises_on_auth_error(
 ) -> None:
     settings = AppSettings.from_env(base_env)
 
-    def build_client(_: AppSettings) -> S3Client:
+    def build_client(_: S3LocationSettings) -> S3Client:
         return cast(S3Client, cast(object, AuthFailingClient()))
 
     monkeypatch.setattr(
@@ -85,7 +100,7 @@ def test_run_health_check_raises_on_connectivity_error(
 ) -> None:
     settings = AppSettings.from_env(base_env)
 
-    def build_client(_: AppSettings) -> S3Client:
+    def build_client(_: S3LocationSettings) -> S3Client:
         return cast(S3Client, cast(object, ConnectivityFailingClient()))
 
     monkeypatch.setattr(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,17 +21,26 @@ class FileArchiveRunLock:
     def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: timedelta) -> bool:
         """Acquire the file lock unless a non-stale run owns it."""
 
-        if self._path.exists() and not self._existing_lock_is_stale(timeout):
-            return False
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        _ = self._path.write_text(
-            json.dumps(
-                {"run_id": run_id, "run_started_at_utc": run_started_at_utc.isoformat()},
-                sort_keys=True,
-            ),
-            encoding="utf-8",
+        payload = json.dumps(
+            {"run_id": run_id, "run_started_at_utc": run_started_at_utc.isoformat()},
+            sort_keys=True,
         )
-        return True
+        for _attempt in range(2):
+            try:
+                descriptor = os.open(
+                    self._path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
+                )
+            except FileExistsError:
+                if not self._existing_lock_is_stale(timeout):
+                    return False
+                continue
+            with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
+                _ = lock_file.write(payload)
+            return True
+        return False
 
     def release(self, *, run_id: str) -> None:
         """Release the lock only when the expected run owns it."""
@@ -38,26 +48,27 @@ class FileArchiveRunLock:
         if not self._path.exists():
             return
         if _lock_run_id(self._path) == run_id:
-            self._path.unlink()
+            _safe_unlink(self._path)
 
     def _existing_lock_is_stale(self, timeout: timedelta) -> bool:
         started = _lock_started_at(self._path)
         if started is None:
-            self._path.unlink()
+            _safe_unlink(self._path)
             return True
         stale = datetime.now(tz=UTC) - started > timeout
         if stale:
-            self._path.unlink()
+            _safe_unlink(self._path)
         return stale
 
 
 def parse_duration(value: str) -> timedelta:
-    """Parse archive durations like ``7d``, ``12h``, or ``30m``."""
+    """Parse archive durations like ``7d``, ``12h``, ``30m``, or ``45s``."""
 
     if len(value) < 2:
         raise ValueError(f"invalid duration {value!r}")
-    amount = int(value[:-1])
-    unit = value[-1]
+    stripped = value.strip().lower()
+    amount = int(stripped[:-1])
+    unit = stripped[-1]
     if amount <= 0:
         raise ValueError(f"invalid duration {value!r}")
     if unit == "d":
@@ -66,6 +77,8 @@ def parse_duration(value: str) -> timedelta:
         return timedelta(hours=amount)
     if unit == "m":
         return timedelta(minutes=amount)
+    if unit == "s":
+        return timedelta(seconds=amount)
     raise ValueError(f"invalid duration {value!r}")
 
 
@@ -92,3 +105,10 @@ def _lock_json(path: Path) -> Mapping[str, object]:
     if isinstance(decoded, dict):
         return cast(Mapping[str, object], decoded)
     return {}
+
+
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return

@@ -7,44 +7,36 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, cast
 
+from botocore.exceptions import ClientError
+
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
+    S3Client,
     S3ListedObject,
     S3ObjectProperties,
     VersioningState,
 )
+from s3_archiver_core.s3_transfer import copy_s3_object
 
 
 class ArchiveS3Client(Protocol):
     """Runtime S3 protocol used by the archive adapter."""
 
-    def get_bucket_versioning(self, *, Bucket: str) -> Mapping[str, object]:  # noqa: N803
-        """Read bucket versioning state."""
-        ...
-
-    def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]:
-        """List current bucket objects."""
-        ...
-
-    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]:
-        """List bucket versions."""
-        ...
-
-    def head_object(self, **kwargs: object) -> Mapping[str, object]:
-        """Read object headers."""
-        ...
-
-    def get_object_tagging(self, **kwargs: object) -> Mapping[str, object]:
-        """Read object tags."""
-        ...
-
-    def copy_object(self, **kwargs: object) -> Mapping[str, object]:
-        """Copy an object."""
-        ...
-
-    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
-        """Delete an object."""
-        ...
+    def get_bucket_versioning(self, *, Bucket: str) -> Mapping[str, object]: ...  # noqa: N803
+    def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]: ...
+    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]: ...
+    def head_object(self, **kwargs: object) -> Mapping[str, object]: ...
+    def get_object_tagging(self, **kwargs: object) -> Mapping[str, object]: ...
+    def copy_object(self, **kwargs: object) -> Mapping[str, object]: ...
+    def create_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
+    def upload_part_copy(self, **kwargs: object) -> Mapping[str, object]: ...
+    def upload_part(self, **kwargs: object) -> Mapping[str, object]: ...
+    def complete_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
+    def abort_multipart_upload(self, **kwargs: object) -> Mapping[str, object]: ...
+    def get_object(self, **kwargs: object) -> Mapping[str, object]: ...
+    def put_object(self, **kwargs: object) -> Mapping[str, object]: ...
+    def put_object_tagging(self, **kwargs: object) -> Mapping[str, object]: ...
+    def delete_object(self, **kwargs: object) -> Mapping[str, object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,10 +71,18 @@ class S3ArchiveBucket:
         kwargs = _versioned_kwargs(self.bucket, key, version_id)
         try:
             head = self.client.head_object(**kwargs)
-            tags = self.get_tags(key, version_id)
-        except Exception:
-            return None
+        except ClientError as exc:
+            if _is_not_found_error(exc):
+                return None
+            raise
+        tags = self.get_tags(key, version_id)
         return _properties_from_head(head, tags)
+
+    def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
+        properties = self.head_object(key, version_id)
+        if properties is None:
+            raise FileNotFoundError(f"listed source object disappeared before metadata read: {key}")
+        return properties
 
     def get_tags(self, key: str, version_id: str | None = None) -> Mapping[str, str]:
         """Return object tags as a plain string mapping."""
@@ -104,6 +104,7 @@ class S3ArchiveBucket:
 
     def copy_from(
         self,
+        source: object,
         source_bucket: str,
         source_key: str,
         source_version_id: str | None,
@@ -114,15 +115,20 @@ class S3ArchiveBucket:
     ) -> None:
         """Copy one source object into this bucket while preserving portable properties."""
 
-        if strategy != "simple_native_copy":
-            raise NotImplementedError(f"{strategy} transfer is not implemented by S3ArchiveBucket")
-        copy_source = {"Bucket": source_bucket, "Key": source_key}
-        if source_version_id is not None:
-            copy_source["VersionId"] = source_version_id
-        kwargs = _copy_kwargs(
-            self.bucket, destination_key, copy_source, properties, destination_metadata
+        if not isinstance(source, S3ArchiveBucket):
+            raise TypeError("S3ArchiveBucket copy requires an S3ArchiveBucket source")
+        copy_s3_object(
+            cast(S3Client, self.client),
+            cast(S3Client, source.client),
+            source_bucket,
+            source_key,
+            source_version_id,
+            properties,
+            self.bucket,
+            destination_key,
+            destination_metadata,
+            strategy,
         )
-        _ = self.client.copy_object(**kwargs)
 
     def delete_source(self, key: str, version_id: str | None) -> None:
         """Delete an exact source version when available, otherwise delete by key."""
@@ -167,9 +173,7 @@ class S3ArchiveBucket:
         size = _required_int(item["Size"])
         last_modified = cast(datetime, item["LastModified"])
         etag = _optional_string(item.get("ETag"))
-        properties = self.head_object(key, version_id)
-        if properties is None:
-            properties = S3ObjectProperties(size, etag, None, None, None, None, None, None, {}, {})
+        properties = self._source_properties(key, version_id)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
 
 
@@ -178,35 +182,6 @@ def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str
     if version_id is not None:
         kwargs["VersionId"] = version_id
     return kwargs
-
-
-def _copy_kwargs(
-    bucket: str,
-    key: str,
-    copy_source: Mapping[str, str],
-    properties: S3ObjectProperties,
-    metadata: Mapping[str, str],
-) -> dict[str, object]:
-    kwargs: dict[str, object] = {
-        "Bucket": bucket,
-        "Key": key,
-        "CopySource": copy_source,
-        "Metadata": dict(metadata),
-        "MetadataDirective": "REPLACE",
-        "TaggingDirective": "COPY",
-    }
-    _add_optional(kwargs, "ContentType", properties.content_type)
-    _add_optional(kwargs, "ContentEncoding", properties.content_encoding)
-    _add_optional(kwargs, "ContentLanguage", properties.content_language)
-    _add_optional(kwargs, "ContentDisposition", properties.content_disposition)
-    _add_optional(kwargs, "CacheControl", properties.cache_control)
-    _add_optional(kwargs, "Expires", properties.expires)
-    return kwargs
-
-
-def _add_optional(target: dict[str, object], key: str, value: object | None) -> None:
-    if value is not None:
-        target[key] = value
 
 
 def _properties_from_head(
@@ -224,6 +199,19 @@ def _properties_from_head(
         metadata=_string_mapping(head.get("Metadata")),
         tags=tags,
     )
+
+
+def _is_not_found_error(exc: ClientError) -> bool:
+    response = cast(Mapping[str, object], exc.response)
+    error = response.get("Error")
+    metadata = response.get("ResponseMetadata")
+    code = None
+    status = None
+    if isinstance(error, dict):
+        code = cast(Mapping[object, object], error).get("Code")
+    if isinstance(metadata, dict):
+        status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
+    return str(code) in {"404", "NoSuchKey", "NotFound"} or status == 404
 
 
 def _object_list(value: object) -> list[Mapping[str, object]]:

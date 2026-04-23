@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
-from integration.localstack_harness import bucket_pair_from_env
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
+
+from tests.integration.localstack_harness import bucket_pair_from_env
 
 _COMPOSE_RETRY_DELAY_SECONDS = 2.0
 _COMPOSE_RUN_RETRIES = 4
@@ -30,12 +31,21 @@ class RotationPayload(TypedDict):
 
 
 @pytest.mark.e2e()
-def test_compose_app_healthcheck_succeeds(
+def test_compose_app_without_command_shows_help(compose_env: dict[str, str]) -> None:
+    result = _run_compose(compose_env, "run", "--rm", "app")
+
+    assert "Usage:" in result.stdout
+    assert "check" in result.stdout
+    assert "archive" in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_app_check_succeeds(
     compose_env: dict[str, str],
     localstack_service: None,
 ) -> None:
     _ = localstack_service
-    result = _run_compose(compose_env, "run", "--rm", "app")
+    result = _run_compose(compose_env, "run", "--rm", "app", "check")
     final_line = result.stdout.strip().splitlines()[-1]
 
     assert '"event": "logging.configured"' in result.stdout
@@ -51,7 +61,7 @@ def test_compose_run_starts_localstack_without_pytest_orchestration(
 ) -> None:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
-        result = _run_compose(compose_env, "run", "--rm", "app")
+        result = _run_compose(compose_env, "run", "--rm", "app", "check")
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     final_line = result.stdout.strip().splitlines()[-1]
@@ -68,7 +78,7 @@ def test_compose_app_writes_persisted_logs(
     localstack_service: None,
 ) -> None:
     _ = localstack_service
-    _ = _run_compose(compose_env, "run", "--rm", "app")
+    _ = _run_compose(compose_env, "run", "--rm", "app", "check")
     result = _run_compose(
         compose_env,
         "run",
@@ -151,6 +161,7 @@ def test_compose_app_fails_fast_when_log_dir_is_unwritable(
         "-e",
         "LOG_DIR=/proc/s3-archiver",
         "app",
+        "check",
         check=False,
     )
 

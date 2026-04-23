@@ -101,6 +101,7 @@ class FakeBucket:
 
     def copy_from(
         self,
+        source: object,
         source_bucket: str,
         source_key: str,
         source_version_id: str | None,
@@ -109,7 +110,9 @@ class FakeBucket:
         destination_metadata: Mapping[str, str],
         strategy: TransferStrategy,
     ) -> None:
-        _ = (source_bucket, source_version_id, strategy)
+        assert isinstance(source, FakeBucket)
+        assert source.bucket == source_bucket
+        _ = (source_version_id, strategy)
         if self.fail_copy:
             raise RuntimeError("copy failed")
         self.copied.append(source_key)
@@ -147,9 +150,7 @@ def test_manifest_uses_frozen_cutoff_filters_and_preserves_versions() -> None:
 @pytest.mark.unit()
 def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
     listed = _listed("key.txt", 70)
-    entry = ManifestEntry(
-        "source", "key.txt", 10, listed.last_modified, '"etag"', "v1", listed
-    )
+    entry = ManifestEntry("source", "key.txt", 10, listed.last_modified, '"etag"', "v1", listed)
     metadata = archive_metadata(entry)
     destination = replace(entry.object.properties, metadata=metadata)
 
@@ -238,6 +239,25 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
     assert verify_failed.verify.failures == ()
+    assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_run_archive_timeout_blocks_later_phases() -> None:
+    started = datetime(2024, 4, 20, tzinfo=UTC)
+    source = FakeBucket("source", (_listed("old.txt", 90),))
+    destination = FakeBucket("destination")
+
+    timed_out = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=started,
+        clock=lambda: started + timedelta(days=8),
+    )
+
+    assert timed_out.copy.failures == ("archive run timed out",)
+    assert timed_out.verify.failures == ()
     assert source.deleted == []
 
 

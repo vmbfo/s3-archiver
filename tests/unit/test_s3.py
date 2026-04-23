@@ -123,8 +123,8 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
-    base_env["S3_ENDPOINT_URL"] = "https://override.example.invalid"
-    base_env["S3_ADDRESSING_STYLE"] = "virtual"
+    base_env["S3_SOURCE_ENDPOINT_URL"] = "https://override.example.invalid"
+    base_env["S3_SOURCE_ADDRESSING_STYLE"] = "virtual"
     settings = AppSettings.from_env(base_env)
     sessions: list[RecordingSession] = []
 

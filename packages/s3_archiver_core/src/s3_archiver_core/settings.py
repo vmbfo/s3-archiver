@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
+from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.errors import ConfigError
 
 
@@ -62,7 +63,7 @@ class S3LocationSettings:
         return StorageLocationIdentity(
             provider=self.provider,
             endpoint_url=_normalize_endpoint_url(self.resolved_endpoint_url()),
-            region=self.region,
+            region=self.region if self.provider is S3Provider.OCI else None,
             namespace=self.namespace if self.provider is S3Provider.OCI else None,
             bucket=self.bucket,
         )
@@ -101,16 +102,15 @@ class AppSettings:
         if log_level not in _VALID_LOG_LEVELS:
             raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
 
-        legacy = _uses_legacy_s3_env(env)
-        source = _load_s3_location(env, "SOURCE", legacy=legacy)
-        destination = _load_s3_location(env, "DESTINATION", legacy=legacy)
+        source = _load_s3_location(env, "SOURCE")
+        destination = _load_s3_location(env, "DESTINATION")
         path_filters = _load_path_filters(env)
         retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=0)
         max_workers = _parse_int(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
         cleanup_enabled = _parse_bool(env, "ARCHIVER_ENABLE_CLEANUP", default=False)
         run_timeout = _parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
 
-        if not legacy and source.storage_identity() == destination.storage_identity():
+        if source.storage_identity() == destination.storage_identity():
             raise ConfigError(
                 "ARCHIVER_STORAGE_LOCATION must differ between source and destination"
             )
@@ -155,16 +155,14 @@ class AppSettings:
         return self.source.resolved_endpoint_url()
 
 
-def _load_s3_location(env: Mapping[str, str], side: str, *, legacy: bool) -> S3LocationSettings:
+def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
     prefix = f"S3_{side}_"
-    provider_key = _key("S3_PROVIDER", prefix, legacy)
+    provider_key = f"{prefix}PROVIDER"
     provider_value = _require(env, provider_key).lower()
-    addressing_key = _key("S3_ADDRESSING_STYLE", prefix, legacy)
+    addressing_key = f"{prefix}ADDRESSING_STYLE"
     addressing_value = env.get(addressing_key, "path").lower()
-    namespace = _optional(env, _key("S3_NAMESPACE", prefix, legacy))
-    iam_user_ocid = _optional(env, _key("S3_IAM_USER_OCID", prefix, legacy))
-    if legacy:
-        iam_user_ocid = iam_user_ocid or _optional(env, "OCI_IAM_USER_OCID")
+    namespace = _optional(env, f"{prefix}NAMESPACE")
+    iam_user_ocid = _optional(env, f"{prefix}IAM_USER_OCID")
 
     if provider_value not in _VALID_PROVIDERS:
         raise ConfigError(
@@ -176,22 +174,20 @@ def _load_s3_location(env: Mapping[str, str], side: str, *, legacy: bool) -> S3L
         )
     provider = S3Provider(provider_value)
     if provider is S3Provider.OCI and namespace is None:
-        namespace_key = _key("S3_NAMESPACE", prefix, legacy)
+        namespace_key = f"{prefix}NAMESPACE"
         raise ConfigError(f"{namespace_key} is required when {provider_key}=oci")
     if provider is S3Provider.OCI and iam_user_ocid is None:
-        raise ConfigError(
-            f"{_key('S3_IAM_USER_OCID', prefix, legacy)} is required when {provider_key}=oci"
-        )
+        raise ConfigError(f"{prefix}IAM_USER_OCID is required when {provider_key}=oci")
 
     return S3LocationSettings(
         provider=provider,
-        access_key_id=_require(env, _key("S3_ACCESS_KEY_ID", prefix, legacy)),
-        secret_access_key=_require(env, _key("S3_SECRET_ACCESS_KEY", prefix, legacy)),
-        region=_require(env, _key("S3_REGION", prefix, legacy)),
-        bucket=_require(env, _key("S3_BUCKET", prefix, legacy)),
+        access_key_id=_require(env, f"{prefix}ACCESS_KEY_ID"),
+        secret_access_key=_require(env, f"{prefix}SECRET_ACCESS_KEY"),
+        region=_require(env, f"{prefix}REGION"),
+        bucket=_require(env, f"{prefix}BUCKET"),
         namespace=namespace,
         iam_user_ocid=iam_user_ocid,
-        endpoint_url=_optional(env, _key("S3_ENDPOINT_URL", prefix, legacy)),
+        endpoint_url=_optional(env, f"{prefix}ENDPOINT_URL"),
         addressing_style=S3AddressingStyle(addressing_value),
     )
 
@@ -207,17 +203,6 @@ def _load_path_filters(env: Mapping[str, str]) -> PathFilterSettings:
         whitelist=_parse_string_array(env, "S3_SOURCE_PATH_WHITELIST"),
         blacklist=_parse_string_array(env, "S3_SOURCE_PATH_BLACKLIST"),
     )
-
-
-def _key(legacy_key: str, prefix: str, legacy: bool) -> str:
-    if legacy:
-        return "OCI_IAM_USER_OCID" if legacy_key == "S3_IAM_USER_OCID" else legacy_key
-    return f"{prefix}{legacy_key.removeprefix('S3_')}"
-
-
-def _uses_legacy_s3_env(env: Mapping[str, str]) -> bool:
-    dual = ("S3_SOURCE_PROVIDER", "S3_DESTINATION_PROVIDER")
-    return "S3_PROVIDER" in env and not any(key in env for key in dual)
 
 
 def _parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
@@ -246,17 +231,10 @@ def _parse_int(env: Mapping[str, str], key: str, *, default: int, minimum: int) 
 
 
 def _parse_duration(raw: str, key: str) -> timedelta:
-    value = raw.strip().lower()
-    if value == "":
-        raise ConfigError(f"{key} is required")
-    unit = value[-1]
-    digits = value[:-1] if unit in {"s", "m", "h", "d"} else value
-    if not digits.isdecimal():
-        raise ConfigError(f"{key} must be a positive duration such as 7d")
-    amount = int(digits)
-    if amount <= 0:
-        raise ConfigError(f"{key} must be greater than zero")
-    return timedelta(seconds=amount * {"s": 1, "m": 60, "h": 3_600, "d": 86_400}.get(unit, 1))
+    try:
+        return parse_duration(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be a positive duration such as 7d") from exc
 
 
 def _parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:

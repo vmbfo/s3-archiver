@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3Provider
 
@@ -51,6 +52,18 @@ def test_from_env_parses_archive_runtime_options(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_archive_options_disable_native_copy_for_mixed_endpoints(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    settings = AppSettings.from_env(env)
+
+    options = ArchiveOptions.from_settings(settings)
+
+    assert options.transfer_capabilities.native_copy is False
+    assert options.transfer_capabilities.multipart_copy is False
+    assert options.transfer_capabilities.streaming_upload is True
+
+
+@pytest.mark.unit()
 def test_from_env_rejects_invalid_runtime_values(tmp_path: Path) -> None:
     env = _dual_env(tmp_path)
     env["ARCHIVER_MAX_WORKERS"] = "0"
@@ -69,9 +82,35 @@ def test_from_env_rejects_invalid_run_timeout(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_from_env_rejects_bare_number_run_timeout(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["ARCHIVER_RUN_TIMEOUT"] = "30"
+
+    with pytest.raises(ConfigError, match="ARCHIVER_RUN_TIMEOUT"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
 def test_from_env_rejects_invalid_provider(tmp_path: Path) -> None:
     env = _dual_env(tmp_path)
     env["S3_SOURCE_PROVIDER"] = "broken"
+
+    with pytest.raises(ConfigError, match="S3_SOURCE_PROVIDER"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_legacy_single_bucket_env(tmp_path: Path) -> None:
+    env = {
+        "S3_PROVIDER": "oci",
+        "S3_ACCESS_KEY_ID": "access-key",
+        "S3_SECRET_ACCESS_KEY": "secret-key",
+        "S3_REGION": "eu-frankfurt-1",
+        "S3_NAMESPACE": "tenant",
+        "S3_BUCKET": "archive-bucket",
+        "OCI_IAM_USER_OCID": "ocid1.user.oc1..example",
+        "LOG_DIR": str(tmp_path / "logs"),
+    }
 
     with pytest.raises(ConfigError, match="S3_SOURCE_PROVIDER"):
         _ = AppSettings.from_env(env)
@@ -124,6 +163,22 @@ def test_from_env_allows_same_bucket_name_at_different_storage_locations(tmp_pat
 
     assert settings.source.bucket == settings.destination.bucket
     assert settings.source.storage_identity() != settings.destination.storage_identity()
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_same_localstack_bucket_with_different_regions(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "localstack"
+    env["S3_SOURCE_REGION"] = "us-west-2"
+    env["S3_SOURCE_BUCKET"] = "shared-bucket"
+    env["S3_SOURCE_ENDPOINT_URL"] = "http://localhost:4566/"
+    env["S3_DESTINATION_BUCKET"] = "shared-bucket"
+    env["S3_DESTINATION_ENDPOINT_URL"] = "http://localhost:4566"
+    _ = env.pop("S3_SOURCE_NAMESPACE")
+    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
+
+    with pytest.raises(ConfigError, match="ARCHIVER_STORAGE_LOCATION"):
+        _ = AppSettings.from_env(env)
 
 
 @pytest.mark.unit()

@@ -31,11 +31,10 @@ from s3_archiver_core.s3 import (
 class ArchiveBucket(Protocol):
     """S3 bucket operations required by the archive engine."""
 
-    bucket: str
+    @property
+    def bucket(self) -> str: ...
 
-    def versioning_state(self) -> VersioningState:
-        """Return source bucket versioning state."""
-        ...
+    def versioning_state(self) -> VersioningState: ...
 
     def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
         """Yield source objects for manifest construction."""
@@ -47,6 +46,7 @@ class ArchiveBucket(Protocol):
 
     def copy_from(
         self,
+        source: ArchiveBucket,
         source_bucket: str,
         source_key: str,
         source_version_id: str | None,
@@ -117,10 +117,15 @@ def run_archive(
     run_started_at_utc: datetime | None = None,
     run_lock: ArchiveRunLock | None = None,
     debug_logger: DebugLogger | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> ArchiveRunResult:
     """Run strict list, copy, verify, cleanup phases."""
 
     started = run_started_at_utc or datetime.now(tz=UTC)
+    deadline = started + options.run_timeout
+    if clock is None and run_started_at_utc is not None:
+        deadline = datetime.max.replace(tzinfo=UTC)
+    now = clock or (lambda: datetime.now(tz=UTC))
     run_id = uuid4().hex
     if run_lock is not None and not run_lock.acquire(
         run_id=run_id, run_started_at_utc=started, timeout=options.run_timeout
@@ -134,17 +139,27 @@ def run_archive(
             versioning_state=source.versioning_state(),
             source_filter=options.source_filter,
         )
-        copy_result = _copy_phase(destination, options, manifest.entries, debug_logger)
+        copy_result = _copy_phase(source, destination, options, manifest.entries, debug_logger)
+        if _timed_out(now, deadline):
+            return ArchiveRunResult(
+                run_id, manifest, _timeout("copy"), _skipped("verify"), _skipped("cleanup")
+            )
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
             else _verify_phase(destination, options, manifest.entries)
         )
+        if copy_result.ok and _timed_out(now, deadline):
+            return ArchiveRunResult(
+                run_id, manifest, copy_result, _timeout("verify"), _skipped("cleanup")
+            )
         cleanup_result = (
             _cleanup_phase(source, options, manifest.entries)
             if copy_result.ok and verify_result.ok
             else _skipped("cleanup")
         )
+        if copy_result.ok and verify_result.ok and _timed_out(now, deadline):
+            cleanup_result = _timeout("cleanup")
         return ArchiveRunResult(run_id, manifest, copy_result, verify_result, cleanup_result)
     finally:
         if run_lock is not None:
@@ -152,13 +167,14 @@ def run_archive(
 
 
 def _copy_phase(
+    source: ArchiveBucket,
     destination: ArchiveBucket,
     options: ArchiveOptions,
     entries: tuple[ManifestEntry, ...],
     debug_logger: DebugLogger | None,
 ) -> ArchivePhaseResult:
     def worker(entry: ManifestEntry) -> str | None:
-        return _copy_one(destination, options, entry, debug_logger)
+        return _copy_one(source, destination, options, entry, debug_logger)
 
     return ArchivePhaseResult(
         "copy",
@@ -167,6 +183,7 @@ def _copy_phase(
 
 
 def _copy_one(
+    source: ArchiveBucket,
     destination: ArchiveBucket,
     options: ArchiveOptions,
     entry: ManifestEntry,
@@ -180,6 +197,7 @@ def _copy_one(
     if debug_logger is not None:
         debug_logger(entry, strategy)
     destination.copy_from(
+        source,
         entry.source_bucket,
         entry.key,
         entry.version_id,
@@ -270,3 +288,11 @@ def _future_result(future: Future[str | None]) -> str | None:
 
 def _skipped(phase: str) -> ArchivePhaseResult:
     return ArchivePhaseResult(phase)
+
+
+def _timed_out(clock: Callable[[], datetime], deadline: datetime) -> bool:
+    return clock() > deadline
+
+
+def _timeout(phase: str) -> ArchivePhaseResult:
+    return ArchivePhaseResult(phase, ("archive run timed out",))

@@ -38,14 +38,7 @@ def test_check_command_emits_json(
         return Path("/tmp/s3-archiver.log")
 
     def run_check(settings: AppSettings, log_file: Path) -> HealthReport:
-        return HealthReport(
-            status="ok",
-            provider=settings.provider.value,
-            bucket=settings.bucket,
-            endpoint_url=settings.resolved_endpoint_url(),
-            log_file=str(log_file),
-            checked_at="2026-04-09T17:00:43+00:00",
-        )
+        return _health_report(settings, log_file)
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_check)
@@ -78,7 +71,7 @@ def test_check_command_uses_config_exit_code_for_invalid_provider(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
-    base_env["S3_PROVIDER"] = "broken"
+    base_env["S3_SOURCE_PROVIDER"] = "broken"
     monkeypatch.setattr(os, "environ", base_env)
 
     result = RUNNER.invoke(cli_module.app, ["check"])
@@ -86,8 +79,8 @@ def test_check_command_uses_config_exit_code_for_invalid_provider(
     assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
-    assert "S3_PROVIDER" in payload["message"]
-    assert payload.get("field") == "S3_PROVIDER"
+    assert "S3_SOURCE_PROVIDER" in payload["message"]
+    assert payload.get("field") == "S3_SOURCE_PROVIDER"
 
 
 @pytest.mark.unit()
@@ -133,6 +126,8 @@ def test_check_command_uses_health_exit_code_for_auth_failure(
     assert payload["status"] == "error"
     assert payload["message"] == "auth failed: denied"
     assert payload.get("phase") == "startup.preflight"
+    assert payload.get("source_bucket") == "archive-bucket"
+    assert payload.get("destination_bucket") == "destination-bucket"
 
 
 @pytest.mark.unit()
@@ -193,30 +188,6 @@ def test_bare_command_prints_help_and_exits_zero() -> None:
 
 
 @pytest.mark.unit()
-def test_archive_command_invokes_runner(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-
-    def configure(_: AppSettings) -> Path:
-        return Path("/tmp/s3-archiver.log")
-
-    def run_archive(settings: AppSettings) -> dict[str, cli_module.JsonValue]:
-        return {"status": "ok", "bucket": settings.bucket}
-
-    monkeypatch.setattr(cli_module, "configure_logging", configure)
-    monkeypatch.setattr(cli_module, "archive_runner", run_archive)
-
-    result = RUNNER.invoke(cli_module.app, ["archive"])
-
-    assert result.exit_code == 0
-    payload = _load_payload(result.stdout)
-    assert payload["status"] == "ok"
-    assert payload.get("bucket") == "archive-bucket"
-
-
-@pytest.mark.unit()
 def test_main_runs_typer_application(monkeypatch: pytest.MonkeyPatch) -> None:
     called = False
 
@@ -233,3 +204,18 @@ def test_main_runs_typer_application(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _load_payload(output: str) -> HealthPayload:
     return cast(HealthPayload, json.loads(output))
+
+
+def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
+    return HealthReport(
+        status="ok",
+        source_provider=settings.source.provider.value,
+        source_bucket=settings.source.bucket,
+        source_endpoint_url=settings.source.resolved_endpoint_url(),
+        source_versioning="Enabled",
+        destination_provider=settings.destination.provider.value,
+        destination_bucket=settings.destination.bucket,
+        destination_endpoint_url=settings.destination.resolved_endpoint_url(),
+        log_file=str(log_file),
+        checked_at="2026-04-09T17:00:43+00:00",
+    )

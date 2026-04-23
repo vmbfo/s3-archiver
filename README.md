@@ -24,17 +24,27 @@ Run the canonical compose-backed health check flow:
 
 ```bash
 docker compose build app
-TEST_S3_SOURCE_BUCKET=s3-archiver-integration \
-TEST_S3_DESTINATION_BUCKET=s3-archiver-destination-local \
+suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+export TEST_S3_SOURCE_BUCKET="s3-archiver-source-${suffix}"
+export TEST_S3_DESTINATION_BUCKET="s3-archiver-destination-${suffix}"
+mkdir -p .local
+sed \
+  -e "s/s3-archiver-source-replace-with-uuid/${TEST_S3_SOURCE_BUCKET}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${TEST_S3_DESTINATION_BUCKET}/" \
+  .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
-APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
+APP_ENV_FILE=".local/e2e-${suffix}.env" docker compose --profile test run --rm app s3-archiver check
 docker compose --profile test down -v
 ```
+
+Running the app container without an explicit command prints CLI help and exits `0`.
+Use `s3-archiver check` for startup validation and `s3-archiver archive` for one archive invocation.
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
-Use `.env.example` for OCI-backed runs and `.env.e2e` for the LocalStack compose flow shown above.
+Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
+Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, and disabled source whitelist/blacklist filters.
 The pytest integration and e2e harnesses do not load the production `.env`; they generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test.
 
 ## Local Development
@@ -58,18 +68,44 @@ If your local user cannot write `/var/log/s3-archiver`, override `LOG_DIR` to a 
 If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
+suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+export TEST_S3_SOURCE_BUCKET="s3-archiver-source-${suffix}"
+export TEST_S3_DESTINATION_BUCKET="s3-archiver-destination-${suffix}"
+mkdir -p .local
+sed \
+  -e "s/s3-archiver-source-replace-with-uuid/${TEST_S3_SOURCE_BUCKET}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${TEST_S3_DESTINATION_BUCKET}/" \
+  .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 ./scripts/run.sh
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  ./scripts/run.sh
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  make run
 ```
 
-`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
+`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_SOURCE_ENDPOINT_URL=...` and `S3_DESTINATION_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
 
 Run the health check directly without the wrapper:
 
 ```bash
 uv run s3-archiver check
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 uv run s3-archiver check
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  uv run s3-archiver check
+```
+
+Run one archive invocation directly:
+
+```bash
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  uv run s3-archiver archive
 ```
 
 Run checks:

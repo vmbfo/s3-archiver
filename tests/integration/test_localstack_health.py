@@ -11,19 +11,22 @@ import subprocess
 from collections.abc import Mapping
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import pytest
-from integration.localstack_harness import (
+from botocore.response import StreamingBody
+from mypy_boto3_s3.type_defs import VersioningConfigurationTypeDef
+from s3_archiver_core.health import run_health_check
+from s3_archiver_core.logging_config import configure_logging
+from s3_archiver_core.s3 import VersioningState, build_s3_client
+from s3_archiver_core.settings import AppSettings
+
+from tests.integration.localstack_harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     assert_localstack_test_target,
     localstack_test_env,
 )
-from s3_archiver_core.health import run_health_check
-from s3_archiver_core.logging_config import configure_logging
-from s3_archiver_core.s3 import build_s3_client
-from s3_archiver_core.settings import AppSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_LOGS_VOLUME = f"{REPO_ROOT.name}_app_logs"
@@ -35,9 +38,7 @@ INTEGRATION_RUNTIME_LOG_DIR = (
 def _integration_env(bucket_pair: LocalstackBucketPair) -> dict[str, str]:
     endpoint = os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
     return localstack_test_env(
-        bucket_pair,
-        endpoint=endpoint,
-        log_dir=str(INTEGRATION_RUNTIME_LOG_DIR),
+        bucket_pair, endpoint=endpoint, log_dir=str(INTEGRATION_RUNTIME_LOG_DIR)
     )
 
 
@@ -95,7 +96,7 @@ def test_compose_runtime_log_volume_captures_health_logs(
     _ = localstack_bucket_pair
     _reset_app_logs_volume()
 
-    result = _run_compose(compose_env, "run", "--rm", "app")
+    result = _run_compose(compose_env, "run", "--rm", "app", "check")
     volume_log = _read_app_logs_volume()
 
     assert '"event": "health.succeeded"' in result.stdout
@@ -109,11 +110,8 @@ def test_localstack_ready_hook_creates_isolated_buckets(
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
     client = build_s3_client(settings)
 
-    source_response = client.head_bucket(Bucket=localstack_bucket_pair.source)
-    destination_response = client.head_bucket(Bucket=localstack_bucket_pair.destination)
-
-    assert source_response is not None
-    assert destination_response is not None
+    assert client.head_bucket(Bucket=localstack_bucket_pair.source) is not None
+    assert client.head_bucket(Bucket=localstack_bucket_pair.destination) is not None
 
 
 @pytest.mark.integration()
@@ -142,7 +140,7 @@ def test_s3_client_supports_isolated_object_round_trip(
 
     _ = client.put_object(Bucket=settings.bucket, Key=key, Body=body)
     response = client.get_object(Bucket=settings.bucket, Key=key)
-    payload = response["Body"].read()
+    payload = cast(StreamingBody, response["Body"]).read()
 
     assert payload == body
 
@@ -156,6 +154,71 @@ def test_localstack_guard_rejects_live_s3_endpoint(
 
     with pytest.raises(RuntimeError, match="not allowed"):
         assert_localstack_test_target(unsafe_env)
+
+
+@pytest.mark.integration()
+@pytest.mark.parametrize(
+    ("status", "expected_state"),
+    [(None, "Disabled"), ("Enabled", "Enabled"), ("Suspended", "Suspended")],
+)
+def test_health_check_succeeds_for_source_bucket_versioning_states(
+    localstack_bucket_pair: LocalstackBucketPair,
+    status: Literal["Enabled", "Suspended"] | None,
+    expected_state: VersioningState,
+) -> None:
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
+    client = build_s3_client(settings)
+    if status is not None:
+        configuration: VersioningConfigurationTypeDef = {"Status": status}
+        _ = client.put_bucket_versioning(
+            Bucket=settings.bucket,
+            VersioningConfiguration=configuration,
+        )
+
+    raw_state = client.get_bucket_versioning(Bucket=settings.bucket).get("Status")
+    state: VersioningState = (
+        cast(VersioningState, raw_state) if raw_state in {"Enabled", "Suspended"} else "Disabled"
+    )
+    report = run_health_check(settings, settings.log_dir / "s3-archiver.log")
+
+    assert state == expected_state
+    assert report.status == "ok"
+    assert (report.source_bucket, report.source_versioning) == (settings.bucket, expected_state)
+
+
+@pytest.mark.integration()
+def test_timestamp_seed_helper_records_supported_last_modified_behavior(
+    compose_env: dict[str, str],
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    _ = localstack_bucket_pair
+    seed_command = (
+        "TEST_TIMESTAMP_SEED_PREFIX=seed-helper "
+        + "TEST_TIMESTAMP_SEED_DAYS='0 61' "
+        + "/opt/s3-archiver-test-support/seed-object-timestamps.sh"
+    )
+    result = _run_compose(
+        compose_env,
+        "exec",
+        "-T",
+        "localstack",
+        "sh",
+        "-lc",
+        seed_command,
+    )
+    settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
+    client = build_s3_client(settings)
+
+    rows = [line.split("\t") for line in result.stdout.splitlines()]
+    assert [row[1] for row in rows] == ["0", "61"]
+    assert all(row[0] == f"seed-helper/age-{row[1]}-days.txt" for row in rows)
+    assert all(row[2] not in {"", "None"} for row in rows)
+    for age_days in ("0", "61"):
+        key = f"seed-helper/age-{age_days}-days.txt"
+        head = client.head_object(Bucket=settings.bucket, Key=key)
+        metadata = cast(dict[str, object], head.get("Metadata", {}))
+        assert metadata.get("s3-archiver-test-age-days") == age_days
+        assert head.get("LastModified") is not None
 
 
 def _listed_keys(response: Mapping[str, object]) -> set[str]:
@@ -206,17 +269,8 @@ def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess
 
 
 def _run_volume_probe(command: str) -> subprocess.CompletedProcess[str]:
-    probe = [
-        "docker",
-        "run",
-        "--rm",
-        "-v",
-        f"{APP_LOGS_VOLUME}:/logs",
-        "alpine:3.22",
-        "sh",
-        "-lc",
-        command,
-    ]
+    probe = ["docker", "run", "--rm", "-v", f"{APP_LOGS_VOLUME}:/logs"]
+    probe += ["alpine:3.22", "sh", "-lc", command]
     result = subprocess.run(
         probe,
         cwd=REPO_ROOT,
@@ -235,8 +289,7 @@ def _run_volume_probe(command: str) -> subprocess.CompletedProcess[str]:
 
 
 def _read_app_logs_volume() -> str:
-    result = _run_volume_probe("test -s /logs/s3-archiver.log && cat /logs/s3-archiver.log")
-    return result.stdout
+    return _run_volume_probe("test -s /logs/s3-archiver.log && cat /logs/s3-archiver.log").stdout
 
 
 def _reset_app_logs_volume() -> None:

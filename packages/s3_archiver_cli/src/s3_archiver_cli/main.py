@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
-from typing import Protocol
 
 import typer
+from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult, run_archive
+from s3_archiver_core.archive_lock import FileArchiveRunLock
+from s3_archiver_core.archive_manifest import ManifestEntry
+from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.errors import (
+    ArchiveRunError,
     ConfigError,
     HealthCheckError,
     LoggingError,
@@ -16,22 +22,14 @@ from s3_archiver_core.errors import (
 )
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
+from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 
 
-class ArchiveRunner(Protocol):
-    """Callable archive workflow hook, supplied by the archive implementation."""
-
-    def __call__(self, settings: AppSettings) -> dict[str, JsonValue]:
-        """Run one archive invocation."""
-        ...
-
-
 app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True)
-archive_runner: ArchiveRunner | None = None
 CONFIG_ERROR_EXIT_CODE = 2
 LOGGING_ERROR_EXIT_CODE = 3
 HEALTH_CHECK_ERROR_EXIT_CODE = 4
@@ -51,12 +49,13 @@ def root(ctx: typer.Context) -> None:
 def check() -> None:
     """Validate configuration, logging, and bucket access."""
 
+    settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
         log_file = configure_logging(settings)
         report = run_health_check(settings, log_file)
     except S3ArchiverError as exc:
-        typer.echo(json.dumps(_error_payload(exc), sort_keys=True), err=True)
+        typer.echo(json.dumps(_error_payload(exc, settings), sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
 
     payload = report.as_dict()
@@ -67,14 +66,19 @@ def check() -> None:
 def archive() -> None:
     """Run one archive workflow invocation."""
 
+    settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
         log_file = configure_logging(settings)
+        _ = run_health_check(settings, log_file)
         payload = _run_archive(settings, log_file)
     except S3ArchiverError as exc:
-        typer.echo(json.dumps(_error_payload(exc), sort_keys=True), err=True)
+        typer.echo(json.dumps(_error_payload(exc, settings), sort_keys=True), err=True)
         raise typer.Exit(code=_exit_code_for_error(exc)) from exc
 
+    if payload.get("status") == "error":
+        typer.echo(json.dumps(payload, sort_keys=True), err=True)
+        raise typer.Exit(code=1)
     typer.echo(json.dumps(payload, sort_keys=True))
 
 
@@ -95,25 +99,129 @@ def _exit_code_for_error(error: S3ArchiverError) -> int:
 
 
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
-    _ = log_file
-    if archive_runner is None:
-        raise HealthCheckError("archive runner is not available")
-    return archive_runner(settings)
+    try:
+        source = S3ArchiveBucket(build_s3_client(settings.source), settings.source.bucket)
+        destination = S3ArchiveBucket(
+            build_s3_client(settings.destination),
+            settings.destination.bucket,
+        )
+        result = run_archive(
+            source,
+            destination,
+            ArchiveOptions.from_settings(settings),
+            run_lock=FileArchiveRunLock(_archive_lock_path(settings)),
+            debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
+        )
+    except Exception as exc:
+        raise ArchiveRunError(str(exc)) from exc
+    if result.ok:
+        return _archive_result_payload("ok", result, settings, log_file)
+    return _archive_failure_payload(result, settings, log_file)
 
 
-def _error_payload(error: S3ArchiverError) -> dict[str, JsonValue]:
-    phase = "startup.env_validation" if isinstance(error, ConfigError) else "startup.preflight"
+def _archive_lock_path(settings: AppSettings) -> Path:
+    return settings.log_dir / "archive.lock"
+
+
+def _archive_result_payload(
+    status: str,
+    result: ArchiveRunResult,
+    settings: AppSettings,
+    log_file: Path,
+) -> dict[str, JsonValue]:
+    return {
+        "status": status,
+        "run_id": result.run_id,
+        "source_bucket": settings.source.bucket,
+        "destination_bucket": settings.destination.bucket,
+        "log_file": str(log_file),
+        "manifest": {
+            "object_count": len(result.manifest.entries),
+            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
+            "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
+        },
+        "phases": {
+            "copy": _phase_payload(result.copy),
+            "verify": _phase_payload(result.verify),
+            "cleanup": _phase_payload(result.cleanup),
+        },
+    }
+
+
+def _archive_failure_payload(
+    result: ArchiveRunResult,
+    settings: AppSettings,
+    log_file: Path,
+) -> dict[str, JsonValue]:
+    phase, detail = _first_archive_failure(result)
+    payload = _archive_result_payload("error", result, settings, log_file)
+    payload.update(
+        {
+            "phase": f"archive.{phase}",
+            "field": None,
+            "message": "archive run failed",
+            "details": detail,
+            "key": _failure_key(detail),
+            "mismatch": detail,
+        }
+    )
+    return payload
+
+
+def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
+    return {
+        "status": "ok" if result.ok else "error",
+        "failure_count": len(result.failures),
+        "failures": list(result.failures),
+    }
+
+
+def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
+    for phase in (result.copy, result.verify, result.cleanup):
+        if phase.failures:
+            return phase.phase, phase.failures[0]
+    return "unknown", "archive run failed"
+
+
+def _failure_key(detail: str) -> str | None:
+    key, separator, _remainder = detail.partition(":")
+    if separator == "":
+        return None
+    return key
+
+
+def _error_payload(
+    error: S3ArchiverError, settings: AppSettings | None = None
+) -> dict[str, JsonValue]:
+    if isinstance(error, ConfigError):
+        phase = "startup.env_validation"
+    elif isinstance(error, ArchiveRunError):
+        phase = "archive.run"
+    else:
+        phase = "startup.preflight"
     return {
         "status": "error",
         "phase": phase,
         "field": _field_from_error_message(str(error)) if isinstance(error, ConfigError) else None,
         "message": str(error),
         "details": str(error),
-        "source_bucket": None,
-        "destination_bucket": None,
+        "source_bucket": settings.source.bucket if settings is not None else None,
+        "destination_bucket": settings.destination.bucket if settings is not None else None,
         "key": None,
         "mismatch": None,
     }
+
+
+def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
+    logging.getLogger("s3_archiver.archive").debug(
+        "archive transfer strategy selected",
+        extra={
+            "event": "archive.transfer.strategy_selected",
+            "key": entry.key,
+            "source_bucket": entry.source_bucket,
+            "strategy": strategy,
+        },
+    )
 
 
 def _field_from_error_message(message: str) -> str | None:

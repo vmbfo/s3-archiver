@@ -1,0 +1,235 @@
+"""S3 object transfer helpers."""
+
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Literal, Protocol, cast
+
+from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
+
+S3TransferStrategy = Literal[
+    "simple_native_copy", "multipart_native_copy", "multipart_streaming", "temp_file_backed"
+]
+
+
+class ReadableBody(Protocol):
+    """Readable streaming object body."""
+
+    def read(self, size: int = -1) -> bytes:
+        """Read up to size bytes from the stream."""
+        ...
+
+
+def copy_s3_object(
+    destination_client: S3Client,
+    source_client: S3Client,
+    source_bucket: str,
+    source_key: str,
+    source_version_id: str | None,
+    properties: S3ObjectProperties,
+    destination_bucket: str,
+    destination_key: str,
+    metadata: Mapping[str, str],
+    strategy: S3TransferStrategy,
+) -> None:
+    """Copy an S3 object with the requested strategy."""
+
+    source = _copy_source(source_bucket, source_key, source_version_id)
+    if strategy == "simple_native_copy" or (
+        strategy == "multipart_native_copy" and properties.size == 0
+    ):
+        _ = destination_client.copy_object(
+            **_copy_kwargs(destination_bucket, destination_key, source, properties, metadata)
+        )
+        return
+    if strategy == "multipart_native_copy":
+        _multipart_copy(
+            destination_client,
+            destination_bucket,
+            destination_key,
+            source,
+            properties,
+            metadata,
+        )
+        return
+    body = _source_body(source_client, source_bucket, source_key, source_version_id)
+    if strategy == "multipart_streaming":
+        _upload_stream(
+            destination_client, destination_bucket, destination_key, properties, metadata, body
+        )
+        return
+    path = _stage(body)
+    try:
+        with path.open("rb") as file:
+            _upload_stream(
+                destination_client,
+                destination_bucket,
+                destination_key,
+                properties,
+                metadata,
+                cast(ReadableBody, cast(object, file)),
+            )
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _multipart_copy(
+    client: S3Client,
+    bucket: str,
+    key: str,
+    source: Mapping[str, str],
+    properties: S3ObjectProperties,
+    metadata: Mapping[str, str],
+) -> None:
+    upload_id = _upload_id(
+        client.create_multipart_upload(**_object_kwargs(bucket, key, properties, metadata))
+    )
+    try:
+        parts: list[dict[str, object]] = []
+        for number, start in enumerate(range(0, properties.size, S3_CHUNK_BYTES), 1):
+            end = min(start + S3_CHUNK_BYTES, properties.size) - 1
+            response = client.upload_part_copy(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=number,
+                CopySource=source,
+                CopySourceRange=f"bytes={start}-{end}",
+            )
+            parts.append(_part(number, response))
+        _complete(client, bucket, key, upload_id, parts)
+    except Exception:
+        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        raise
+    _put_tags(client, bucket, key, properties.tags)
+
+
+def _upload_stream(
+    client: S3Client,
+    bucket: str,
+    key: str,
+    properties: S3ObjectProperties,
+    metadata: Mapping[str, str],
+    body: ReadableBody,
+) -> None:
+    if properties.size == 0:
+        _ = client.put_object(**_object_kwargs(bucket, key, properties, metadata), Body=b"")
+        _put_tags(client, bucket, key, properties.tags)
+        return
+    upload_id = _upload_id(
+        client.create_multipart_upload(**_object_kwargs(bucket, key, properties, metadata))
+    )
+    try:
+        parts: list[dict[str, object]] = []
+        number = 1
+        while True:
+            chunk = body.read(S3_CHUNK_BYTES)
+            if chunk == b"":
+                break
+            response = client.upload_part(
+                Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=number, Body=chunk
+            )
+            parts.append(_part(number, response))
+            number += 1
+        _complete(client, bucket, key, upload_id, parts)
+    except Exception:
+        _ = client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        raise
+    _put_tags(client, bucket, key, properties.tags)
+
+
+def _stage(body: ReadableBody) -> Path:
+    path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", delete=False) as file:
+            path = Path(file.name)
+            while True:
+                chunk = body.read(S3_CHUNK_BYTES)
+                if chunk == b"":
+                    return path
+                _ = file.write(chunk)
+    except Exception:
+        if path is not None:
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _copy_kwargs(
+    bucket: str,
+    key: str,
+    source: Mapping[str, str],
+    properties: S3ObjectProperties,
+    metadata: Mapping[str, str],
+) -> dict[str, object]:
+    kwargs = _object_kwargs(bucket, key, properties, metadata)
+    kwargs |= {"CopySource": source, "MetadataDirective": "REPLACE", "TaggingDirective": "COPY"}
+    return kwargs
+
+
+def _object_kwargs(
+    bucket: str, key: str, properties: S3ObjectProperties, metadata: Mapping[str, str]
+) -> dict[str, object]:
+    kwargs: dict[str, object] = {"Bucket": bucket, "Key": key, "Metadata": dict(metadata)}
+    for target, value in (
+        ("ContentType", properties.content_type),
+        ("ContentEncoding", properties.content_encoding),
+        ("ContentLanguage", properties.content_language),
+        ("ContentDisposition", properties.content_disposition),
+        ("CacheControl", properties.cache_control),
+        ("Expires", properties.expires),
+    ):
+        if value is not None:
+            kwargs[target] = value
+    return kwargs
+
+
+def _source_body(client: S3Client, bucket: str, key: str, version_id: str | None) -> ReadableBody:
+    body = client.get_object(**_versioned_kwargs(bucket, key, version_id)).get("Body")
+    if not callable(getattr(body, "read", None)):
+        raise TypeError("S3 get_object response Body is not readable")
+    return cast(ReadableBody, body)
+
+
+def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:
+    kwargs: dict[str, object] = {"Bucket": bucket, "Key": key}
+    if version_id is not None:
+        kwargs["VersionId"] = version_id
+    return kwargs
+
+
+def _copy_source(bucket: str, key: str, version_id: str | None) -> dict[str, str]:
+    source = {"Bucket": bucket, "Key": key}
+    if version_id is not None:
+        source["VersionId"] = version_id
+    return source
+
+
+def _complete(
+    client: S3Client, bucket: str, key: str, upload_id: str, parts: list[dict[str, object]]
+) -> None:
+    _ = client.complete_multipart_upload(
+        Bucket=bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
+    )
+
+
+def _put_tags(client: S3Client, bucket: str, key: str, tags: Mapping[str, str]) -> None:
+    tag_set = [{"Key": tag_key, "Value": value} for tag_key, value in sorted(tags.items())]
+    _ = client.put_object_tagging(Bucket=bucket, Key=key, Tagging={"TagSet": tag_set})
+
+
+def _upload_id(response: Mapping[str, object]) -> str:
+    upload_id = response.get("UploadId")
+    if upload_id is None:
+        raise RuntimeError("S3 multipart upload response omitted UploadId")
+    return str(upload_id)
+
+
+def _part(part_number: int, response: Mapping[str, object]) -> dict[str, object]:
+    result = response.get("CopyPartResult")
+    source = cast(Mapping[str, object], result) if isinstance(result, dict) else response
+    etag = source.get("ETag")
+    if etag is None:
+        raise RuntimeError("S3 multipart part response omitted ETag")
+    return {"ETag": str(etag), "PartNumber": part_number}

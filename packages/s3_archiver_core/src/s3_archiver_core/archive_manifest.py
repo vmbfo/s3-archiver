@@ -15,7 +15,10 @@ FilterMode = Literal["none", "whitelist", "blacklist"]
 class SourceLister(Protocol):
     """Source bucket listing boundary used by manifest construction."""
 
-    bucket: str
+    @property
+    def bucket(self) -> str:
+        """Return the source bucket name."""
+        ...
 
     def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
         """Yield source objects for the given versioning state."""

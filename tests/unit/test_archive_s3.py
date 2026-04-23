@@ -1,97 +1,19 @@
-"""Unit tests for the concrete S3 archive adapter."""
-
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import UTC, datetime
+import tempfile
+from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
-from s3_archiver_core.s3 import S3ObjectProperties
+from s3_archiver_core.s3 import S3_CHUNK_BYTES
 
-
-class FakeArchiveClient:
-    """Records boto-style S3 calls."""
-
-    list_v2_calls: list[dict[str, object]]
-    version_calls: list[dict[str, object]]
-    delete_calls: list[dict[str, object]]
-    copy_call: dict[str, object]
-
-    def __init__(self) -> None:
-        self.list_v2_calls = []
-        self.version_calls = []
-        self.delete_calls = []
-        self.copy_call = {}
-
-    def get_bucket_versioning(self, *, Bucket: str) -> Mapping[str, object]:  # noqa: N803
-        _ = Bucket
-        return {"Status": "Suspended"}
-
-    def list_objects_v2(self, **kwargs: object) -> Mapping[str, object]:
-        self.list_v2_calls.append(kwargs)
-        if "ContinuationToken" not in kwargs:
-            return {
-                "IsTruncated": True,
-                "NextContinuationToken": "page-2",
-                "Contents": [_object_item("a.txt")],
-            }
-        return {"IsTruncated": False, "Contents": [_object_item("b.txt")]}
-
-    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]:
-        self.version_calls.append(kwargs)
-        if "KeyMarker" not in kwargs:
-            return {
-                "IsTruncated": True,
-                "NextKeyMarker": "k",
-                "NextVersionIdMarker": "v",
-                "DeleteMarkers": [_object_item("deleted.txt")],
-                "Versions": [
-                    _object_item("old.txt", version_id="old", is_latest=False),
-                    _object_item("current.txt", version_id="v1", is_latest=True),
-                ],
-            }
-        return {
-            "IsTruncated": False,
-            "Versions": [_object_item("null.txt", version_id="null", is_latest=True)],
-        }
-
-    def head_object(self, **kwargs: object) -> Mapping[str, object]:
-        _ = kwargs
-        return {
-            "ContentLength": 10,
-            "ETag": '"etag"',
-            "ContentType": "text/plain",
-            "Metadata": {"source": "yes"},
-        }
-
-    def get_object_tagging(self, **kwargs: object) -> Mapping[str, object]:
-        _ = kwargs
-        return {"TagSet": [{"Key": "kind", "Value": "source"}]}
-
-    def copy_object(self, **kwargs: object) -> Mapping[str, object]:
-        self.copy_call = kwargs
-        return {}
-
-    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
-        self.delete_calls.append(kwargs)
-        return {}
-
-
-def _object_item(
-    key: str, *, version_id: str | None = None, is_latest: bool | None = None
-) -> dict[str, object]:
-    item: dict[str, object] = {
-        "Key": key,
-        "Size": 10,
-        "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
-        "ETag": '"etag"',
-    }
-    if version_id is not None:
-        item["VersionId"] = version_id
-    if is_latest is not None:
-        item["IsLatest"] = is_latest
-    return item
+from tests.unit.archive_s3_fakes import (
+    FakeArchiveClient,
+    client_error,
+    copy_object,
+    properties,
+)
 
 
 @pytest.mark.unit()
@@ -128,10 +50,11 @@ def test_s3_archive_bucket_copy_and_delete_use_exact_version_when_present() -> N
     bucket = S3ArchiveBucket(client, "destination")
 
     bucket.copy_from(
+        bucket,
         "source",
         "key.txt",
         "v1",
-        S3ObjectProperties(10, '"etag"', "text/plain", None, None, None, None, None, {}, {}),
+        properties(),
         "key.txt",
         {"fingerprint": "value"},
         "simple_native_copy",
@@ -151,13 +74,81 @@ def test_s3_archive_bucket_copy_and_delete_use_exact_version_when_present() -> N
         {"Bucket": "destination", "Key": "null.txt"},
     ]
 
-    with pytest.raises(NotImplementedError, match="multipart_streaming"):
-        bucket.copy_from(
-            "source",
-            "key.txt",
-            None,
-            S3ObjectProperties(10, None, None, None, None, None, None, None, {}, {}),
-            "key.txt",
-            {},
-            "multipart_streaming",
-        )
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_multipart_native_copy_preserves_properties() -> None:
+    client = FakeArchiveClient()
+    bucket = S3ArchiveBucket(client, "destination")
+
+    copy_object(bucket, properties(S3_CHUNK_BYTES + 1), "multipart_native_copy")
+
+    assert client.create_calls[0]["Metadata"] == {"source": "yes", "fingerprint": "value"}
+    assert client.create_calls[0]["ContentEncoding"] == "gzip"
+    assert [call["CopySourceRange"] for call in client.upload_part_copy_calls] == [
+        f"bytes=0-{S3_CHUNK_BYTES - 1}",
+        f"bytes={S3_CHUNK_BYTES}-{S3_CHUNK_BYTES}",
+    ]
+    assert client.complete_calls[0]["MultipartUpload"] == {
+        "Parts": [{"ETag": '"copy-1"', "PartNumber": 1}, {"ETag": '"copy-2"', "PartNumber": 2}]
+    }
+    assert client.tagging_calls[0]["Tagging"] == {"TagSet": [{"Key": "kind", "Value": "source"}]}
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_streaming_upload_uses_bounded_parts() -> None:
+    source_client = FakeArchiveClient()
+    destination_client = FakeArchiveClient()
+    source_client.source_body = b"a" * (S3_CHUNK_BYTES + 1)
+    source = S3ArchiveBucket(source_client, "source")
+    bucket = S3ArchiveBucket(destination_client, "destination")
+
+    copy_object(bucket, properties(len(source_client.source_body)), "multipart_streaming", source)
+
+    assert source_client.get_call == {"Bucket": "source", "Key": "large.bin", "VersionId": "v1"}
+    assert destination_client.get_call == {}
+    assert destination_client.upload_part_sizes == [S3_CHUNK_BYTES, 1]
+    assert destination_client.abort_calls == []
+    assert destination_client.tagging_calls[0]["Bucket"] == "destination"
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_temp_file_transfer_cleans_up_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_client = FakeArchiveClient()
+    destination_client = FakeArchiveClient()
+    source_client.source_body = b"a" * 4
+    destination_client.fail_upload_part = True
+    source = S3ArchiveBucket(source_client, "source")
+    bucket = S3ArchiveBucket(destination_client, "destination")
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="upload failed"):
+        copy_object(bucket, properties(len(source_client.source_body)), "temp_file_backed", source)
+
+    assert source_client.get_call == {"Bucket": "source", "Key": "large.bin", "VersionId": "v1"}
+    assert destination_client.get_call == {}
+    assert destination_client.abort_calls == [
+        {"Bucket": "destination", "Key": "large.bin", "UploadId": "upload-1"}
+    ]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_head_and_tag_failures_are_not_synthesized() -> None:
+    client = FakeArchiveClient()
+    bucket = S3ArchiveBucket(client, "source")
+
+    client.head_error = client_error("404")
+    assert bucket.head_object("missing.txt") is None
+    with pytest.raises(FileNotFoundError, match="listed source object disappeared"):
+        _ = tuple(bucket.list_source_objects("Disabled"))
+
+    client.head_error = client_error("AccessDenied", 403)
+    with pytest.raises(ClientError):
+        _ = bucket.head_object("denied.txt")
+
+    client.head_error = None
+    client.tag_error = RuntimeError("tag read failed")
+    with pytest.raises(RuntimeError, match="tag read failed"):
+        _ = bucket.head_object("key.txt")
