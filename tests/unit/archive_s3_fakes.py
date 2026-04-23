@@ -68,6 +68,7 @@ class FakeArchiveClient:
             "ContentLength": 10,
             "ETag": '"etag"',
             "ContentType": "text/plain",
+            "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
             "Metadata": {"source": "yes"},
         }
 
@@ -174,6 +175,8 @@ def properties(size: int = 10) -> S3ObjectProperties:
         datetime(2025, 1, 1, tzinfo=UTC),
         {"source": "yes"},
         {"kind": "source"},
+        datetime(2024, 1, 1, tzinfo=UTC),
+        {},
     )
 
 

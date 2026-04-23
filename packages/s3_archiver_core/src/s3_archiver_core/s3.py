@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Protocol, cast
 
@@ -103,6 +103,8 @@ class S3ObjectProperties:
     expires: datetime | None
     metadata: Mapping[str, str]
     tags: Mapping[str, str]
+    last_modified: datetime | None = None
+    checksums: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

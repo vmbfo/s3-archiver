@@ -17,6 +17,8 @@ def object_properties(
     size: int = 10,
     metadata: Mapping[str, str] | None = None,
     tags: Mapping[str, str] | None = None,
+    last_modified: datetime | None = None,
+    checksums: Mapping[str, str] | None = None,
 ) -> S3ObjectProperties:
     """Build portable S3 object properties for tests."""
 
@@ -31,6 +33,8 @@ def object_properties(
         expires=datetime(2024, 1, 1, tzinfo=UTC),
         metadata=metadata or {"owner": "archive"},
         tags=tags or {"kind": "source"},
+        last_modified=last_modified,
+        checksums=checksums or {},
     )
 
 
@@ -38,13 +42,14 @@ def listed_object(key: str, age_days: int, version_id: str | None = "v1") -> S3L
     """Build a listed source object relative to the fixed archive clock."""
 
     size = 10
+    last_modified = datetime(2024, 4, 20, tzinfo=UTC) - timedelta(days=age_days)
     return S3ListedObject(
         key=key,
         size=size,
-        last_modified=datetime(2024, 4, 20, tzinfo=UTC) - timedelta(days=age_days),
+        last_modified=last_modified,
         etag='"etag"',
         version_id=version_id,
-        properties=object_properties(size=size),
+        properties=object_properties(size=size, last_modified=last_modified),
     )
 
 
@@ -62,6 +67,7 @@ class FakeBucket:
     _version_payloads: dict[tuple[str, str | None], bytes]
     _destination_payloads: dict[str, bytes]
     _versioning_state: VersioningState
+    content_sha256_calls: list[tuple[str, str | None]]
 
     def __init__(
         self,
@@ -94,6 +100,7 @@ class FakeBucket:
             key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._destination
         }
         self._versioning_state = versioning_state
+        self.content_sha256_calls = []
 
     def versioning_state(self) -> VersioningState:
         return self._versioning_state
@@ -108,6 +115,7 @@ class FakeBucket:
         return self._destination.get(key)
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        self.content_sha256_calls.append((key, version_id))
         payload = (
             self._version_payloads.get((key, version_id))
             if version_id is not None

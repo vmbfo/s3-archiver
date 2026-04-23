@@ -33,6 +33,7 @@ class SourceFingerprint:
     source_last_modified: str
     source_version_id: str | None
     source_etag: str | None
+    source_checksums: Mapping[str, str]
 
     def to_metadata_value(self) -> str:
         """Serialize the fingerprint into stable JSON for S3 user metadata."""
@@ -45,6 +46,7 @@ class SourceFingerprint:
                 "source_last_modified": self.source_last_modified,
                 "source_version_id": self.source_version_id,
                 "source_etag": self.source_etag,
+                "source_checksums": dict(self.source_checksums),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -69,6 +71,7 @@ def source_fingerprint(entry: ManifestEntry) -> SourceFingerprint:
         source_last_modified=_iso(entry.last_modified),
         source_version_id=entry.version_id,
         source_etag=entry.etag,
+        source_checksums=dict(entry.object.properties.checksums),
     )
 
 
@@ -108,8 +111,9 @@ def verify_destination(
     if destination is None:
         return VerificationResult(False, "destination missing")
     fingerprint = fingerprint_from_metadata(destination.metadata)
-    expected = source_fingerprint(entry)
-    if fingerprint != expected:
+    if fingerprint is None:
+        return VerificationResult(False, "source fingerprint mismatch")
+    if not _fingerprint_matches_entry(fingerprint, entry):
         return VerificationResult(False, "source fingerprint mismatch")
     if destination.size != entry.size:
         return VerificationResult(False, "size mismatch")
@@ -137,6 +141,24 @@ def verify_destination_content(
     return VerificationResult(True, "ok")
 
 
+def verify_destination_checksum(
+    source: S3ObjectProperties, destination: S3ObjectProperties
+) -> VerificationResult | None:
+    """Verify payload integrity from shared object checksums when available."""
+
+    shared_algorithms = [
+        algorithm
+        for algorithm in ("sha256", "sha1", "crc64nvme", "crc32c", "crc32")
+        if algorithm in source.checksums and algorithm in destination.checksums
+    ]
+    if not shared_algorithms:
+        return None
+    for algorithm in shared_algorithms:
+        if source.checksums[algorithm] != destination.checksums[algorithm]:
+            return VerificationResult(False, "content mismatch")
+    return VerificationResult(True, "ok")
+
+
 def verify_source_unchanged(
     entry: ManifestEntry, current: S3ObjectProperties | None
 ) -> VerificationResult:
@@ -145,9 +167,14 @@ def verify_source_unchanged(
     if current is None:
         return VerificationResult(False, "source missing before cleanup")
     source_properties = entry.object.properties
+    if current.last_modified is not None and current.last_modified != entry.last_modified:
+        return VerificationResult(False, "source changed before cleanup")
     if current.size != entry.size:
         return VerificationResult(False, "source changed before cleanup")
     if current.etag != entry.etag:
+        return VerificationResult(False, "source changed before cleanup")
+    checksum_verified = verify_destination_checksum(source_properties, current)
+    if checksum_verified is not None and not checksum_verified.ok:
         return VerificationResult(False, "source changed before cleanup")
     if not _headers_match(source_properties, current):
         return VerificationResult(False, "source changed before cleanup")
@@ -180,18 +207,42 @@ def recover_archived_entry(
 ) -> ManifestEntry:
     """Recover a prior archived source version from destination fingerprint metadata."""
 
+    recovered = recover_fingerprinted_entry(entry, destination, source_properties)
+    return entry if recovered is None else recovered
+
+
+def recover_fingerprinted_entry(
+    entry: ManifestEntry,
+    destination: S3ObjectProperties,
+    source_properties: Callable[[str | None], S3ObjectProperties | None],
+) -> ManifestEntry | None:
+    """Recover the source version pinned in destination fingerprint metadata."""
+
     fingerprint = fingerprint_from_metadata(destination.metadata)
     if fingerprint is None:
-        return entry
+        return None
     if fingerprint.source_bucket != entry.source_bucket or fingerprint.source_key != entry.key:
-        return entry
-    properties = source_properties(fingerprint.source_version_id)
-    if properties is None:
-        return entry
+        return None
+    if fingerprint.source_version_id is None:
+        properties = source_properties(None) or entry.object.properties
+    else:
+        properties = source_properties(fingerprint.source_version_id)
+        if properties is None:
+            return None
     try:
         last_modified = datetime.fromisoformat(fingerprint.source_last_modified)
     except ValueError:
-        return entry
+        return None
+    if fingerprint.source_version_id is not None:
+        if properties.last_modified is not None and properties.last_modified != last_modified:
+            return None
+        if properties.size != fingerprint.source_size:
+            return None
+        if properties.etag != fingerprint.source_etag:
+            return None
+        if fingerprint.source_checksums:
+            if dict(properties.checksums) != dict(fingerprint.source_checksums):
+                return None
     listed = S3ListedObject(
         entry.key,
         fingerprint.source_size,
@@ -225,6 +276,7 @@ def _fingerprint_from_mapping(value: Mapping[str, object]) -> SourceFingerprint 
         source_last_modified=last_modified,
         source_version_id=_optional_string_field(value, "source_version_id"),
         source_etag=_optional_string_field(value, "source_etag"),
+        source_checksums=_string_mapping_field(value, "source_checksums"),
     )
 
 
@@ -258,6 +310,33 @@ def _optional_string_field(value: Mapping[str, object], key: str) -> str | None:
     if item is None or isinstance(item, str):
         return item
     return None
+
+
+def _string_mapping_field(value: Mapping[str, object], key: str) -> Mapping[str, str]:
+    item = value.get(key)
+    if not isinstance(item, dict):
+        return {}
+    raw = cast(Mapping[object, object], item)
+    return {
+        str(mapping_key): str(mapping_value)
+        for mapping_key, mapping_value in raw.items()
+        if mapping_key is not None and mapping_value is not None
+    }
+
+
+def _fingerprint_matches_entry(fingerprint: SourceFingerprint, entry: ManifestEntry) -> bool:
+    if (
+        fingerprint.source_bucket != entry.source_bucket
+        or fingerprint.source_key != entry.key
+        or fingerprint.source_size != entry.size
+        or fingerprint.source_last_modified != _iso(entry.last_modified)
+        or fingerprint.source_version_id != entry.version_id
+        or fingerprint.source_etag != entry.etag
+    ):
+        return False
+    if fingerprint.source_checksums:
+        return dict(fingerprint.source_checksums) == dict(entry.object.properties.checksums)
+    return True
 
 
 def _iso(value: datetime) -> str:

@@ -209,8 +209,28 @@ def test_s3_archive_bucket_head_defaults_and_coerces_metadata() -> None:
     )
 
     assert bucket.head_object("key") == S3ObjectProperties(
-        0, "3", None, None, None, None, None, None, {}, {"kind": "source"}
+        0, "3", None, None, None, None, None, None, {}, {"kind": "source"}, None, {}
     )
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_head_collects_last_modified_and_checksums() -> None:
+    bucket = S3ArchiveBucket(
+        HeadShapeClient(
+            {
+                "LastModified": datetime(2024, 1, 1, tzinfo=UTC),
+                "ChecksumSHA256": "sha256-value",
+                "ChecksumCRC32": "crc32-value",
+            }
+        ),
+        "source",
+    )
+
+    properties = bucket.head_object("key")
+
+    assert properties is not None
+    assert properties.last_modified == datetime(2024, 1, 1, tzinfo=UTC)
+    assert properties.checksums == {"sha256": "sha256-value", "crc32": "crc32-value"}
 
 
 @pytest.mark.unit()

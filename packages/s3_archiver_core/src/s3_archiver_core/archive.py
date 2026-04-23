@@ -15,9 +15,11 @@ from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
     VerificationResult,
     archive_metadata,
+    recover_fingerprinted_entry,
     recover_archived_entry,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_checksum,
     verify_destination_content,
     verify_source_unchanged,
 )
@@ -130,7 +132,7 @@ def run_archive(
                 run_id, manifest, copy_result, _timeout("verify"), _skipped("cleanup")
             )
         cleanup_result = (
-            _cleanup_phase(source, options, phase_entries, timeout, time_remaining)
+            _cleanup_phase(source, destination, options, phase_entries, timeout, time_remaining)
             if copy_result.ok and verify_result.ok
             else _skipped("cleanup")
         )
@@ -225,9 +227,14 @@ def _verify_one(
 def _verify_archive_copy(
     source: ArchiveBucket, destination: ArchiveBucket, entry: ManifestEntry
 ) -> VerificationResult:
-    verified = verify_destination(entry, destination.head_object(entry.key))
+    destination_properties = destination.head_object(entry.key)
+    verified = verify_destination(entry, destination_properties)
     if not verified.ok:
         return verified
+    assert destination_properties is not None
+    checksum_verified = verify_destination_checksum(entry.object.properties, destination_properties)
+    if checksum_verified is not None:
+        return checksum_verified
     return verify_destination_content(
         source.content_sha256(entry.key, entry.version_id),
         destination.content_sha256(entry.key),
@@ -236,6 +243,7 @@ def _verify_archive_copy(
 
 def _cleanup_phase(
     source: ArchiveBucket,
+    destination: ArchiveBucket,
     options: ArchiveOptions,
     entries: tuple[ManifestEntry, ...],
     timed_out: Callable[[], bool],
@@ -245,7 +253,7 @@ def _cleanup_phase(
         return _skipped("cleanup")
 
     def worker(entry: ManifestEntry) -> str | None:
-        return _cleanup_one(source, entry)
+        return _cleanup_one(source, destination, entry)
 
     return ArchivePhaseResult(
         "cleanup",
@@ -253,12 +261,22 @@ def _cleanup_phase(
     )
 
 
-def _cleanup_one(source: ArchiveBucket, entry: ManifestEntry) -> str | None:
-    if entry.version_id is None:
-        verified = verify_source_unchanged(entry, source.head_object(entry.key))
+def _cleanup_one(source: ArchiveBucket, destination: ArchiveBucket, entry: ManifestEntry) -> str | None:
+    destination_properties = destination.head_object(entry.key)
+    if destination_properties is None:
+        return f"{entry.key}: destination missing before cleanup"
+    cleanup_entry = recover_fingerprinted_entry(
+        entry,
+        destination_properties,
+        lambda version_id: source.head_object(entry.key, version_id),
+    )
+    if cleanup_entry is None:
+        return f"{entry.key}: destination fingerprint not recoverable before cleanup"
+    if cleanup_entry.version_id is None:
+        verified = verify_source_unchanged(cleanup_entry, source.head_object(cleanup_entry.key))
         if not verified.ok:
             return f"{entry.key}: {verified.detail}"
-    source.delete_source(entry.key, entry.version_id)
+    source.delete_source(cleanup_entry.key, cleanup_entry.version_id)
     return None
 
 

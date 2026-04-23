@@ -19,6 +19,7 @@ from s3_archiver_core.archive_transfer import (
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_checksum,
     verify_destination_content,
     verify_source_unchanged,
 )
@@ -68,6 +69,7 @@ def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
     destination = replace(entry.object.properties, metadata=metadata)
 
     assert verify_destination(entry, destination).ok is True
+    assert verify_destination_checksum(entry.object.properties, destination) is None
     assert verify_destination(entry, replace(destination, size=11)).detail == "size mismatch"
     assert verify_destination_content("digest", "digest").ok is True
     assert verify_destination_content(None, "digest").detail == "source missing during verification"
@@ -116,6 +118,64 @@ def test_key_only_cleanup_verification_rejects_etag_changes() -> None:
 
     assert result.ok is False
     assert result.detail == "source changed before cleanup"
+
+
+@pytest.mark.unit()
+def test_key_only_cleanup_verification_rejects_last_modified_changes() -> None:
+    listed = _listed("key.txt", 70, None)
+    entry = ManifestEntry("source", "key.txt", 10, listed.last_modified, '"etag"', None, listed)
+
+    result = verify_source_unchanged(
+        entry,
+        replace(
+            entry.object.properties,
+            last_modified=entry.last_modified + timedelta(seconds=1),
+        ),
+    )
+
+    assert result.ok is False
+    assert result.detail == "source changed before cleanup"
+
+
+@pytest.mark.unit()
+def test_run_archive_prefers_object_checksums_before_streaming_hash() -> None:
+    checksum = {"sha256": "digest"}
+    listed = replace(
+        _listed("old.txt", 90),
+        properties=_properties(
+            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
+            checksums=checksum,
+        ),
+    )
+    source = FakeBucket("source", (listed,))
+    destination = FakeBucket(
+        "destination",
+        destination={"old.txt": replace(listed.properties, metadata=archive_metadata(ManifestEntry(
+            "source",
+            "old.txt",
+            10,
+            listed.last_modified,
+            '"etag"',
+            "v1",
+            listed,
+        )))},
+    )
+
+    def unexpected_hash(*_args: object, **_kwargs: object) -> str | None:
+        raise AssertionError("streaming hash fallback should not run when checksums match")
+
+    source.content_sha256 = unexpected_hash  # type: ignore[method-assign]
+    destination.content_sha256 = unexpected_hash  # type: ignore[method-assign]
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.ok is True
 
 
 @pytest.mark.unit()
@@ -282,4 +342,53 @@ def test_key_only_cleanup_rechecks_source_before_delete() -> None:
     )
 
     assert result.cleanup.failures == ("old.txt: source changed before cleanup",)
+    assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_cleanup_requires_destination_fingerprint_before_delete() -> None:
+    source = FakeBucket("source", (_listed("old.txt", 90),))
+    archived_entry = ManifestEntry(
+        "source",
+        "old.txt",
+        10,
+        source._objects["old.txt"].last_modified,
+        '"etag"',
+        "v1",
+        source._objects["old.txt"],
+    )
+
+    class CleanupMutationBucket(FakeBucket):
+        def __init__(self) -> None:
+            super().__init__(
+                "destination",
+                destination={
+                    "old.txt": replace(
+                        archived_entry.object.properties,
+                        metadata=archive_metadata(archived_entry),
+                    )
+                },
+            )
+            self.head_calls = 0
+
+        def head_object(self, key: str, version_id: str | None = None):  # type: ignore[override]
+            self.head_calls += 1
+            properties = super().head_object(key, version_id)
+            if self.head_calls >= 4 and properties is not None:
+                return replace(properties, metadata={})
+            return properties
+
+    destination = CleanupMutationBucket()
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.copy.ok is True
+    assert result.verify.ok is True
+    assert result.cleanup.failures == ("old.txt: destination fingerprint not recoverable before cleanup",)
     assert source.deleted == []

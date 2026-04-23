@@ -44,6 +44,8 @@ def _minimal_properties(size: int = 1) -> S3ObjectProperties:
         None,
         {},
         {},
+        None,
+        {},
     )
 
 
