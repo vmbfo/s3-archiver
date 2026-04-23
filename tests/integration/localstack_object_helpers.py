@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
+from botocore.exceptions import BotoCoreError, ClientError
 from botocore.response import StreamingBody
 from s3_archiver_core.s3 import S3Client, build_s3_client
 from s3_archiver_core.settings import AppSettings
+
+_RETRYABLE_LOCALSTACK_ERRORS = (
+    "Connection was closed before we received a valid response",
+    "Could not connect to the endpoint URL",
+)
 
 
 def localstack_s3_client(
@@ -49,7 +56,7 @@ def put_test_object(
 
 
 def listed_keys(client: S3Client, bucket: str) -> set[str]:
-    response = client.list_objects_v2(Bucket=bucket)
+    response = _retry_localstack_call(lambda: client.list_objects_v2(Bucket=bucket))
     return {
         str(entry["Key"])
         for entry in _object_entries(response.get("Contents"))
@@ -58,7 +65,9 @@ def listed_keys(client: S3Client, bucket: str) -> set[str]:
 
 
 def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[str, str, bool]]:
-    versions = client.list_object_versions(Bucket=bucket, Prefix=key).get("Versions")
+    versions = _retry_localstack_call(
+        lambda: client.list_object_versions(Bucket=bucket, Prefix=key)
+    ).get("Versions")
     return [
         (str(entry["Key"]), str(entry["VersionId"]), entry.get("IsLatest") is True)
         for entry in _object_entries(versions)
@@ -67,7 +76,7 @@ def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[s
 
 
 def read_object_text(client: S3Client, bucket: str, key: str) -> str:
-    response = client.get_object(Bucket=bucket, Key=key)
+    response = _retry_localstack_call(lambda: client.get_object(Bucket=bucket, Key=key))
     return cast(StreamingBody, response["Body"]).read().decode()
 
 
@@ -101,3 +110,24 @@ def _object_entries(value: object) -> list[dict[str, object]]:
         if isinstance(raw_entry, dict):
             entries.append(cast(dict[str, object], raw_entry))
     return entries
+
+
+def _retry_localstack_call(
+    operation: Callable[[], dict[str, object]],
+    *,
+    attempts: int = 5,
+    delay_seconds: float = 0.5,
+) -> dict[str, object]:
+    for attempt in range(attempts):
+        try:
+            return cast(dict[str, object], operation())
+        except (BotoCoreError, ClientError) as exc:
+            if attempt == attempts - 1 or not _is_retryable_localstack_error(exc):
+                raise
+            time.sleep(delay_seconds)
+    raise AssertionError("LocalStack retry loop exhausted without returning")
+
+
+def _is_retryable_localstack_error(exc: Exception) -> bool:
+    message = str(exc)
+    return any(detail in message for detail in _RETRYABLE_LOCALSTACK_ERRORS)

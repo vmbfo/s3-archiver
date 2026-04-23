@@ -120,9 +120,12 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
 def test_archive_command_times_out_without_late_child_mutation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
-    env = _integration_env(tmp_path, localstack_bucket_pair)
+    env = localstack_test_env(
+        LocalstackBucketPair("s3-archiver-timeout-source", "s3-archiver-timeout-destination"),
+        endpoint=os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
+        log_dir=str(tmp_path / "logs"),
+    )
     env["ARCHIVER_RUN_TIMEOUT"] = "1s"
     settings = AppSettings.from_env(env)
     lock_path = settings.log_dir / "archive.lock"
