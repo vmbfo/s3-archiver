@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,7 +24,12 @@ class FileArchiveRunLock:
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(
-            {"run_id": run_id, "run_started_at_utc": run_started_at_utc.isoformat()},
+            {
+                "hostname": socket.gethostname(),
+                "pid": os.getpid(),
+                "run_id": run_id,
+                "run_started_at_utc": run_started_at_utc.isoformat(),
+            },
             sort_keys=True,
         )
         for _attempt in range(2):
@@ -56,9 +62,12 @@ class FileArchiveRunLock:
             _safe_unlink(self._path)
             return True
         stale = datetime.now(tz=UTC) - started > timeout
-        if stale:
-            _safe_unlink(self._path)
-        return stale
+        if not stale:
+            return False
+        if _lock_process_is_alive_on_this_host(self._path):
+            return False
+        _safe_unlink(self._path)
+        return True
 
 
 def parse_duration(value: str) -> timedelta:
@@ -87,7 +96,10 @@ def _lock_started_at(path: Path) -> datetime | None:
     value = decoded.get("run_started_at_utc")
     if not isinstance(value, str):
         return None
-    return datetime.fromisoformat(value)
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _lock_run_id(path: Path) -> str | None:
@@ -95,6 +107,27 @@ def _lock_run_id(path: Path) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _lock_process_is_alive_on_this_host(path: Path) -> bool:
+    decoded = _lock_json(path)
+    hostname = decoded.get("hostname")
+    pid = decoded.get("pid")
+    if hostname != socket.gethostname() or type(pid) is not int or pid <= 0:
+        return False
+    return _process_is_alive(pid)
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _lock_json(path: Path) -> Mapping[str, object]:

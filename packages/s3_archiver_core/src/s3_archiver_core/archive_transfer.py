@@ -76,6 +76,8 @@ def archive_metadata(entry: ManifestEntry) -> Mapping[str, str]:
     """Return destination metadata preserving source metadata plus fingerprint."""
 
     metadata = dict(entry.object.properties.metadata)
+    if FINGERPRINT_METADATA_KEY in metadata:
+        raise ValueError(f"source metadata uses reserved key {FINGERPRINT_METADATA_KEY}")
     metadata[FINGERPRINT_METADATA_KEY] = source_fingerprint(entry).to_metadata_value()
     return metadata
 
@@ -118,6 +120,25 @@ def verify_destination(
         return VerificationResult(False, "metadata mismatch")
     if dict(source_properties.tags) != dict(destination.tags):
         return VerificationResult(False, "tag mismatch")
+    return VerificationResult(True, "ok")
+
+
+def verify_source_unchanged(
+    entry: ManifestEntry, current: S3ObjectProperties | None
+) -> VerificationResult:
+    """Verify a key-only cleanup target still matches the manifest source object."""
+
+    if current is None:
+        return VerificationResult(False, "source missing before cleanup")
+    source_properties = entry.object.properties
+    if current.size != entry.size:
+        return VerificationResult(False, "source changed before cleanup")
+    if not _headers_match(source_properties, current):
+        return VerificationResult(False, "source changed before cleanup")
+    if dict(source_properties.metadata) != dict(current.metadata):
+        return VerificationResult(False, "source changed before cleanup")
+    if dict(source_properties.tags) != dict(current.tags):
+        return VerificationResult(False, "source changed before cleanup")
     return VerificationResult(True, "ok")
 
 

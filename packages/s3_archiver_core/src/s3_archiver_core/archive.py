@@ -20,6 +20,7 @@ from s3_archiver_core.archive_transfer import (
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_source_unchanged,
 )
 from s3_archiver_core.s3 import (
     S3ListedObject,
@@ -36,13 +37,11 @@ class ArchiveBucket(Protocol):
 
     def versioning_state(self) -> VersioningState: ...
 
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
-        """Yield source objects for manifest construction."""
-        ...
+    def list_source_objects(
+        self, versioning_state: VersioningState
+    ) -> Iterable[S3ListedObject]: ...
 
-    def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-        """Return object properties or ``None`` when absent."""
-        ...
+    def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None: ...
 
     def copy_from(
         self,
@@ -54,13 +53,9 @@ class ArchiveBucket(Protocol):
         destination_key: str,
         destination_metadata: Mapping[str, str],
         strategy: TransferStrategy,
-    ) -> None:
-        """Copy an object from another bucket."""
-        ...
+    ) -> None: ...
 
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        """Delete a source object by exact version when available."""
-        ...
+    def delete_source(self, key: str, version_id: str | None) -> None: ...
 
 
 class ArchiveRunLock(Protocol):
@@ -246,6 +241,10 @@ def _cleanup_phase(
 
 
 def _cleanup_one(source: ArchiveBucket, entry: ManifestEntry) -> str | None:
+    if entry.version_id is None:
+        verified = verify_source_unchanged(entry, source.head_object(entry.key))
+        if not verified.ok:
+            return f"{entry.key}: {verified.detail}"
     source.delete_source(entry.key, entry.version_id)
     return None
 

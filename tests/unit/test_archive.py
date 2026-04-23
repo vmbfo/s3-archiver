@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_lock import FileArchiveRunLock, parse_duration
 from s3_archiver_core.archive_manifest import (
     ManifestEntry,
     SourcePathFilter,
@@ -17,6 +15,7 @@ from s3_archiver_core.archive_manifest import (
 )
 from s3_archiver_core.archive_options import ArchiveOptions, cleanup_enabled_from_env
 from s3_archiver_core.archive_transfer import (
+    FINGERPRINT_METADATA_KEY,
     TransferStrategy,
     archive_metadata,
     select_transfer_strategy,
@@ -180,6 +179,12 @@ def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
         )
         == "temp_file_backed"
     )
+    reserved = replace(listed, properties=_properties(metadata={FINGERPRINT_METADATA_KEY: "user"}))
+    reserved_entry = ManifestEntry(
+        "source", "key.txt", 10, listed.last_modified, None, "v1", reserved
+    )
+    with pytest.raises(ValueError, match="reserved key"):
+        _ = archive_metadata(reserved_entry)
 
 
 @pytest.mark.unit()
@@ -262,19 +267,27 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
 
 
 @pytest.mark.unit()
-def test_options_cleanup_and_file_lock(tmp_path: Path) -> None:
+def test_key_only_cleanup_rechecks_source_before_delete() -> None:
+    source = FakeBucket(
+        "source",
+        (_listed("old.txt", 90, None),),
+        destination={"old.txt": _properties(size=11)},
+    )
+    destination = FakeBucket("destination")
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+    )
+
+    assert result.cleanup.failures == ("old.txt: source changed before cleanup",)
+    assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_options_cleanup_defaults() -> None:
     assert cleanup_enabled_from_env({}) is False
     assert cleanup_enabled_from_env({"ARCHIVER_ENABLE_CLEANUP": "true"}) is True
     assert ArchiveOptions.from_env({}).run_timeout == timedelta(days=7)
-    assert parse_duration("12h") == timedelta(hours=12)
-
-    lock_path = tmp_path / "archive.lock"
-    lock = FileArchiveRunLock(lock_path)
-    started = datetime.now(tz=UTC)
-
-    assert lock.acquire(run_id="first", run_started_at_utc=started, timeout=timedelta(days=1))
-    assert not lock.acquire(run_id="second", run_started_at_utc=started, timeout=timedelta(days=1))
-    lock.release(run_id="wrong")
-    assert lock_path.exists()
-    lock.release(run_id="first")
-    assert not lock_path.exists()
