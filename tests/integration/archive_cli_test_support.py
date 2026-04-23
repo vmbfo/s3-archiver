@@ -37,6 +37,8 @@ FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2100, 1, 1, tzinfo=UTC)
 _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",
     "Could not connect to the endpoint URL",
+    "when calling the HeadBucket operation: Not Found",
+    "when calling the ListObjectVersions operation: The specified bucket does not exist",
 )
 type ArchiveSide = Literal["source", "destination"]
 
@@ -104,7 +106,7 @@ def run_archive_command(
 
     monkeypatch.setattr(cli_module, "run_archive", run_archive_with_frozen_timestamp)
     for attempt in range(attempts):
-        result = RUNNER.invoke(cli_module.app, ["archive"])
+        result = RUNNER.invoke(cli_module.app, ["archive-once"])
         if result.exit_code == 0 and result.stderr == "":
             json_line = next(
                 line for line in reversed(result.stdout.splitlines()) if line.startswith("{")

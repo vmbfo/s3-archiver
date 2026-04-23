@@ -24,7 +24,7 @@ from tests.integration.localstack_object_helpers import (
 
 
 class SourceFingerprintPayload(TypedDict):
-    source_version_id: str
+    source_version_id: str | None
 
 
 @pytest.mark.integration()
@@ -112,7 +112,7 @@ def test_archive_command_rerun_recovers_archived_source_version_for_exact_cleanu
 
 
 @pytest.mark.integration()
-def test_archive_command_cleans_up_null_version_when_localstack_supports_it(
+def test_archive_command_cleans_up_pre_versioning_null_version(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
@@ -122,22 +122,17 @@ def test_archive_command_cleans_up_null_version_when_localstack_supports_it(
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
     key = "versioned/null.txt"
+    _ = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"null-current\n")
     enabled: VersioningConfigurationTypeDef = {"Status": "Enabled"}
-    suspended: VersioningConfigurationTypeDef = {"Status": "Suspended"}
     _ = source_client.put_bucket_versioning(
         Bucket=localstack_bucket_pair.source,
         VersioningConfiguration=enabled,
     )
-    base = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"base\n")
-    _ = source_client.put_bucket_versioning(
-        Bucket=localstack_bucket_pair.source,
-        VersioningConfiguration=suspended,
+    versions_before = listed_key_versions(source_client, localstack_bucket_pair.source, key)
+    assert versions_before == [(key, "null", True)], (
+        "LocalStack must expose pre-versioning current objects as VersionId='null' "
+        "for the null-version cleanup contract"
     )
-    current = put_test_object(
-        source_client, localstack_bucket_pair.source, key, body=b"null-current\n"
-    )
-    if current.get("VersionId") != "null":
-        pytest.skip("LocalStack did not expose suspended null versions for cleanup assertions")
 
     payload = _run_archive(monkeypatch, env)
 
@@ -146,13 +141,20 @@ def test_archive_command_cleans_up_null_version_when_localstack_supports_it(
         read_object_text(destination_client, localstack_bucket_pair.destination, key)
         == "null-current\n"
     )
-    assert key not in listed_keys(source_client, localstack_bucket_pair.source)
-    assert any(
-        version_id == str(base["VersionId"])
-        for _, version_id, _ in listed_key_versions(
-            source_client, localstack_bucket_pair.source, key
-        )
+    destination_metadata = cast(
+        dict[str, str],
+        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=key)[
+            "Metadata"
+        ],
     )
+    fingerprint = cast(
+        SourceFingerprintPayload,
+        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
+    )
+    assert fingerprint["source_version_id"] is None
+    assert key not in listed_keys(source_client, localstack_bucket_pair.source)
+    versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
+    assert versions == [(key, "null", False)]
 
 
 @pytest.mark.integration()
