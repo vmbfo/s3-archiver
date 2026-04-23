@@ -133,6 +133,8 @@ def verify_source_unchanged(
     source_properties = entry.object.properties
     if current.size != entry.size:
         return VerificationResult(False, "source changed before cleanup")
+    if current.etag != entry.etag:
+        return VerificationResult(False, "source changed before cleanup")
     if not _headers_match(source_properties, current):
         return VerificationResult(False, "source changed before cleanup")
     if dict(source_properties.metadata) != dict(current.metadata):

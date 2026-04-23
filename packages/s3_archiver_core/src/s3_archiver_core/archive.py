@@ -263,7 +263,9 @@ def _run_workers(
                 sequential_failures.append(failure)
         return tuple(sequential_failures)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures: list[Future[str | None]] = [executor.submit(worker, entry) for entry in entries]
+        futures: list[Future[str | None]] = [
+            executor.submit(_call_worker, worker, entry) for entry in entries
+        ]
         concurrent_failures: list[str] = []
         for future in as_completed(futures):
             failure = _future_result(future)

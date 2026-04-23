@@ -20,6 +20,7 @@ from s3_archiver_core.archive_transfer import (
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_source_unchanged,
 )
 from s3_archiver_core.s3 import (
     S3ListedObject,
@@ -188,6 +189,20 @@ def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
 
 
 @pytest.mark.unit()
+def test_key_only_cleanup_verification_rejects_etag_changes() -> None:
+    listed = _listed("key.txt", 70, None)
+    entry = ManifestEntry("source", "key.txt", 10, listed.last_modified, '"etag"', None, listed)
+
+    result = verify_source_unchanged(
+        entry,
+        replace(entry.object.properties, etag='"changed"'),
+    )
+
+    assert result.ok is False
+    assert result.detail == "source changed before cleanup"
+
+
+@pytest.mark.unit()
 def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     source = FakeBucket("source", (_listed("old.txt", 90, "v1"),))
     destination = FakeBucket("destination")
@@ -246,6 +261,29 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert verify_failed.copy.failures == ("old.txt: source fingerprint mismatch",)
     assert verify_failed.verify.skipped is True
+    assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_concurrent_worker_failures_keep_object_key_for_reporting() -> None:
+    listed = replace(
+        _listed("old.txt", 90),
+        properties=_properties(metadata={FINGERPRINT_METADATA_KEY: "source-owned"}),
+    )
+    source = FakeBucket("source", (listed,))
+    destination = FakeBucket("destination")
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=2),
+        run_started_at_utc=datetime(2024, 4, 20, tzinfo=UTC),
+    )
+
+    assert result.copy.failures == (
+        f"old.txt: source metadata uses reserved key {FINGERPRINT_METADATA_KEY}",
+    )
+    assert result.verify.skipped is True
     assert source.deleted == []
 
 
