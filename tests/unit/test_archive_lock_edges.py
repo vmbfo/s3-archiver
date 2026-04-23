@@ -59,7 +59,7 @@ def test_file_lock_returns_false_when_stale_lock_is_replaced_by_competing_writer
 
 
 @pytest.mark.unit()
-def test_file_lock_recovers_lock_from_prior_host(tmp_path: Path) -> None:
+def test_file_lock_keeps_active_lock_from_other_host(tmp_path: Path) -> None:
     lock_path = tmp_path / "archive.lock"
     payload = {
         "hostname": "other-host",
@@ -82,9 +82,9 @@ def test_file_lock_recovers_lock_from_prior_host(tmp_path: Path) -> None:
         timeout=timedelta(days=7),
     )
 
-    assert acquired is True
-    assert read_lock(lock_path)["run_id"] == "next"
-    assert recoveries == [("stale_lock_prior_host", payload)]
+    assert acquired is False
+    assert read_lock(lock_path)["run_id"] == "active"
+    assert recoveries == []
 
 
 @pytest.mark.unit()

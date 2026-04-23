@@ -178,6 +178,7 @@ def properties(size: int = 10) -> S3ObjectProperties:
         {"kind": "source"},
         datetime(2024, 1, 1, tzinfo=UTC),
         {},
+        None,
     )
 
 

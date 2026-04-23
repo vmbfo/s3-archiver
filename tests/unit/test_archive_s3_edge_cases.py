@@ -11,7 +11,7 @@ import pytest
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3ObjectProperties
 
-from tests.unit.archive_s3_fakes import FakeArchiveClient, copy_object, properties
+from tests.unit.archive_s3_fakes import FakeArchiveClient, client_error, copy_object, properties
 
 
 class VersioningClient(FakeArchiveClient):
@@ -66,6 +66,17 @@ class HeadShapeClient(FakeArchiveClient):
     def head_object(self, **kwargs: object) -> Mapping[str, object]:
         self.head_call = dict(kwargs)
         return self.response
+
+
+class ChecksumRetryClient(FakeArchiveClient):
+    """Fake client that rejects checksum mode once, then succeeds without it."""
+
+    @override
+    def head_object(self, **kwargs: object) -> Mapping[str, object]:
+        self.head_call = dict(kwargs)
+        if kwargs.get("ChecksumMode") == "ENABLED":
+            raise client_error("AccessDenied", status=403)
+        return super().head_object(**kwargs)
 
 
 class FailingMultipartCopyClient(FakeArchiveClient):
@@ -230,6 +241,18 @@ def test_s3_archive_bucket_head_collects_last_modified_and_checksums() -> None:
     assert client.head_call["ChecksumMode"] == "ENABLED"
     assert properties.last_modified == datetime(2024, 1, 1, tzinfo=UTC)
     assert properties.checksums == {"sha256": "sha256-value", "crc32": "crc32-value"}
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_head_retries_without_checksum_mode_on_compatibility_error() -> None:
+    client = ChecksumRetryClient()
+    bucket = S3ArchiveBucket(client, "source")
+
+    properties = bucket.head_object("key")
+
+    assert properties is not None
+    assert client.head_call == {"Bucket": "source", "Key": "key"}
+    assert properties.checksums == {}
 
 
 @pytest.mark.unit()

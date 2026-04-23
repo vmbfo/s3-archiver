@@ -118,8 +118,6 @@ def test_schedule_command_continues_after_child_error_on_later_tick(
         run_attempts += 1
         events.append(f"run-{run_attempts}")
         if run_attempts == 1:
-            payload = {"message": "archive run lock is already held", "phase": "archive.run"}
-            typer.echo(json.dumps(payload, sort_keys=True), err=True)
             return
         typer.echo(json.dumps({"status": "ok", "run_id": "scheduled-run"}))
 
@@ -132,7 +130,7 @@ def test_schedule_command_continues_after_child_error_on_later_tick(
     assert isinstance(result.exception, RuntimeError)
     assert "stop scheduler test" in str(result.exception)
     assert events == ["sleep-1", "run-1", "sleep-2", "run-2", "sleep-3"]
-    assert _load_payload(result.stderr)["message"] == "archive run lock is already held"
+    assert result.stderr == ""
     assert _load_payload(result.stdout)["status"] == "ok"
 
 

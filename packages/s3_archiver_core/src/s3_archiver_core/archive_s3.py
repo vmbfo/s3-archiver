@@ -55,13 +55,19 @@ class S3ArchiveBucket:
         """Return object properties, or ``None`` when the object is absent."""
 
         kwargs = _versioned_kwargs(self.bucket, key, version_id)
-        kwargs["ChecksumMode"] = "ENABLED"
         try:
-            head = self.client.head_object(**kwargs)
+            head = self.client.head_object(**(kwargs | {"ChecksumMode": "ENABLED"}))
         except ClientError as exc:
             if _is_not_found_error(exc):
                 return None
-            raise
+            if not _supports_checksum_mode(exc):
+                raise
+            try:
+                head = self.client.head_object(**kwargs)
+            except ClientError as retry_exc:
+                if _is_not_found_error(retry_exc):
+                    return None
+                raise
         tags = self.get_tags(key, version_id)
         return _properties_from_head(head, tags)
 
@@ -218,6 +224,7 @@ def _properties_from_head(
         tags=tags,
         last_modified=cast(datetime | None, head.get("LastModified")),
         checksums=_checksums_from_head(head),
+        checksum_type=_optional_string(head.get("ChecksumType")),
     )
 
 
@@ -232,6 +239,15 @@ def _is_not_found_error(exc: ClientError) -> bool:
     if isinstance(metadata, dict):
         status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
     return str(code) in {"404", "NoSuchKey", "NotFound"} or status == 404
+
+
+def _supports_checksum_mode(exc: ClientError) -> bool:
+    response = cast(Mapping[str, object], exc.response)
+    metadata = response.get("ResponseMetadata")
+    status = None
+    if isinstance(metadata, dict):
+        status = cast(Mapping[object, object], metadata).get("HTTPStatusCode")
+    return status in {400, 403}
 
 
 def _object_list(value: object) -> list[Mapping[str, object]]:

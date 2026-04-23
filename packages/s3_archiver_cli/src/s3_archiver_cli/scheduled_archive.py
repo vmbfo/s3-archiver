@@ -89,7 +89,8 @@ def run_scheduled_archive(
 ) -> None:
     """Run one scheduled archive child process and relay its output."""
 
-    reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=now)
+    if not reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=now):
+        return
     _ = run_archive_subprocess(
         settings,
         log_file,

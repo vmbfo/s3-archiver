@@ -34,6 +34,7 @@ class SourceFingerprint:
     source_version_id: str | None
     source_etag: str | None
     source_checksums: Mapping[str, str]
+    source_checksum_type: str | None
 
     def to_metadata_value(self) -> str:
         """Serialize the fingerprint into stable JSON for S3 user metadata."""
@@ -47,6 +48,7 @@ class SourceFingerprint:
                 "source_version_id": self.source_version_id,
                 "source_etag": self.source_etag,
                 "source_checksums": dict(self.source_checksums),
+                "source_checksum_type": self.source_checksum_type,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -72,6 +74,7 @@ def source_fingerprint(entry: ManifestEntry) -> SourceFingerprint:
         source_version_id=entry.version_id,
         source_etag=entry.etag,
         source_checksums=dict(entry.object.properties.checksums),
+        source_checksum_type=entry.object.properties.checksum_type,
     )
 
 
@@ -152,6 +155,8 @@ def verify_destination_checksum(
         if algorithm in source.checksums and algorithm in destination.checksums
     ]
     if not shared_algorithms:
+        return None
+    if source.checksum_type != "FULL_OBJECT" or destination.checksum_type != "FULL_OBJECT":
         return None
     for algorithm in shared_algorithms:
         if source.checksums[algorithm] != destination.checksums[algorithm]:
@@ -277,6 +282,7 @@ def _fingerprint_from_mapping(value: Mapping[str, object]) -> SourceFingerprint 
         source_version_id=_optional_string_field(value, "source_version_id"),
         source_etag=_optional_string_field(value, "source_etag"),
         source_checksums=_string_mapping_field(value, "source_checksums"),
+        source_checksum_type=_optional_string_field(value, "source_checksum_type"),
     )
 
 
@@ -335,7 +341,10 @@ def _fingerprint_matches_entry(fingerprint: SourceFingerprint, entry: ManifestEn
     ):
         return False
     if fingerprint.source_checksums:
-        return dict(fingerprint.source_checksums) == dict(entry.object.properties.checksums)
+        return (
+            dict(fingerprint.source_checksums) == dict(entry.object.properties.checksums)
+            and fingerprint.source_checksum_type == entry.object.properties.checksum_type
+        )
     return True
 
 

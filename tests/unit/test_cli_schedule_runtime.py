@@ -115,6 +115,42 @@ def test_run_scheduled_archive_reconciles_lock_before_child_run(
 
 
 @pytest.mark.unit()
+def test_run_scheduled_archive_skips_child_when_active_lock_remains(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    settings = AppSettings.from_env(base_env)
+    commands: list[list[str]] = []
+
+    class RefusingLock:
+        def __init__(self, path: Path, **_kwargs: object) -> None:
+            assert path == Path(base_env["LOG_DIR"]) / "archive.lock"
+
+        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return False
+
+        def release(self, *, run_id: str) -> None:
+            raise AssertionError(f"release should not run for {run_id}")
+
+    def fake_run_command(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(scheduled_archive_module, "FileArchiveRunLock", RefusingLock)
+
+    scheduled_archive_module.run_scheduled_archive(
+        settings,
+        Path("/tmp/log"),
+        command=["archive"],
+        run_command=fake_run_command,
+    )
+
+    assert commands == []
+
+
+@pytest.mark.unit()
 def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

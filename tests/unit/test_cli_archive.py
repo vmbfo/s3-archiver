@@ -89,9 +89,14 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     lock_paths: list[Path] = []
     option_retention_days: list[int] = []
     health_checked: list[Path] = []
+    expected_temp_dir = AppSettings.from_env(base_env).temp_dir
 
     def configure(_: AppSettings) -> Path:
         return Path("/tmp/s3-archiver.log")
+
+    def prepare_temp_dir(temp_dir: Path) -> None:
+        assert temp_dir == expected_temp_dir
+        call_order.append("temp.prepare")
 
     def build_client(location: S3LocationSettings) -> object:
         built_locations.append(location.bucket)
@@ -129,6 +134,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "prepare_runtime_temp_dir", prepare_temp_dir)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
@@ -145,7 +151,42 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     assert health_checked == [Path("/tmp/s3-archiver.log")]
     assert lock_paths == [Path(base_env["LOG_DIR"]) / "archive.lock"]
     assert option_retention_days == [60]
-    assert call_order == ["lock.acquire", "health", "run_archive", "lock.release"]
+    assert call_order == ["lock.acquire", "temp.prepare", "health", "run_archive", "lock.release"]
+
+
+@pytest.mark.unit()
+def test_archive_once_command_skips_temp_cleanup_when_lock_is_held(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    temp_prepares: list[Path] = []
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def prepare_temp_dir(temp_dir: Path) -> None:
+        temp_prepares.append(temp_dir)
+
+    class RefusingLock:
+        def __init__(self, _path: Path, **_kwargs: object) -> None:
+            return
+
+        def acquire(self, *, run_id: str, run_started_at_utc: object, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return False
+
+        def release(self, *, run_id: str) -> None:
+            raise AssertionError(f"release should not run for {run_id}")
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "prepare_runtime_temp_dir", prepare_temp_dir)
+    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RefusingLock)
+
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
+
+    assert result.exit_code == 1
+    assert temp_prepares == []
 
 
 @pytest.mark.unit()

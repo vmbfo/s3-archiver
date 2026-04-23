@@ -75,7 +75,6 @@ def check() -> None:
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
-        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
         report = run_health_check(settings, log_file)
     except S3ArchiverError as exc:
@@ -95,7 +94,6 @@ def archive() -> None:
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
-        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
     except S3ArchiverError as exc:
         payload = _error_payload(exc, settings)
@@ -114,7 +112,6 @@ def archive_once() -> None:
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
-        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
         payload = _run_archive(settings, log_file)
     except S3ArchiverError as exc:
@@ -135,7 +132,6 @@ def schedule(
     settings: AppSettings | None = None
     try:
         settings = AppSettings.from_env(_load_runtime_env())
-        prepare_runtime_temp_dir(settings.temp_dir)
         log_file = configure_logging(settings)
     except S3ArchiverError as exc:
         payload = _error_payload(exc, settings)
@@ -181,6 +177,7 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     ):
         raise ArchiveRunError("archive run lock is already held")
     try:
+        prepare_runtime_temp_dir(settings.temp_dir)
         _ = run_health_check(settings, log_file)
         source = S3ArchiveBucket(
             build_s3_client(settings.source), settings.source.bucket, settings.temp_dir
@@ -269,7 +266,7 @@ def _recovered_run_failure_payload(
     payload: Mapping[str, object],
 ) -> dict[str, JsonValue] | None:
     timed_out = reason == "stale_lock_timed_out"
-    if reason not in {"stale_lock_abandoned", "stale_lock_prior_host", "stale_lock_timed_out"}:
+    if reason not in {"stale_lock_abandoned", "stale_lock_timed_out"}:
         return None
     return {
         "status": "error",

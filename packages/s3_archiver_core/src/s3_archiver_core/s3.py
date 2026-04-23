@@ -105,6 +105,7 @@ class S3ObjectProperties:
     tags: Mapping[str, str]
     last_modified: datetime | None = None
     checksums: Mapping[str, str] = field(default_factory=dict)
+    checksum_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

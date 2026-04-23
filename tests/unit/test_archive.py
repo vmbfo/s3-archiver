@@ -145,6 +145,7 @@ def test_run_archive_prefers_object_checksums_before_streaming_hash() -> None:
         properties=_properties(
             last_modified=datetime(2024, 1, 21, tzinfo=UTC),
             checksums=checksum,
+            checksum_type="FULL_OBJECT",
         ),
     )
     source = FakeBucket("source", (listed,))
@@ -176,6 +177,43 @@ def test_run_archive_prefers_object_checksums_before_streaming_hash() -> None:
     )
 
     assert result.ok is True
+
+
+@pytest.mark.unit()
+def test_run_archive_falls_back_to_streaming_hash_for_composite_checksums() -> None:
+    checksum = {"sha256": "digest"}
+    listed = replace(
+        _listed("old.txt", 90),
+        properties=_properties(
+            last_modified=datetime(2024, 1, 21, tzinfo=UTC),
+            checksums=checksum,
+            checksum_type="COMPOSITE",
+        ),
+    )
+    entry = ManifestEntry("source", "old.txt", 10, listed.last_modified, '"etag"', "v1", listed)
+    source = FakeBucket("source", (listed,))
+    destination = FakeBucket(
+        "destination",
+        destination={
+            "old.txt": replace(
+                listed.properties,
+                metadata=archive_metadata(entry),
+                checksum_type="COMPOSITE",
+            )
+        },
+    )
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.ok is True
+    assert source.content_sha256_calls == [("old.txt", "v1"), ("old.txt", "v1")]
+    assert destination.content_sha256_calls == [("old.txt", None), ("old.txt", None)]
 
 
 @pytest.mark.unit()

@@ -19,6 +19,7 @@ def object_properties(
     tags: Mapping[str, str] | None = None,
     last_modified: datetime | None = None,
     checksums: Mapping[str, str] | None = None,
+    checksum_type: str | None = None,
 ) -> S3ObjectProperties:
     """Build portable S3 object properties for tests."""
 
@@ -35,6 +36,7 @@ def object_properties(
         tags=tags or {"kind": "source"},
         last_modified=last_modified,
         checksums=checksums or {},
+        checksum_type=checksum_type,
     )
 
 

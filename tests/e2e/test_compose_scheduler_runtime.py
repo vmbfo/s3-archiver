@@ -38,13 +38,6 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
             state["run_attempts"] += 1
             events.append(f"run-{state['run_attempts']}")
             if state["run_attempts"] == 1:
-                cli.typer.echo(
-                    json.dumps(
-                        {"message": "archive run lock is already held", "phase": "archive.run"},
-                        sort_keys=True,
-                    ),
-                    err=True,
-                )
                 return
             cli.typer.echo(json.dumps({"status": "ok", "run_id": "scheduled-run"}, sort_keys=True))
 
@@ -68,8 +61,6 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
         probe,
     )
     payload = _payload(result.stdout)
-    error_payload = _payload(result.stderr)
-
     assert payload["events"] == [
         "sleep-1:04:05",
         "run-1",
@@ -77,13 +68,12 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
         "run-2",
         "sleep-3:04:05",
     ]
-    assert error_payload["message"] == "archive run lock is already held"
-    assert error_payload["phase"] == "archive.run"
+    assert not any(line.startswith("{") for line in result.stderr.splitlines())
     assert '"run_id": "scheduled-run"' in result.stdout
 
 
 @pytest.mark.e2e()
-def test_compose_archive_recovers_prior_container_lock_before_archive_work(
+def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_work(
     compose_env: dict[str, str],
 ) -> None:
     writer_probe = textwrap.dedent(
@@ -101,7 +91,7 @@ def test_compose_archive_recovers_prior_container_lock_before_archive_work(
             "hostname": socket.gethostname(),
             "pid": os.getpid(),
             "run_id": "stale-run",
-            "run_started_at_utc": datetime(2026, 4, 20, tzinfo=UTC).isoformat(),
+            "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
         }
         lock_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         print(json.dumps(payload, sort_keys=True))
@@ -214,7 +204,7 @@ def test_compose_archive_recovers_prior_container_lock_before_archive_work(
     assert recovery_payload["status"] == "ok"
     assert recovery_payload["lock_exists_after"] is False
     assert recovery_payload["events"] == [
-        "recovery:stale_lock_prior_host",
+        "recovery:stale_lock_timed_out",
         "health",
         f"build:{compose_env['TEST_S3_SOURCE_BUCKET']}",
         f"build:{compose_env['TEST_S3_DESTINATION_BUCKET']}",
