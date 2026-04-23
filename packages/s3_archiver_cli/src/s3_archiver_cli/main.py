@@ -212,7 +212,7 @@ def _error_payload(
     return {
         "status": "error",
         "phase": phase,
-        "field": _field_from_error_message(str(error)) if isinstance(error, ConfigError) else None,
+        "field": _error_field(error),
         "message": str(error),
         "details": str(error),
         "source_bucket": settings.source.bucket if settings is not None else None,
@@ -257,6 +257,27 @@ def _field_from_error_message(message: str) -> str | None:
     ):
         return first_token
     return None
+
+
+def _error_field(error: S3ArchiverError) -> str | None:
+    if isinstance(error, ConfigError):
+        return _field_from_error_message(str(error))
+    if isinstance(error, LoggingError):
+        return "logging"
+    if isinstance(error, HealthCheckError):
+        return _preflight_field_from_health_error(str(error))
+    return None
+
+
+def _preflight_field_from_health_error(message: str) -> str | None:
+    lowered = message.lower()
+    if "source bucket versioning" in lowered:
+        return "source_bucket_versioning"
+    if "source bucket" in lowered:
+        return "source_bucket_access"
+    if "destination bucket" in lowered:
+        return "destination_bucket_access"
+    return "s3_connectivity"
 
 
 def _load_runtime_env() -> dict[str, str]:

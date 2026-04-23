@@ -77,6 +77,15 @@ def test_from_env_rejects_invalid_runtime_values(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_from_env_rejects_zero_retention_days(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["ARCHIVER_RETENTION_DAYS"] = "0"
+
+    with pytest.raises(ConfigError, match="ARCHIVER_RETENTION_DAYS"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
 def test_from_env_rejects_invalid_run_timeout(tmp_path: Path) -> None:
     env = _dual_env(tmp_path)
     env["ARCHIVER_RUN_TIMEOUT"] = "soon"
@@ -126,6 +135,15 @@ def test_from_env_rejects_invalid_addressing_style(tmp_path: Path) -> None:
     env["S3_DESTINATION_ADDRESSING_STYLE"] = "broken"
 
     with pytest.raises(ConfigError, match="S3_DESTINATION_ADDRESSING_STYLE"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_invalid_endpoint_url(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_DESTINATION_ENDPOINT_URL"] = "localstack:4566"
+
+    with pytest.raises(ConfigError, match="S3_DESTINATION_ENDPOINT_URL"):
         _ = AppSettings.from_env(env)
 
 
@@ -183,6 +201,41 @@ def test_from_env_rejects_same_localstack_bucket_with_different_regions(tmp_path
 
     with pytest.raises(ConfigError, match="ARCHIVER_STORAGE_LOCATION"):
         _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_same_storage_location_with_equivalent_default_ports(
+    tmp_path: Path,
+) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "localstack"
+    env["S3_SOURCE_REGION"] = "us-east-1"
+    env["S3_SOURCE_BUCKET"] = "shared-bucket"
+    env["S3_SOURCE_ENDPOINT_URL"] = "http://localhost:80"
+    env["S3_DESTINATION_BUCKET"] = "shared-bucket"
+    env["S3_DESTINATION_ENDPOINT_URL"] = "http://localhost"
+    _ = env.pop("S3_SOURCE_NAMESPACE")
+    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
+
+    with pytest.raises(ConfigError, match="ARCHIVER_STORAGE_LOCATION"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_from_env_allows_same_bucket_when_non_default_ports_differ(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "localstack"
+    env["S3_SOURCE_REGION"] = "us-east-1"
+    env["S3_SOURCE_BUCKET"] = "shared-bucket"
+    env["S3_SOURCE_ENDPOINT_URL"] = "http://localhost:443"
+    env["S3_DESTINATION_BUCKET"] = "shared-bucket"
+    env["S3_DESTINATION_ENDPOINT_URL"] = "http://localhost"
+    _ = env.pop("S3_SOURCE_NAMESPACE")
+    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.source.storage_identity() != settings.destination.storage_identity()
 
 
 @pytest.mark.unit()

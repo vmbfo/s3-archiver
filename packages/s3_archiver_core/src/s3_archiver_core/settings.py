@@ -100,14 +100,14 @@ class AppSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
-        log_level = env.get("LOG_LEVEL", "INFO").upper()
+        log_level = env.get("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in _VALID_LOG_LEVELS:
             raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
 
         source = _load_s3_location(env, "SOURCE")
         destination = _load_s3_location(env, "DESTINATION")
         path_filters = _load_path_filters(env)
-        retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=0)
+        retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=1)
         max_workers = _parse_int(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
         cleanup_enabled = _parse_bool(env, "ARCHIVER_ENABLE_CLEANUP", default=False)
         run_timeout = _parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
@@ -163,7 +163,7 @@ def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
     provider_key = f"{prefix}PROVIDER"
     provider_value = _require(env, provider_key).lower()
     addressing_key = f"{prefix}ADDRESSING_STYLE"
-    addressing_value = env.get(addressing_key, "path").lower()
+    addressing_value = env.get(addressing_key, "path").strip().lower()
     namespace = _optional(env, f"{prefix}NAMESPACE")
     iam_user_ocid = _optional(env, f"{prefix}IAM_USER_OCID")
 
@@ -182,6 +182,10 @@ def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
     if provider is S3Provider.OCI and iam_user_ocid is None:
         raise ConfigError(f"{prefix}IAM_USER_OCID is required when {provider_key}=oci")
 
+    endpoint_url = _optional(env, f"{prefix}ENDPOINT_URL")
+    if endpoint_url is not None:
+        _ = _normalize_endpoint_url(endpoint_url, field=f"{prefix}ENDPOINT_URL")
+
     return S3LocationSettings(
         provider=provider,
         access_key_id=_require(env, f"{prefix}ACCESS_KEY_ID"),
@@ -190,7 +194,7 @@ def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
         bucket=_require(env, f"{prefix}BUCKET"),
         namespace=namespace,
         iam_user_ocid=iam_user_ocid,
-        endpoint_url=_optional(env, f"{prefix}ENDPOINT_URL"),
+        endpoint_url=endpoint_url,
         addressing_style=S3AddressingStyle(addressing_value),
     )
 
@@ -242,6 +246,8 @@ def _parse_duration(raw: str, key: str) -> timedelta:
 
 def _parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     raw = env.get(key, "[]")
+    if raw.strip() == "":
+        raw = "[]"
     try:
         parsed = cast(object, json.loads(raw))
     except json.JSONDecodeError as exc:
@@ -256,12 +262,22 @@ def _parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def _normalize_endpoint_url(raw: str) -> str:
+def _normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT_URL") -> str:
     parsed = urlsplit(raw)
+    if parsed.scheme == "" or parsed.hostname is None:
+        raise ConfigError(f"{field} must include a URL scheme and host, got {raw!r}")
+    if parsed.query != "" or parsed.fragment != "":
+        raise ConfigError(f"{field} must not include query or fragment components")
     scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ConfigError(f"{field} scheme must be http or https, got {scheme!r}")
     hostname = (parsed.hostname or "").lower()
-    port = parsed.port
-    netloc = hostname if port in {None, 80, 443} else f"{hostname}:{port}"
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ConfigError(f"{field} has an invalid port") from exc
+    default_port = 80 if scheme == "http" else 443
+    netloc = hostname if port in {None, default_port} else f"{hostname}:{port}"
     path = parsed.path.rstrip("/")
     return urlunsplit((scheme, netloc, path, "", ""))
 
@@ -270,11 +286,11 @@ def _require(env: Mapping[str, str], key: str) -> str:
     value = env.get(key)
     if value is None or value.strip() == "":
         raise ConfigError(f"{key} is required")
-    return value
+    return value.strip()
 
 
 def _optional(env: Mapping[str, str], key: str) -> str | None:
     value = env.get(key)
     if value is None or value.strip() == "":
         return None
-    return value
+    return value.strip()

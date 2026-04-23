@@ -101,6 +101,7 @@ def test_check_command_uses_logging_exit_code(
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
     assert payload["message"] == "log sink failed"
+    assert payload.get("field") == "logging"
 
 
 @pytest.mark.unit()
@@ -126,6 +127,7 @@ def test_check_command_uses_health_exit_code_for_auth_failure(
     assert payload["status"] == "error"
     assert payload["message"] == "auth failed: denied"
     assert payload.get("phase") == "startup.preflight"
+    assert payload.get("field") == "s3_connectivity"
     assert payload.get("source_bucket") == "archive-bucket"
     assert payload.get("destination_bucket") == "destination-bucket"
 
@@ -152,6 +154,30 @@ def test_check_command_uses_health_exit_code_for_connectivity_failure(
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
     assert payload["message"] == "connectivity failed: endpoint unavailable"
+    assert payload.get("field") == "s3_connectivity"
+
+
+@pytest.mark.unit()
+def test_check_command_reports_failed_preflight_check_field(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def raise_error(_: AppSettings, _log_file: Path) -> HealthReport:
+        raise HealthCheckError("Failed to access destination bucket 'destination-bucket': denied")
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "run_health_check", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.HEALTH_CHECK_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload.get("field") == "destination_bucket_access"
 
 
 @pytest.mark.unit()

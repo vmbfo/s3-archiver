@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.archive_manifest import SourcePathFilter
+from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.s3 import S3TransferCapabilities
 from s3_archiver_core.settings import AppSettings
 
@@ -31,7 +32,7 @@ class ArchiveOptions:
             retention_days=_positive_int(env, "ARCHIVER_RETENTION_DAYS", 60),
             cleanup_enabled=cleanup_enabled_from_env(env),
             max_workers=_positive_int(env, "ARCHIVER_MAX_WORKERS", 16),
-            run_timeout=parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d")),
+            run_timeout=_duration(env, "ARCHIVER_RUN_TIMEOUT", "7d"),
         )
 
     @classmethod
@@ -51,7 +52,15 @@ class ArchiveOptions:
 def cleanup_enabled_from_env(env: Mapping[str, str]) -> bool:
     """Return whether cleanup is globally enabled by ``ARCHIVER_ENABLE_CLEANUP``."""
 
-    return env.get("ARCHIVER_ENABLE_CLEANUP", "").strip().lower() == "true"
+    raw = env.get("ARCHIVER_ENABLE_CLEANUP")
+    if raw is None or raw.strip() == "":
+        return False
+    value = raw.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise ConfigError("ARCHIVER_ENABLE_CLEANUP must be true or false")
 
 
 def _source_filter(settings: AppSettings) -> SourcePathFilter:
@@ -75,7 +84,23 @@ def _transfer_capabilities(settings: AppSettings) -> S3TransferCapabilities:
 
 
 def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:
-    value = int(env.get(key, str(default)))
+    raw = env.get(key)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be an integer") from exc
     if value <= 0:
-        raise ValueError(f"{key} must be positive")
+        raise ConfigError(f"{key} must be positive")
     return value
+
+
+def _duration(env: Mapping[str, str], key: str, default: str) -> timedelta:
+    raw = env.get(key)
+    if raw is None or raw.strip() == "":
+        raw = default
+    try:
+        return parse_duration(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be a positive duration such as 7d") from exc
