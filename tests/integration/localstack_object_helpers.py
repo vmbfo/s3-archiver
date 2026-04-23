@@ -96,4 +96,8 @@ def seed_timestamped_objects(
 def _object_entries(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [cast(dict[str, object], entry) for entry in value if isinstance(entry, dict)]
+    entries: list[dict[str, object]] = []
+    for raw_entry in cast(list[object], value):
+        if isinstance(raw_entry, dict):
+            entries.append(cast(dict[str, object], raw_entry))
+    return entries

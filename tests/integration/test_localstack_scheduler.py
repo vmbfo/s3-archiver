@@ -10,14 +10,15 @@ import sys
 import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
-from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.settings import AppSettings
 
+from tests.integration.archive_cli_test_support import ArchiveCommandPayload
+from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 from tests.integration.localstack_harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
@@ -28,6 +29,14 @@ from tests.integration.localstack_object_helpers import (
     localstack_s3_client,
     seed_timestamped_objects,
 )
+
+
+class SchedulerErrorPayload(TypedDict):
+    message: str
+    phase: str
+    field: str
+    reason: str
+    timed_out: bool
 
 
 @pytest.mark.integration()
@@ -44,6 +53,7 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
 
     def fake_sleep_until_tick(hour: int, minute: int) -> None:
         nonlocal sleep_calls
+        _ = (hour, minute)
         sleep_calls += 1
         if sleep_calls == 2:
             active_lock.terminate()
@@ -77,13 +87,14 @@ def test_schedule_skips_immediate_replay_after_lock_refusal(
 
 @pytest.mark.integration()
 def test_run_archive_recovers_prior_host_lock_before_archive_work(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _integration_env(tmp_path, localstack_bucket_pair)
     settings = AppSettings.from_env(env)
     lock_path = settings.log_dir / "archive.lock"
-    log_file = configure_logging(settings)
+    log_file = settings.log_dir / "s3-archiver.log"
     stale_payload = {
         "hostname": "prior-container-host",
         "pid": 4321,
@@ -93,7 +104,7 @@ def test_run_archive_recovers_prior_host_lock_before_archive_work(
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     _ = lock_path.write_text(json.dumps(stale_payload), encoding="utf-8")
 
-    payload = cli_module._run_archive(settings, log_file)
+    payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
     assert not lock_path.exists()
@@ -179,8 +190,8 @@ def test_schedule_retries_after_timeout_on_next_tick(
         cli_module.schedule(daily_at_utc="04:05")
 
     captured = capsys.readouterr()
-    error_payload = _last_json(captured.err)
-    success_payload = _last_json(captured.out)
+    error_payload = _last_error_payload(captured.err)
+    success_payload = _last_archive_payload(captured.out)
     assert '"lock_acquired": true' in captured.out
     assert error_payload["phase"] == "archive.run"
     assert error_payload["field"] == "ARCHIVER_RUN_TIMEOUT"
@@ -219,3 +230,11 @@ def _start_active_lock(lock_path: Path) -> subprocess.Popen[bytes]:
 def _last_json(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
+
+
+def _last_archive_payload(output: str) -> ArchiveCommandPayload:
+    return cast(ArchiveCommandPayload, cast(object, _last_json(output)))
+
+
+def _last_error_payload(output: str) -> SchedulerErrorPayload:
+    return cast(SchedulerErrorPayload, cast(object, _last_json(output)))

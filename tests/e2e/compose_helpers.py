@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import time
+from collections.abc import Collection
 from pathlib import Path
-from typing import Collection
 
 _COMPOSE_RETRY_DELAY_SECONDS = 2.0
 _COMPOSE_RUN_RETRIES = 4

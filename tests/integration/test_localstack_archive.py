@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TypedDict
 
 import pytest
 
+from tests.integration.archive_cli_test_support import ArchiveCommandPayload
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
@@ -18,14 +18,6 @@ from tests.integration.localstack_object_helpers import (
     seed_timestamped_objects,
 )
 from tests.integration.test_localstack_timestamp_seed import SEED_NOW
-
-
-class ArchivePayload(TypedDict):
-    status: str
-    source_bucket: str
-    destination_bucket: str
-    manifest: dict[str, object]
-    phases: dict[str, dict[str, object]]
 
 
 @pytest.mark.integration()
@@ -61,7 +53,7 @@ def test_archive_command_copies_isolated_localstack_keys_and_honors_cleanup_gate
         "cleanup": expected_cleanup_status,
     }
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == source_keys
-    expected_source_keys = set() if cleanup_value == "true" else source_keys
+    expected_source_keys: set[str] = set() if cleanup_value == "true" else source_keys
     assert listed_keys(source_client, localstack_bucket_pair.source) == expected_source_keys
 
 
@@ -155,7 +147,7 @@ def test_archive_command_retention_matrix_uses_seeded_last_modified_boundary(
     }
 
 
-def _phase_statuses(payload: ArchivePayload) -> dict[str, object]:
+def _phase_statuses(payload: ArchiveCommandPayload) -> dict[str, str]:
     return {
         name: phase["status"]
         for name, phase in payload["phases"].items()

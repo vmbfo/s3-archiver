@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import TypedDict, cast
 
 import pytest
 from mypy_boto3_s3.type_defs import VersioningConfigurationTypeDef
@@ -20,6 +21,10 @@ from tests.integration.localstack_object_helpers import (
     put_test_object,
     read_object_text,
 )
+
+
+class SourceFingerprintPayload(TypedDict):
+    source_version_id: str
 
 
 @pytest.mark.integration()
@@ -92,7 +97,10 @@ def test_archive_command_rerun_recovers_archived_source_version_for_exact_cleanu
             "Metadata"
         ],
     )
-    fingerprint = json.loads(destination_metadata["s3-archiver-source-fingerprint"])
+    fingerprint = cast(
+        SourceFingerprintPayload,
+        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
+    )
     assert fingerprint["source_version_id"] == str(archived["VersionId"])
     assert read_object_text(destination_client, localstack_bucket_pair.destination, key) == (
         "archived-version\n"
@@ -192,12 +200,15 @@ def test_versioned_listing_paginates_across_pages_and_filters_delete_markers(
     assert all(entry.version_id is not None for entry in listed)
 
 
-def _delete_marker_keys(page: dict[str, object]) -> set[str]:
+def _delete_marker_keys(page: Mapping[str, object]) -> set[str]:
     delete_markers = page.get("DeleteMarkers")
     if not isinstance(delete_markers, list):
         return set()
-    return {
-        str(marker["Key"])
-        for marker in delete_markers
-        if isinstance(marker, dict) and marker.get("Key") is not None
-    }
+    keys: set[str] = set()
+    for raw_marker in cast(list[object], delete_markers):
+        if not isinstance(raw_marker, dict):
+            continue
+        marker = cast(dict[str, object], raw_marker)
+        if marker.get("Key") is not None:
+            keys.add(str(marker["Key"]))
+    return keys

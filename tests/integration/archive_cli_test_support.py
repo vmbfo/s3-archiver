@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -38,6 +38,23 @@ _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",
     "Could not connect to the endpoint URL",
 )
+type ArchiveSide = Literal["source", "destination"]
+
+
+class ArchiveManifestPayload(TypedDict):
+    object_count: int
+
+
+class ArchivePhasePayload(TypedDict):
+    status: str
+
+
+class ArchiveCommandPayload(TypedDict):
+    status: str
+    source_bucket: str
+    destination_bucket: str
+    manifest: ArchiveManifestPayload
+    phases: dict[str, ArchivePhasePayload]
 
 
 def archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
@@ -51,10 +68,8 @@ def archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, 
     return env
 
 
-def archive_client(env: Mapping[str, str], side: str) -> S3Client:
-    if side in {"source", "destination"}:
-        return localstack_s3_client(env, cast(str, side))
-    raise ValueError(f"unknown S3 side {side!r}")
+def archive_client(env: Mapping[str, str], side: ArchiveSide) -> S3Client:
+    return localstack_s3_client(env, side)
 
 
 def run_archive_command(
@@ -62,7 +77,7 @@ def run_archive_command(
     env: dict[str, str],
     *,
     attempts: int = 3,
-) -> dict[str, object]:
+) -> ArchiveCommandPayload:
     monkeypatch.setattr(os, "environ", env)
     core_run_archive = run_core_archive
 
@@ -94,7 +109,7 @@ def run_archive_command(
             json_line = next(
                 line for line in reversed(result.stdout.splitlines()) if line.startswith("{")
             )
-            return cast(dict[str, object], json.loads(json_line))
+            return cast(ArchiveCommandPayload, json.loads(json_line))
         if attempt == attempts - 1 or not _is_retryable_archive_failure(result.stderr):
             assert result.exit_code == 0, result.stderr
         time.sleep(0.5)
