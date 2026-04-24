@@ -185,7 +185,9 @@ def test_archive_lock_recovery_logger_adds_structured_context(
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 0
-    recovery_context = next(context for context in contexts if context.get("event") == "archive.lock.recovered")
+    recovery_context = next(
+        context for context in contexts if context.get("event") == "archive.lock.recovered"
+    )
     assert recovery_context["reason"] == "stale_lock_timed_out"
     assert recovery_context["stale_run_id"] == "run-1"
     assert recovery_context["stale_hostname"] == "host"
@@ -193,7 +195,9 @@ def test_archive_lock_recovery_logger_adds_structured_context(
     recovered_payload = load_payload(result.stderr)
     assert recovered_payload["reason"] == "archive_run_timeout"
     assert recovered_payload["recovered"] is True
-    failure_context = next(context for context in contexts if context.get("event") == "s3_archiver.error")
+    failure_context = next(
+        context for context in contexts if context.get("event") == "s3_archiver.error"
+    )
     assert failure_context["error_phase"] == "archive.run"
     assert failure_context["error_reason"] == "archive_run_timeout"
     assert failure_context["error_run_id"] == "run-1"

@@ -15,8 +15,8 @@ from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
     VerificationResult,
     archive_metadata,
-    recover_fingerprinted_entry,
     recover_archived_entry,
+    recover_fingerprinted_entry,
     select_transfer_strategy,
     verify_destination,
     verify_destination_checksum,
@@ -24,10 +24,6 @@ from s3_archiver_core.archive_transfer import (
     verify_source_unchanged,
 )
 from s3_archiver_core.archive_workers import run_archive_workers
-
-# fmt: off
-__all__ = ("ArchiveBucket", "ArchivePhaseResult", "ArchiveRunLock", "ArchiveRunResult", "DebugLogger", "run_archive")  # noqa: E501
-# fmt: on
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +257,11 @@ def _cleanup_phase(
     )
 
 
-def _cleanup_one(source: ArchiveBucket, destination: ArchiveBucket, entry: ManifestEntry) -> str | None:
+def _cleanup_one(
+    source: ArchiveBucket,
+    destination: ArchiveBucket,
+    entry: ManifestEntry,
+) -> str | None:
     destination_properties = destination.head_object(entry.key)
     if destination_properties is None:
         return f"{entry.key}: destination missing before cleanup"

@@ -259,7 +259,6 @@ def test_verify_source_unchanged_reports_missing_and_property_changes() -> None:
     assert verify_source_unchanged(entry, current).ok is True
 
 
-@pytest.mark.unit()
 def test_fingerprint_metadata_rejects_invalid_shapes() -> None:
     metadata_key = FINGERPRINT_METADATA_KEY
     assert fingerprint_from_metadata({metadata_key: "not-json"}) is None

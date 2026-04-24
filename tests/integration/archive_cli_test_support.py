@@ -12,15 +12,9 @@ from typing import Literal, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
-from s3_archiver_core.archive import (
-    ArchiveBucket,
-    ArchiveRunLock,
-    ArchiveRunResult,
-    DebugLogger,
-)
-from s3_archiver_core.archive import (
-    run_archive as run_core_archive,
-)
+from s3_archiver_core._archive_protocols import ArchiveBucket, ArchiveRunLock
+from s3_archiver_core.archive import ArchiveRunResult
+from s3_archiver_core.archive import run_archive as run_core_archive
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3Client
 from typer.testing import CliRunner
@@ -41,6 +35,7 @@ _RETRYABLE_LOCALSTACK_ERRORS = (
     "when calling the ListObjectVersions operation: The specified bucket does not exist",
 )
 type ArchiveSide = Literal["source", "destination"]
+type DebugLogger = Callable[[object, str], None]
 
 
 class ArchiveManifestPayload(TypedDict):

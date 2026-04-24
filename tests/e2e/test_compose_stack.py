@@ -57,7 +57,9 @@ def test_compose_app_check_succeeds(
 
 
 @pytest.mark.e2e()
-def test_compose_localstack_startup_does_not_precreate_test_buckets(compose_env: dict[str, str]) -> None:
+def test_compose_localstack_startup_does_not_precreate_test_buckets(
+    compose_env: dict[str, str],
+) -> None:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
         _ = _run_compose(compose_env, "up", "-d", "localstack")

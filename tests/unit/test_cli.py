@@ -51,6 +51,33 @@ def test_check_command_emits_json(
 
 
 @pytest.mark.unit()
+def test_check_command_prepares_runtime_temp_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    prepared: list[Path] = []
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def prepare_temp_dir(temp_dir: Path) -> None:
+        prepared.append(temp_dir)
+
+    def run_check(settings: AppSettings, log_file: Path) -> HealthReport:
+        return _health_report(settings, log_file)
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "prepare_runtime_temp_dir", prepare_temp_dir)
+    monkeypatch.setattr(cli_module, "run_health_check", run_check)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == 0
+    assert prepared == [AppSettings.from_env(base_env).temp_dir]
+
+
+@pytest.mark.unit()
 def test_check_command_uses_config_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_error(_: dict[str, str]) -> AppSettings:
         raise ConfigError("bad env")

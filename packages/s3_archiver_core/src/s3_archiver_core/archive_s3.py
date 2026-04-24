@@ -19,6 +19,7 @@ from s3_archiver_core.s3 import (
     S3ListedObject,
     S3ObjectProperties,
     VersioningState,
+    checksums_from_head_fields,
 )
 from s3_archiver_core.s3_transfer import copy_s3_object
 from s3_archiver_core.temp_files import default_temp_dir
@@ -223,7 +224,7 @@ def _properties_from_head(
         metadata=_string_mapping(head.get("Metadata")),
         tags=tags,
         last_modified=cast(datetime | None, head.get("LastModified")),
-        checksums=_checksums_from_head(head),
+        checksums=checksums_from_head_fields(head),
         checksum_type=_optional_string(head.get("ChecksumType")),
     )
 
@@ -293,18 +294,3 @@ def _string_mapping(value: object) -> Mapping[str, str]:
         return {}
     raw = cast(Mapping[object, object], value)
     return {str(key): str(item) for key, item in raw.items()}
-
-
-def _checksums_from_head(head: Mapping[str, object]) -> Mapping[str, str]:
-    checksum_fields = {
-        "crc32": head.get("ChecksumCRC32"),
-        "crc32c": head.get("ChecksumCRC32C"),
-        "crc64nvme": head.get("ChecksumCRC64NVME"),
-        "sha1": head.get("ChecksumSHA1"),
-        "sha256": head.get("ChecksumSHA256"),
-    }
-    return {
-        algorithm: str(value)
-        for algorithm, value in checksum_fields.items()
-        if value is not None
-    }

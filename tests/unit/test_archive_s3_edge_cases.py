@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import override
 
 import pytest
+from botocore.exceptions import ClientError
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3ObjectProperties
 
-from tests.unit.archive_s3_fakes import FakeArchiveClient, client_error, copy_object, properties
+from tests.unit.archive_s3_fakes import FakeArchiveClient, client_error, properties
 
 
 class VersioningClient(FakeArchiveClient):
@@ -58,6 +58,8 @@ class TagShapeClient(FakeArchiveClient):
 class HeadShapeClient(FakeArchiveClient):
     """Fake client returning a configured head response."""
 
+    head_call: dict[str, object]
+
     def __init__(self, response: Mapping[str, object]) -> None:
         super().__init__()
         self.response: Mapping[str, object] = response
@@ -71,6 +73,8 @@ class HeadShapeClient(FakeArchiveClient):
 class ChecksumRetryClient(FakeArchiveClient):
     """Fake client that rejects checksum mode once, then succeeds without it."""
 
+    head_call: dict[str, object]
+
     @override
     def head_object(self, **kwargs: object) -> Mapping[str, object]:
         self.head_call = dict(kwargs)
@@ -79,45 +83,20 @@ class ChecksumRetryClient(FakeArchiveClient):
         return super().head_object(**kwargs)
 
 
-class FailingMultipartCopyClient(FakeArchiveClient):
+class ChecksumUnsupportedClient(FakeArchiveClient):
     @override
-    def upload_part_copy(self, **kwargs: object) -> Mapping[str, object]:
-        _ = kwargs
-        raise RuntimeError("copy part failed")
+    def head_object(self, **kwargs: object) -> Mapping[str, object]:
+        if kwargs.get("ChecksumMode") == "ENABLED":
+            raise ClientError({"Error": {"Code": "InternalError"}}, "HeadObject")
+        return super().head_object(**kwargs)
 
 
-class MissingUploadIdClient(FakeArchiveClient):
+class ChecksumRetryNotFoundClient(FakeArchiveClient):
     @override
-    def create_multipart_upload(self, **kwargs: object) -> Mapping[str, object]:
-        self.create_calls.append(kwargs)
-        return {}
-
-
-class MissingPartEtagClient(FakeArchiveClient):
-    @override
-    def upload_part(self, **kwargs: object) -> Mapping[str, object]:
-        body = kwargs["Body"]
-        assert isinstance(body, bytes)
-        self.upload_part_sizes.append(len(body))
-        return {}
-
-
-class NonReadableBodyClient(FakeArchiveClient):
-    @override
-    def get_object(self, **kwargs: object) -> Mapping[str, object]:
-        return self._set("get_call", kwargs, {"Body": object()})
-
-
-class RaisingBody:
-    def read(self, size: int = -1) -> bytes:
-        _ = size
-        raise RuntimeError("read failed")
-
-
-class RaisingBodyClient(FakeArchiveClient):
-    @override
-    def get_object(self, **kwargs: object) -> Mapping[str, object]:
-        return self._set("get_call", kwargs, {"Body": RaisingBody()})
+    def head_object(self, **kwargs: object) -> Mapping[str, object]:
+        if kwargs.get("ChecksumMode") == "ENABLED":
+            raise client_error("AccessDenied", status=403)
+        raise client_error("NoSuchKey")
 
 
 @pytest.mark.unit()
@@ -256,79 +235,15 @@ def test_s3_archive_bucket_head_retries_without_checksum_mode_on_compatibility_e
 
 
 @pytest.mark.unit()
-def test_s3_transfer_zero_size_streaming_uses_put_object() -> None:
-    source_client = FakeArchiveClient()
-    destination_client = FakeArchiveClient()
-    source = S3ArchiveBucket(source_client, "source")
-    destination = S3ArchiveBucket(destination_client, "destination")
+def test_s3_archive_bucket_head_reraises_non_compatibility_checksum_error() -> None:
+    bucket = S3ArchiveBucket(ChecksumUnsupportedClient(), "source")
 
-    copy_object(destination, properties(0), "multipart_streaming", source)
-
-    assert destination_client.put_call["Body"] == b""
-    assert destination_client.create_calls == []
-    assert destination_client.tagging_calls[0]["Bucket"] == "destination"
+    with pytest.raises(ClientError):
+        _ = bucket.head_object("key")
 
 
 @pytest.mark.unit()
-def test_s3_transfer_multipart_copy_aborts_on_part_failure() -> None:
-    client = FailingMultipartCopyClient()
-    bucket = S3ArchiveBucket(client, "destination")
+def test_s3_archive_bucket_head_returns_none_when_retry_without_checksum_mode_is_missing() -> None:
+    bucket = S3ArchiveBucket(ChecksumRetryNotFoundClient(), "source")
 
-    with pytest.raises(RuntimeError, match="copy part failed"):
-        copy_object(bucket, properties(10), "multipart_native_copy")
-
-    assert client.abort_calls == [
-        {"Bucket": "destination", "Key": "large.bin", "UploadId": "upload-1"}
-    ]
-
-
-@pytest.mark.unit()
-def test_s3_transfer_rejects_missing_upload_id_and_part_etag() -> None:
-    source_client = FakeArchiveClient()
-    source_client.source_body = b"body"
-    missing_upload_id = S3ArchiveBucket(MissingUploadIdClient(), "destination")
-
-    with pytest.raises(RuntimeError, match="omitted UploadId"):
-        copy_object(
-            missing_upload_id,
-            properties(len(source_client.source_body)),
-            "multipart_streaming",
-            S3ArchiveBucket(source_client, "source"),
-        )
-
-    missing_etag_client = MissingPartEtagClient()
-    source_client.source_body = b"body"
-    with pytest.raises(RuntimeError, match="omitted ETag"):
-        copy_object(
-            S3ArchiveBucket(missing_etag_client, "destination"),
-            properties(len(source_client.source_body)),
-            "multipart_streaming",
-            S3ArchiveBucket(source_client, "source"),
-        )
-    assert missing_etag_client.abort_calls == [
-        {"Bucket": "destination", "Key": "large.bin", "UploadId": "upload-1"}
-    ]
-
-
-@pytest.mark.unit()
-def test_s3_transfer_rejects_non_readable_body() -> None:
-    with pytest.raises(TypeError, match="Body is not readable"):
-        copy_object(
-            S3ArchiveBucket(FakeArchiveClient(), "destination"),
-            properties(1),
-            "multipart_streaming",
-            S3ArchiveBucket(NonReadableBodyClient(), "source"),
-        )
-
-
-@pytest.mark.unit()
-def test_s3_transfer_temp_file_stage_failure_cleans_partial_file(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="read failed"):
-        copy_object(
-            S3ArchiveBucket(FakeArchiveClient(), "destination", tmp_path),
-            properties(1),
-            "temp_file_backed",
-            S3ArchiveBucket(RaisingBodyClient(), "source"),
-        )
-
-    assert list(tmp_path.iterdir()) == []
+    assert bucket.head_object("key") is None

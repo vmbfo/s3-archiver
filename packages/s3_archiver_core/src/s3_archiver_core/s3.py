@@ -32,6 +32,10 @@ class S3Client(Protocol):
         """List unversioned objects."""
         ...
 
+    def list_buckets(self) -> Mapping[str, object]:
+        """List buckets visible to the configured credentials."""
+        ...
+
     def list_object_versions(self, **kwargs: object) -> Mapping[str, object]:
         """List object versions and delete markers."""
         ...
@@ -89,6 +93,10 @@ VersioningState = Literal["Disabled", "Enabled", "Suspended"]
 S3_CHUNK_BYTES = 8 * 1024 * 1024
 
 
+def _empty_checksums() -> dict[str, str]:
+    return {}
+
+
 @dataclass(frozen=True, slots=True)
 class S3ObjectProperties:
     """Portable object properties needed for archive verification."""
@@ -104,7 +112,7 @@ class S3ObjectProperties:
     metadata: Mapping[str, str]
     tags: Mapping[str, str]
     last_modified: datetime | None = None
-    checksums: Mapping[str, str] = field(default_factory=dict)
+    checksums: Mapping[str, str] = field(default_factory=_empty_checksums)
     checksum_type: str | None = None
 
 
@@ -150,11 +158,30 @@ def build_s3_client(settings: AppSettings | S3LocationSettings) -> S3Client:
     )
     service_name: Literal["s3"] = "s3"
     client_factory = cast(S3ClientFactory, session.client)
+    addressing_style: Literal["path", "virtual"] = (
+        "path" if location.addressing_style.value == "path" else "virtual"
+    )
     return client_factory(
         service_name=service_name,
         endpoint_url=location.resolved_endpoint_url(),
         config=Config(
             signature_version="s3v4",
-            s3={"addressing_style": location.addressing_style.value},
+            s3={"addressing_style": addressing_style},
         ),
     )
+
+
+def checksums_from_head_fields(head: Mapping[str, object]) -> Mapping[str, str]:
+    """Collect provider checksum fields from a ``HeadObject`` response."""
+
+    return {
+        algorithm: str(value)
+        for algorithm, value in {
+            "crc32": head.get("ChecksumCRC32"),
+            "crc32c": head.get("ChecksumCRC32C"),
+            "crc64nvme": head.get("ChecksumCRC64NVME"),
+            "sha1": head.get("ChecksumSHA1"),
+            "sha256": head.get("ChecksumSHA256"),
+        }.items()
+        if value is not None
+    }

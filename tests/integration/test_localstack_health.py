@@ -99,9 +99,10 @@ def test_localstack_service_readiness_requires_only_s3_api(
     bucket_pair = bucket_pair_from_env(compose_env)
     settings = AppSettings.from_env(_integration_env(bucket_pair))
     client = build_s3_client(settings)
+    list_buckets = client.list_buckets()
     bucket_names = {
         str(bucket["Name"])
-        for bucket in cast(list[dict[str, object]], client.list_buckets().get("Buckets", []))
+        for bucket in cast(list[dict[str, object]], list_buckets.get("Buckets", []))
         if "Name" in bucket
     }
 

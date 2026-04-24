@@ -119,6 +119,24 @@ def test_build_s3_client_wires_derived_oci_endpoint(
 
 
 @pytest.mark.unit()
+def test_s3_object_properties_defaults_checksums_to_empty_mapping() -> None:
+    properties = s3_module.S3ObjectProperties(
+        size=1,
+        etag=None,
+        content_type=None,
+        content_encoding=None,
+        content_language=None,
+        content_disposition=None,
+        cache_control=None,
+        expires=None,
+        metadata={},
+        tags={},
+    )
+
+    assert properties.checksums == {}
+
+
+@pytest.mark.unit()
 def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

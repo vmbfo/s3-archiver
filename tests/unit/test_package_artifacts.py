@@ -8,6 +8,7 @@ import tomllib
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -19,21 +20,43 @@ PACKAGE_CONFIGS = {
 REQUIRED_EXCLUDES = {"/tests", "/docker", "localstack", "test-support"}
 
 
+def _as_mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    mapping = cast(dict[object, object], value)
+    return {str(key): entry for key, entry in mapping.items()}
+
+
+def _as_string_list(value: object) -> list[str]:
+    assert isinstance(value, list)
+    entries = cast(list[object], value)
+    return [str(entry) for entry in entries]
+
+
+def _build_backend_config(pyproject_path: Path) -> dict[str, list[str]]:
+    config = _as_mapping(tomllib.loads(pyproject_path.read_text(encoding="utf-8")))
+    tool = _as_mapping(config["tool"])
+    uv = _as_mapping(tool["uv"])
+    build_backend = _as_mapping(uv["build-backend"])
+    return {
+        "source-exclude": _as_string_list(build_backend["source-exclude"]),
+        "wheel-exclude": _as_string_list(build_backend["wheel-exclude"]),
+    }
+
+
 @pytest.mark.unit()
 def test_package_build_configs_explicitly_exclude_test_and_localstack_assets() -> None:
     for pyproject_path in PACKAGE_CONFIGS.values():
-        config = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-        build_backend = config["tool"]["uv"]["build-backend"]
+        build_backend = _build_backend_config(pyproject_path)
 
-        assert REQUIRED_EXCLUDES.issubset(set(build_backend["source-exclude"]))
-        assert REQUIRED_EXCLUDES.issubset(set(build_backend["wheel-exclude"]))
+        assert REQUIRED_EXCLUDES.issubset(build_backend["source-exclude"])
+        assert REQUIRED_EXCLUDES.issubset(build_backend["wheel-exclude"])
 
 
 @pytest.mark.unit()
 def test_built_distributions_exclude_test_and_localstack_assets(tmp_path: Path) -> None:
     for package_name in PACKAGE_CONFIGS:
         output_dir = tmp_path / package_name
-        subprocess.run(
+        _ = subprocess.run(
             [
                 "uv",
                 "build",

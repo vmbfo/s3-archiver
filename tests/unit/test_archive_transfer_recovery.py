@@ -5,8 +5,16 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from s3_archiver_core.archive_fingerprint import (
+    fingerprint_from_metadata,
+    fingerprint_matches_entry,
+)
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.archive_transfer import archive_metadata, recover_archived_entry
+from s3_archiver_core.archive_transfer import (
+    archive_metadata,
+    recover_archived_entry,
+    recover_fingerprinted_entry,
+)
 from s3_archiver_core.s3 import S3ObjectProperties
 
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -52,6 +60,72 @@ def test_recover_archived_entry_returns_original_for_invalid_timestamp_metadata(
     recovered = recover_archived_entry(entry, destination, _properties_for_version)
 
     assert recovered is entry
+
+
+@pytest.mark.unit()
+def test_fingerprint_matches_entry_rejects_checksum_mismatch() -> None:
+    listed = _listed("old.txt", 90, "v1")
+    entry = ManifestEntry(
+        "source",
+        "old.txt",
+        10,
+        listed.last_modified,
+        '"etag"',
+        "v1",
+        replace(
+            listed,
+            properties=_properties(checksums={"sha256": "expected"}, checksum_type="FULL_OBJECT"),
+        ),
+    )
+    fingerprint = fingerprint_from_metadata(archive_metadata(entry))
+
+    assert fingerprint is not None
+    mismatched_entry = ManifestEntry(
+        "source",
+        "old.txt",
+        10,
+        listed.last_modified,
+        '"etag"',
+        "v1",
+        replace(
+            listed,
+            properties=_properties(checksums={"sha256": "other"}, checksum_type="FULL_OBJECT"),
+        ),
+    )
+
+    assert fingerprint_matches_entry(fingerprint, mismatched_entry) is False
+
+
+@pytest.mark.unit()
+def test_recover_fingerprinted_entry_rejects_versioned_property_mismatch() -> None:
+    listed = replace(
+        _listed("old.txt", 90, "v1"),
+        properties=_properties(checksums={"sha256": "expected"}, checksum_type="FULL_OBJECT"),
+    )
+    entry = ManifestEntry("source", "old.txt", 10, listed.last_modified, '"etag"', "v1", listed)
+    destination = replace(entry.object.properties, metadata=archive_metadata(entry))
+
+    recovered = recover_fingerprinted_entry(
+        entry,
+        destination,
+        lambda _version_id: _properties(checksums={"sha256": "other"}, checksum_type="FULL_OBJECT"),
+    )
+
+    assert recovered is None
+
+
+@pytest.mark.unit()
+def test_recover_fingerprinted_entry_rejects_versioned_size_mismatch() -> None:
+    entry = _entry()
+    destination = replace(entry.object.properties, metadata=archive_metadata(entry))
+
+    recovered = recover_fingerprinted_entry(
+        entry,
+        destination,
+        lambda _version_id: _properties(size=11),
+    )
+
+    assert recovered is None
 
 
 def _properties_for_version(_version_id: str | None) -> S3ObjectProperties:

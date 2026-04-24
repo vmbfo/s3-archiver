@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
@@ -30,6 +30,7 @@ from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
 from s3_archiver_cli.error_logging import (
     archive_failure_payload as _archive_failure_payload,
@@ -74,14 +75,11 @@ def check() -> None:
 
     settings: AppSettings | None = None
     try:
-        settings = AppSettings.from_env(_load_runtime_env())
-        log_file = configure_logging(settings)
+        settings, log_file = _load_settings_and_log_file()
+        prepare_runtime_temp_dir(settings.temp_dir)
         report = run_health_check(settings, log_file)
     except S3ArchiverError as exc:
-        payload = _error_payload(exc, settings)
-        _log_error_payload(payload, exc)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
-        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+        _raise_cli_error(exc, settings)
 
     payload = report.as_dict()
     typer.echo(json.dumps(payload, sort_keys=True))
@@ -93,13 +91,9 @@ def archive() -> None:
 
     settings: AppSettings | None = None
     try:
-        settings = AppSettings.from_env(_load_runtime_env())
-        log_file = configure_logging(settings)
+        settings, log_file = _load_settings_and_log_file()
     except S3ArchiverError as exc:
-        payload = _error_payload(exc, settings)
-        _log_error_payload(payload, exc)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
-        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+        _raise_cli_error(exc, settings)
     exit_code = _run_archive_command(settings, log_file)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
@@ -111,14 +105,10 @@ def archive_once() -> None:
 
     settings: AppSettings | None = None
     try:
-        settings = AppSettings.from_env(_load_runtime_env())
-        log_file = configure_logging(settings)
+        settings, log_file = _load_settings_and_log_file()
         payload = _run_archive(settings, log_file)
     except S3ArchiverError as exc:
-        payload = _error_payload(exc, settings)
-        _log_error_payload(payload, exc)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
-        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+        _raise_cli_error(exc, settings)
     if not _emit_archive_payload(payload):
         raise typer.Exit(code=1)
 
@@ -131,23 +121,17 @@ def schedule(
 
     settings: AppSettings | None = None
     try:
-        settings = AppSettings.from_env(_load_runtime_env())
-        log_file = configure_logging(settings)
+        settings, log_file = _load_settings_and_log_file()
     except S3ArchiverError as exc:
-        payload = _error_payload(exc, settings)
-        _log_error_payload(payload, exc)
-        typer.echo(json.dumps(payload, sort_keys=True), err=True)
-        raise typer.Exit(code=_exit_code_for_error(exc)) from exc
+        _raise_cli_error(exc, settings)
     hour, minute = _parse_daily_at_utc(daily_at_utc)
-    reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
+    _ = reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
     while True:
         _sleep_until_next_daily_tick(hour, minute)
         try:
             run_scheduled_archive(settings, log_file, recovery_logger=_log_lock_recovery)
         except S3ArchiverError as exc:
-            payload = _error_payload(exc, settings)
-            _log_error_payload(payload, exc)
-            typer.echo(json.dumps(payload, sort_keys=True), err=True)
+            _emit_cli_error(exc, settings)
 
 
 def main() -> None:
@@ -166,10 +150,27 @@ def _exit_code_for_error(error: S3ArchiverError) -> int:
     return 1
 
 
+def _load_settings_and_log_file() -> tuple[AppSettings, Path]:
+    settings = AppSettings.from_env(_load_runtime_env())
+    return settings, configure_logging(settings)
+
+
+def _raise_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> NoReturn:
+    _emit_cli_error(error, settings)
+    raise typer.Exit(code=_exit_code_for_error(error)) from error
+
+
+def _emit_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> None:
+    payload = _error_payload(error, settings)
+    _log_error_payload(payload, error)
+    typer.echo(json.dumps(payload, sort_keys=True), err=True)
+
+
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     started = datetime.now(tz=UTC)
     locked_run_id = uuid4().hex
     run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=_log_lock_recovery)
+    release_lock = True
     if not run_lock.acquire(
         run_id=locked_run_id,
         run_started_at_utc=started,
@@ -203,12 +204,14 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
                 result.cleanup,
                 result.list,
             )
+        release_lock = not _run_result_timed_out(result)
     except S3ArchiverError:
         raise
     except Exception as exc:
         raise ArchiveRunError(str(exc)) from exc
     finally:
-        run_lock.release(run_id=locked_run_id)
+        if release_lock:
+            run_lock.release(run_id=locked_run_id)
     if result.ok:
         return _archive_result_payload("ok", result, settings, log_file)
     return _archive_failure_payload(result, settings, log_file)
@@ -231,6 +234,13 @@ def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:
     return True
 
 
+def _run_result_timed_out(result: ArchiveRunResult) -> bool:
+    for phase in (result.copy, result.verify, result.cleanup, result.list):
+        if "archive run timed out" in phase.failures:
+            return True
+    return False
+
+
 def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
     logging.getLogger("s3_archiver.archive").debug(
         "archive transfer strategy selected",
@@ -241,59 +251,6 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
             "strategy": strategy,
         },
     )
-
-
-def _log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:
-    logger = logging.getLogger("s3_archiver.archive")
-    logger.warning(
-        "archive stale run lock recovered",
-        extra={
-            "event": "archive.lock.recovered",
-            "reason": reason,
-            "stale_run_id": payload.get("run_id"),
-            "stale_run_started_at_utc": payload.get("run_started_at_utc"),
-            "stale_hostname": payload.get("hostname"),
-            "stale_pid": payload.get("pid"),
-        },
-    )
-    failure_payload = _recovered_run_failure_payload(reason, payload)
-    if failure_payload is not None:
-        _log_error_payload(failure_payload)
-        typer.echo(json.dumps(failure_payload, sort_keys=True), err=True)
-
-
-def _recovered_run_failure_payload(
-    reason: str,
-    payload: Mapping[str, object],
-) -> dict[str, JsonValue] | None:
-    timed_out = reason == "stale_lock_timed_out"
-    if reason not in {"stale_lock_abandoned", "stale_lock_timed_out"}:
-        return None
-    return {
-        "status": "error",
-        "phase": "archive.run",
-        "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else None,
-        "message": "prior archive run failed and was recovered from a stale lock",
-        "details": "archive run timed out" if timed_out else "archive run was abandoned",
-        "source_bucket": None,
-        "destination_bucket": None,
-        "key": None,
-        "mismatch": None,
-        "reason": "archive_run_timeout" if timed_out else "archive_run_abandoned",
-        "timed_out": timed_out,
-        "run_id": _json_scalar(payload.get("run_id")),
-        "run_started_at_utc": _json_scalar(payload.get("run_started_at_utc")),
-        "hostname": _json_scalar(payload.get("hostname")),
-        "pid": _json_scalar(payload.get("pid")),
-        "lock_recovery_reason": reason,
-        "recovered": True,
-    }
-
-
-def _json_scalar(value: object) -> JsonScalar:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return None
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:

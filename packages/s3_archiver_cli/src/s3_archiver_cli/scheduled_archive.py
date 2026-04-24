@@ -65,7 +65,7 @@ def run_archive_subprocess(
     except subprocess.TimeoutExpired as exc:
         _relay_output(_as_text(exc.stdout), emit_stdout)
         _relay_output(_as_text(exc.stderr), emit_stderr)
-        reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
+        _ = reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
         payload = _timeout_payload(settings, log_file)
         log_error(payload)
         emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
