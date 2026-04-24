@@ -206,7 +206,7 @@ def test_load_s3_location_returns_none_when_required_bucket_is_missing(tmp_path:
     decoder = EnvDecoder(env)
     load_s3_location = cast(
         Callable[[EnvDecoder, str], object | None],
-        getattr(settings_module, "_load_s3_location"),
+        settings_module.__dict__["_load_s3_location"],
     )
 
     location = load_s3_location(decoder, "SOURCE")

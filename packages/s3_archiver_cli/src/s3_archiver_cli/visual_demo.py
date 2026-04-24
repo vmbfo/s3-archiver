@@ -132,7 +132,7 @@ def _emit_snapshot(emit: Emitter, title: str, snapshot: dict[str, JsonValue]) ->
     )
     for row in cast(list[dict[str, JsonValue]], snapshot["source_objects"]):
         emit(
-            f"SOURCE "
+            "SOURCE "
             + f"key={row['key']} "
             + f"size={row['size']} "
             + f"last_modified={row['last_modified_utc']} "
@@ -154,7 +154,7 @@ def _emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     emit(f"eligible object count: {len(manifest.entries)}")
     for entry in manifest.entries:
         emit(
-            f"COPY   "
+            "COPY   "
             + f"key={entry.key} "
             + f"size={entry.size} "
             + f"last_modified={entry.last_modified.isoformat()} "
@@ -180,7 +180,7 @@ def _emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) 
     emit(f"would delete object count: {cleanup_preview['object_count']}")
     for row in cast(list[dict[str, JsonValue]], cleanup_preview["entries"]):
         emit(
-            f"DELETE "
+            "DELETE "
             + f"key={row['key']} "
             + f"size={row['size']} "
             + f"last_modified={row['last_modified_utc']} "
@@ -281,11 +281,7 @@ def _snapshot_bucket_state(snapshot: dict[str, JsonValue]) -> dict[str, JsonValu
         "source_object_count": snapshot["source_object_count"],
         "destination_object_count": snapshot["destination_object_count"],
         "source_objects": [
-            {
-                key: value
-                for key, value in row.items()
-                if key != "eligible_for_follow_up"
-            }
+            {key: value for key, value in row.items() if key != "eligible_for_follow_up"}
             for row in cast(list[dict[str, JsonValue]], snapshot["source_objects"])
         ],
         "destination_objects": snapshot["destination_objects"],

@@ -135,9 +135,7 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
         def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
             return tuple(state[self.bucket])
 
-    def archive_runner(
-        _settings: AppSettings, _log_file: Path
-    ) -> dict[str, demo_module.JsonValue]:
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         state[settings.destination.bucket] = [_listed("demo/old.txt", 61)]
         return {
             "status": "ok",
@@ -149,9 +147,7 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
             },
         }
 
-    def cleanup_runner(
-        _settings: AppSettings, _log_file: Path
-    ) -> dict[str, demo_module.JsonValue]:
+    def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return {
             "status": "ok",
             "cleanup_preview": {
@@ -244,9 +240,7 @@ def test_run_visual_demo_uses_default_utc_clock(
         def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
             return (_listed("demo/old.txt", 61),)
 
-    def archive_runner(
-        _settings: AppSettings, _log_file: Path
-    ) -> dict[str, demo_module.JsonValue]:
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return {
             "status": "ok",
             "phases": {
@@ -257,9 +251,7 @@ def test_run_visual_demo_uses_default_utc_clock(
             },
         }
 
-    def cleanup_runner(
-        _settings: AppSettings, _log_file: Path
-    ) -> dict[str, demo_module.JsonValue]:
+    def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return {
             "status": "ok",
             "cleanup_preview": {

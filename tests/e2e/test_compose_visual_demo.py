@@ -28,8 +28,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPOSE_RETRYABLE_MESSAGES = (
     "HeadBucket operation: Not Found",
     "Connection was closed before we received a valid response",
+    'optional dependency "localstack" failed to start',
+    "exited (137)",
     "unable to upgrade to tcp, received 409",
+    "app is missing dependency localstack",
+    "network s3-archiver_default not found",
+    'container name "/s3-archiver-localstack-1" is already in use',
 )
+_COMPOSE_RETRYABLE_RETURNCODES = (4, 137)
 
 
 @pytest.mark.e2e()
@@ -107,7 +113,12 @@ def _client(
 
 
 def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return run_compose(env, *args, retryable_messages=_COMPOSE_RETRYABLE_MESSAGES)
+    return run_compose(
+        env,
+        *args,
+        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
+    )
 
 
 def _demo_payload(output: str) -> dict[str, object]:
