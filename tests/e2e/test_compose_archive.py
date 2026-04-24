@@ -17,6 +17,7 @@ from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
+    compose_runtime_log_dir,
     localstack_test_env,
 )
 from tests.integration.localstack_object_helpers import (
@@ -26,7 +27,17 @@ from tests.integration.localstack_object_helpers import (
 )
 from tests.integration.test_localstack_timestamp_seed import run_timestamp_seed_helper
 
-_COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
+_COMPOSE_RETRYABLE_MESSAGES = (
+    "HeadBucket operation: Not Found",
+    "Connection was closed before we received a valid response",
+    'optional dependency "localstack" failed to start',
+    "exited (137)",
+    "unable to upgrade to tcp, received 409",
+    "app is missing dependency localstack",
+    "network s3-archiver_default not found",
+    'container name "/s3-archiver-localstack-1" is already in use',
+)
+_COMPOSE_RETRYABLE_RETURNCODES = (4, 137)
 
 
 class ArchivePhasePayload(TypedDict):
@@ -237,7 +248,7 @@ def _write_archive_env_file(
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir="/var/log/s3-archiver",
+        log_dir=compose_runtime_log_dir(bucket_pair),
     )
     env["ARCHIVER_RETENTION_DAYS"] = "1"
     env["ARCHIVER_MAX_WORKERS"] = "1"
@@ -274,6 +285,7 @@ def _run_compose(
         *args,
         check=check,
         retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
     )
 
 

@@ -10,12 +10,14 @@ from typing import cast
 import pytest
 
 from tests.e2e.compose_helpers import run_compose
+from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
 
 
 @pytest.mark.e2e()
 def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
     compose_env: dict[str, str],
 ) -> None:
+    log_dir = compose_runtime_log_dir(bucket_pair_from_env(compose_env))
     probe = textwrap.dedent(
         """
         /opt/venv/bin/python - <<'PY'
@@ -54,6 +56,8 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
         "--no-deps",
         "-e",
         "APP_ENV_FILE=/dev/null",
+        "-e",
+        f"LOG_DIR={log_dir}",
         "--entrypoint",
         "sh",
         "app",
@@ -76,32 +80,12 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
 def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_work(
     compose_env: dict[str, str],
 ) -> None:
-    writer_probe = textwrap.dedent(
-        """
-        /opt/venv/bin/python - <<'PY'
-        import json
-        import os
-        import socket
-        from datetime import UTC, datetime
-        from pathlib import Path
-
-        lock_path = Path("/var/log/s3-archiver/archive.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "hostname": socket.gethostname(),
-            "pid": os.getpid(),
-            "run_id": "stale-run",
-            "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
-        }
-        lock_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-        print(json.dumps(payload, sort_keys=True))
-        PY
-        """
-    ).strip()
+    log_dir = compose_runtime_log_dir(bucket_pair_from_env(compose_env))
     recovery_probe = textwrap.dedent(
         """
         /opt/venv/bin/python - <<'PY'
         import json
+        import os
         import socket
         from datetime import UTC, datetime, timedelta
         from pathlib import Path
@@ -149,6 +133,16 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
         cli.build_s3_client = fake_build
         cli.run_archive = fake_run_archive
 
+        lock_path = Path(os.environ["LOG_DIR"]) / "archive.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        stale_payload = {
+            "hostname": "prior-container-host",
+            "pid": 123456,
+            "run_id": "stale-run",
+            "run_started_at_utc": datetime(2024, 4, 20, tzinfo=UTC).isoformat(),
+        }
+        lock_path.write_text(json.dumps(stale_payload, sort_keys=True), encoding="utf-8")
+
         settings = AppSettings.from_env(cli._load_runtime_env())
         payload = cli._run_archive(settings, Path("/tmp/s3-archiver.log"))
         print(
@@ -168,20 +162,6 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
     ).strip()
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
-        writer_result = _run_compose(
-            compose_env,
-            "run",
-            "--rm",
-            "--no-deps",
-            "-e",
-            "APP_ENV_FILE=/dev/null",
-            "--entrypoint",
-            "sh",
-            "app",
-            "-lc",
-            writer_probe,
-        )
-        writer_payload = _payload(writer_result.stdout)
         recovery_result = _run_compose(
             compose_env,
             "run",
@@ -189,6 +169,8 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
             "--no-deps",
             "-e",
             "APP_ENV_FILE=/dev/null",
+            "-e",
+            f"LOG_DIR={log_dir}",
             "--entrypoint",
             "sh",
             "app",
@@ -199,8 +181,8 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
 
-    assert writer_payload["hostname"] != recovery_payload["current_hostname"]
-    assert recovery_payload["stale_hostname"] == writer_payload["hostname"]
+    assert recovery_payload["current_hostname"] != "prior-container-host"
+    assert recovery_payload["stale_hostname"] == "prior-container-host"
     assert recovery_payload["status"] == "ok"
     assert recovery_payload["lock_exists_after"] is False
     assert recovery_payload["events"] == [

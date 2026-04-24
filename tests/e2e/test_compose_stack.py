@@ -13,7 +13,7 @@ import pytest
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
 
 from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import bucket_pair_from_env
+from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
 
 _COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
 _COMPOSE_RETRYABLE_RETURNCODES = (137, HEALTH_CHECK_ERROR_EXIT_CODE)
@@ -101,7 +101,7 @@ def test_compose_app_writes_persisted_logs(
         "sh",
         "app",
         "-lc",
-        "test -s /var/log/s3-archiver/s3-archiver.log && cat /var/log/s3-archiver/s3-archiver.log",
+        'test -s "$LOG_DIR/s3-archiver.log" && cat "$LOG_DIR/s3-archiver.log"',
     )
 
     assert '"event": "health.succeeded"' in result.stdout
@@ -185,6 +185,15 @@ def test_compose_app_fails_fast_when_log_dir_is_unwritable(
     payload = _error_payload(result.stderr)
     assert payload["status"] == "error"
     assert "Failed to initialize log directory" in payload["message"]
+
+
+@pytest.mark.unit()
+def test_compose_env_uses_bucket_isolated_log_dir(compose_env: dict[str, str]) -> None:
+    bucket_pair = bucket_pair_from_env(compose_env)
+    env_file = Path(compose_env["APP_ENV_FILE"])
+    env_lines = env_file.read_text(encoding="utf-8").splitlines()
+
+    assert f"LOG_DIR={compose_runtime_log_dir(bucket_pair)}" in env_lines
 
 
 @pytest.mark.e2e()

@@ -16,6 +16,7 @@ from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
+    compose_runtime_log_dir,
     localstack_test_env,
 )
 from tests.integration.localstack_object_helpers import (
@@ -86,7 +87,7 @@ def _write_demo_env_file(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> P
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir="/var/log/s3-archiver",
+        log_dir=compose_runtime_log_dir(bucket_pair),
     )
     env["ARCHIVER_RETENTION_DAYS"] = "1"
     env["ARCHIVER_ENABLE_CLEANUP"] = "false"

@@ -16,6 +16,7 @@ from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
+    compose_runtime_log_dir,
     localstack_test_env,
 )
 from tests.integration.localstack_object_helpers import listed_keys, localstack_s3_client
@@ -155,7 +156,7 @@ def _write_archive_env_file(
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir="/var/log/s3-archiver",
+        log_dir=compose_runtime_log_dir(bucket_pair),
     )
     env["ARCHIVER_RETENTION_DAYS"] = str(retention_days)
     env["ARCHIVER_MAX_WORKERS"] = "1"

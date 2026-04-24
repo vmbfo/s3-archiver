@@ -10,16 +10,19 @@ from typing import cast
 import pytest
 
 from tests.e2e.compose_helpers import run_compose
+from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
 
 
 @pytest.mark.e2e()
 def test_compose_scheduler_reports_timeout_then_retries_on_next_tick(
     compose_env: dict[str, str],
 ) -> None:
+    log_dir = compose_runtime_log_dir(bucket_pair_from_env(compose_env))
     probe = textwrap.dedent(
         """
         /opt/venv/bin/python - <<'PY'
         import json
+        import os
         import sys
         from pathlib import Path
 
@@ -47,7 +50,7 @@ def test_compose_scheduler_reports_timeout_then_retries_on_next_tick(
             state["sleep_calls"] += 1
             events.append(f"sleep-{state['sleep_calls']}:{hour:02d}:{minute:02d}")
             if state["sleep_calls"] == 2:
-                lock_cleared = not Path("/var/log/s3-archiver/archive.lock").exists()
+                lock_cleared = not (Path(os.environ["LOG_DIR"]) / "archive.lock").exists()
                 events.append(f"lock-cleared:{lock_cleared}")
             if state["sleep_calls"] == 3:
                 print(json.dumps({"events": events}, sort_keys=True))
@@ -79,6 +82,8 @@ def test_compose_scheduler_reports_timeout_then_retries_on_next_tick(
         "APP_ENV_FILE=/dev/null",
         "-e",
         "ARCHIVER_RUN_TIMEOUT=1s",
+        "-e",
+        f"LOG_DIR={log_dir}",
         "--entrypoint",
         "sh",
         "app",

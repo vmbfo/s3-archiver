@@ -97,6 +97,10 @@ def localstack_test_env(
     return env
 
 
+def compose_runtime_log_dir(bucket_pair: LocalstackBucketPair) -> str:
+    return f"/var/log/s3-archiver/{bucket_pair.source}"
+
+
 def write_localstack_env_file(
     tmp_path: Path,
     bucket_pair: LocalstackBucketPair,

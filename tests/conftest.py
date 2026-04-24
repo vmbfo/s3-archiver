@@ -25,6 +25,7 @@ from tests.integration.localstack_harness import (
     LocalstackS3AdminClient,
     assert_localstack_test_target,
     bucket_pair_from_env,
+    compose_runtime_log_dir,
     delete_localstack_bucket,
     ensure_localstack_bucket,
     localstack_test_env,
@@ -70,7 +71,7 @@ def compose_env(tmp_path: Path) -> dict[str, str]:
             tmp_path,
             bucket_pair,
             endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-            log_dir="/var/log/s3-archiver",
+            log_dir=compose_runtime_log_dir(bucket_pair),
         )
     )
     env["LOCALSTACK_S3_URL"] = localstack_host_endpoint
