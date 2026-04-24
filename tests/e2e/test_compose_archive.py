@@ -86,7 +86,7 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
     run_env["APP_ENV_FILE"] = str(env_file)
 
     result = _run_compose(run_env, "run", "--rm", "app", "archive")
-    payload = _archive_payload(result.stdout)
+    payload = cast(ArchivePayload, _payload(result.stdout))
 
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == bucket_pair.source
@@ -214,7 +214,7 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         "-lc",
         probe,
     )
-    payload = _probe_payload(result.stdout)
+    payload = _payload(result.stdout)
 
     assert payload["source_endpoint"] == "http://localstack:4566"
     assert payload["destination_endpoint"] == "http://localstack-alt:4566"
@@ -224,13 +224,8 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
 
 
 def _case_source_prefix(cleanup_value: str | None) -> str:
-    return f"compose-archive/{_case_name(cleanup_value)}"
-
-
-def _case_name(cleanup_value: str | None) -> str:
-    if cleanup_value is None:
-        return "unset"
-    return cleanup_value
+    name = "unset" if cleanup_value is None else cleanup_value
+    return f"compose-archive/{name}"
 
 
 def _case_source_keys(prefix: str) -> set[str]:
@@ -289,11 +284,6 @@ def _run_compose(
     )
 
 
-def _archive_payload(output: str) -> ArchivePayload:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(ArchivePayload, json.loads(json_line))
-
-
 def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
     return {
         name: phase["status"]
@@ -302,6 +292,6 @@ def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
     }
 
 
-def _probe_payload(output: str) -> dict[str, object]:
+def _payload(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
