@@ -93,6 +93,9 @@ VersioningState = Literal["Disabled", "Enabled", "Suspended"]
 S3_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_SIMPLE_COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
 DEFAULT_STREAMING_LIMIT_BYTES = 50 * 1024 * 1024 * 1024
+LOCALSTACK_CONNECT_TIMEOUT_SECONDS = 1
+LOCALSTACK_READ_TIMEOUT_SECONDS = 5
+LOCALSTACK_MAX_ATTEMPTS = 2
 
 
 def _empty_checksums() -> dict[str, str]:
@@ -178,13 +181,29 @@ def build_s3_client(settings: AppSettings | S3LocationSettings) -> S3Client:
     addressing_style: Literal["path", "virtual"] = (
         "path" if location.addressing_style.value == "path" else "virtual"
     )
+    config = _build_client_config(addressing_style, location)
     return client_factory(
         service_name=service_name,
         endpoint_url=location.resolved_endpoint_url(),
-        config=Config(
+        config=config,
+    )
+
+
+def _build_client_config(
+    addressing_style: Literal["path", "virtual"],
+    location: S3LocationSettings,
+) -> Config:
+    if location.provider.value == "localstack":
+        return Config(
             signature_version="s3v4",
             s3={"addressing_style": addressing_style},
-        ),
+            connect_timeout=LOCALSTACK_CONNECT_TIMEOUT_SECONDS,
+            read_timeout=LOCALSTACK_READ_TIMEOUT_SECONDS,
+            retries={"max_attempts": LOCALSTACK_MAX_ATTEMPTS, "mode": "standard"},
+        )
+    return Config(
+        signature_version="s3v4",
+        s3={"addressing_style": addressing_style},
     )
 
 

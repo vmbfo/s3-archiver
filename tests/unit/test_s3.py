@@ -70,15 +70,24 @@ class RecordingConfig:
 
     signature_version: str
     s3: dict[str, str]
+    connect_timeout: int | None
+    read_timeout: int | None
+    retries: dict[str, object] | None
 
     def __init__(
         self,
         *,
         signature_version: str,
         s3: dict[str, str],
+        connect_timeout: int | None = None,
+        read_timeout: int | None = None,
+        retries: dict[str, object] | None = None,
     ) -> None:
         self.signature_version = signature_version
         self.s3 = s3
+        self.connect_timeout = connect_timeout
+        self.read_timeout = read_timeout
+        self.retries = retries
 
 
 @pytest.mark.unit()
@@ -173,6 +182,46 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     config = cast(RecordingConfig, session.client_call["config"])
     assert session.client_call["endpoint_url"] == "https://override.example.invalid"
     assert config.s3 == {"addressing_style": "virtual"}
+
+
+@pytest.mark.unit()
+def test_build_s3_client_uses_short_localstack_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    base_env["S3_SOURCE_PROVIDER"] = "localstack"
+    base_env["S3_SOURCE_REGION"] = "us-east-1"
+    base_env["S3_SOURCE_BUCKET"] = "source-bucket"
+    base_env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    settings = AppSettings.from_env(base_env)
+    sessions: list[RecordingSession] = []
+
+    def fake_session(
+        *,
+        aws_access_key_id: str,
+        aws_secret_access_key: str,
+        region_name: str,
+    ) -> RecordingSession:
+        session = RecordingSession(
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=region_name,
+        )
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(s3_module, "Session", fake_session)
+    monkeypatch.setattr(s3_module, "Config", RecordingConfig)
+
+    _ = s3_module.build_s3_client(settings)
+
+    config = cast(RecordingConfig, sessions[0].client_call["config"])
+    assert config.connect_timeout == s3_module.LOCALSTACK_CONNECT_TIMEOUT_SECONDS
+    assert config.read_timeout == s3_module.LOCALSTACK_READ_TIMEOUT_SECONDS
+    assert config.retries == {
+        "max_attempts": s3_module.LOCALSTACK_MAX_ATTEMPTS,
+        "mode": "standard",
+    }
 
 
 @pytest.mark.unit()
