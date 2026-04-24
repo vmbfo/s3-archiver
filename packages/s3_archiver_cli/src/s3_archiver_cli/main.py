@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 from uuid import uuid4
@@ -30,28 +30,20 @@ from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli import error_logging as _error_logging
+from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
+from s3_archiver_cli.cleanup_preview import run_cleanup_preview as _run_cleanup_preview
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
-from s3_archiver_cli.error_logging import (
-    archive_failure_payload as _archive_failure_payload,
-)
-from s3_archiver_cli.error_logging import (
-    archive_result_payload as _archive_result_payload,
-)
-from s3_archiver_cli.error_logging import (
-    error_payload as _error_payload,
-)
-from s3_archiver_cli.error_logging import (
-    log_error_payload as _log_error_payload,
-)
-from s3_archiver_cli.scheduled_archive import (
-    reconcile_archive_lock,
-    run_archive_subprocess,
-    run_scheduled_archive,
-)
+from s3_archiver_cli.visual_demo import run_visual_demo as _run_visual_demo
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+
+_log_error_payload = _error_logging.log_error_payload
+reconcile_archive_lock = _scheduled_archive.reconcile_archive_lock
+run_archive_subprocess = _scheduled_archive.run_archive_subprocess
+run_scheduled_archive = _scheduled_archive.run_scheduled_archive
 
 
 app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True)
@@ -94,6 +86,8 @@ def archive() -> None:
         settings, log_file = _load_settings_and_log_file()
     except S3ArchiverError as exc:
         _raise_cli_error(exc, settings)
+    if _archive_lock_path(settings).exists():
+        _ = reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
     exit_code = _run_archive_command(settings, log_file)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
@@ -103,13 +97,33 @@ def archive() -> None:
 def archive_once() -> None:
     """Run one archive workflow invocation."""
 
-    settings: AppSettings | None = None
-    try:
-        settings, log_file = _load_settings_and_log_file()
-        payload = _run_archive(settings, log_file)
-    except S3ArchiverError as exc:
-        _raise_cli_error(exc, settings)
+    payload = _run_payload_command(_run_archive)
     if not _emit_archive_payload(payload):
+        raise typer.Exit(code=1)
+
+
+@app.command("cleanup-preview")
+def cleanup_preview() -> None:
+    """Print and persist the cleanup manifest without deleting any source objects."""
+
+    payload = _run_payload_command(_run_cleanup_preview)
+    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@app.command()
+def demo() -> None:
+    """Run a human-readable archive walkthrough backed by real S3 state."""
+
+    payload = _run_payload_command(
+        lambda settings, log_file: _run_visual_demo(
+            settings,
+            log_file,
+            archive_runner=_run_archive,
+            cleanup_preview_runner=_run_cleanup_preview,
+            emit=typer.echo,
+        )
+    )
+    if payload.get("status") != "ok":
         raise typer.Exit(code=1)
 
 
@@ -155,13 +169,24 @@ def _load_settings_and_log_file() -> tuple[AppSettings, Path]:
     return settings, configure_logging(settings)
 
 
+def _run_payload_command(
+    command: Callable[[AppSettings, Path], dict[str, JsonValue]],
+) -> dict[str, JsonValue]:
+    settings: AppSettings | None = None
+    try:
+        settings, log_file = _load_settings_and_log_file()
+        return command(settings, log_file)
+    except S3ArchiverError as exc:
+        _raise_cli_error(exc, settings)
+
+
 def _raise_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> NoReturn:
     _emit_cli_error(error, settings)
     raise typer.Exit(code=_exit_code_for_error(error)) from error
 
 
 def _emit_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> None:
-    payload = _error_payload(error, settings)
+    payload = _error_logging.error_payload(error, settings)
     _log_error_payload(payload, error)
     typer.echo(json.dumps(payload, sort_keys=True), err=True)
 
@@ -213,8 +238,8 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         if release_lock:
             run_lock.release(run_id=locked_run_id)
     if result.ok:
-        return _archive_result_payload("ok", result, settings, log_file)
-    return _archive_failure_payload(result, settings, log_file)
+        return _error_logging.archive_result_payload("ok", result, settings, log_file)
+    return _error_logging.archive_failure_payload(result, settings, log_file)
 
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
@@ -254,27 +279,14 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:
-    hour_text, separator, minute_text = value.partition(":")
-    if separator != ":" or not hour_text.isdigit() or not minute_text.isdigit():
-        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
-    hour = int(hour_text)
-    minute = int(minute_text)
-    if hour not in range(24) or minute not in range(60):
-        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
-    return hour, minute
+    return _scheduled_archive.parse_daily_at_utc(value)
 
 
 def _sleep_until_next_daily_tick(hour: int, minute: int) -> None:
-    now = datetime.now(tz=UTC)
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    logging.getLogger("s3_archiver.archive").info(
-        "archive schedule waiting for next tick",
-        extra={
-            "event": "archive.schedule.waiting",
-            "scheduled_at_utc": target.isoformat(),
-            "sleep_seconds": max(int((target - now).total_seconds()), 0),
-        },
+    _scheduled_archive.sleep_until_next_daily_tick(
+        hour,
+        minute,
+        now=lambda: datetime.now(tz=UTC),
+        logger=logging.getLogger("s3_archiver.archive"),
+        sleep=time.sleep,
     )
-    time.sleep(max((target - now).total_seconds(), 0.0))

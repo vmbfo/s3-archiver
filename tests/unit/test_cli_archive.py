@@ -23,25 +23,38 @@ RUNNER = CliRunner()
 def test_archive_command_uses_timeout_enforced_wrapper(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
+    tmp_path: Path,
 ) -> None:
+    base_env["LOG_DIR"] = str(tmp_path / "logs")
     monkeypatch.setattr(os, "environ", base_env)
     recorded_logs: list[Path] = []
+    reconciled: list[AppSettings] = []
 
     def configure(_: AppSettings) -> Path:
         return Path("/tmp/s3-archiver.log")
+
+    def reconcile(settings: AppSettings, **_kwargs: object) -> bool:
+        reconciled.append(settings)
+        return True
 
     def run_archive_command(settings: AppSettings, log_file: Path) -> int:
         assert settings.source.bucket == "archive-bucket"
         recorded_logs.append(log_file)
         return 0
 
+    lock_path = Path(base_env["LOG_DIR"]) / "archive.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _ = lock_path.write_text("{}", encoding="utf-8")
+
     monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "reconcile_archive_lock", reconcile)
     monkeypatch.setattr(cli_module, "_run_archive_command", run_archive_command)
 
     result = RUNNER.invoke(cli_module.app, ["archive"])
 
     assert result.exit_code == 0
     assert recorded_logs == [Path("/tmp/s3-archiver.log")]
+    assert len(reconciled) == 1
 
 
 @pytest.mark.unit()

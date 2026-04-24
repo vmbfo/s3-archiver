@@ -6,9 +6,11 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 from uuid import uuid4
 
 import typer
@@ -23,6 +25,14 @@ type RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 type Echo = Callable[[str], None]
 
 
+class Logger(Protocol):
+    """Minimal logger protocol for scheduler wait reporting."""
+
+    def info(self, message: str, *, extra: Mapping[str, object]) -> object:
+        """Record one structured info event."""
+        ...
+
+
 def archive_child_command() -> list[str]:
     """Return the in-process archive child command used by wrappers."""
 
@@ -33,6 +43,44 @@ def scheduled_archive_command() -> list[str]:
     """Return the archive command used by the scheduler."""
 
     return archive_child_command()
+
+
+def parse_daily_at_utc(value: str) -> tuple[int, int]:
+    """Parse ``HH:MM`` scheduler input."""
+
+    hour_text, separator, minute_text = value.partition(":")
+    if separator != ":" or not hour_text.isdigit() or not minute_text.isdigit():
+        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
+    hour, minute = int(hour_text), int(minute_text)
+    if hour >= 24 or minute >= 60:
+        raise typer.BadParameter("ARCHIVER_SCHEDULE_UTC must look like HH:MM")
+    return hour, minute
+
+
+def sleep_until_next_daily_tick(
+    hour: int,
+    minute: int,
+    *,
+    now: Callable[[], datetime],
+    logger: Logger,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Sleep until the next UTC daily schedule tick."""
+
+    current = now()
+    target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= current:
+        target += timedelta(days=1)
+    sleep_seconds = max((target - current).total_seconds(), 0.0)
+    _ = logger.info(
+        "archive schedule waiting for next tick",
+        extra={
+            "event": "archive.schedule.waiting",
+            "scheduled_at_utc": target.isoformat(),
+            "sleep_seconds": max(int(sleep_seconds), 0),
+        },
+    )
+    _ = sleep(sleep_seconds)
 
 
 def run_archive_subprocess(
