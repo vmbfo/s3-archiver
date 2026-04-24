@@ -79,7 +79,7 @@ def run_timestamp_seed_helper(
         days=days,
         seed_now=seed_now,
     )
-    rows = []
+    rows: list[str] = []
     for day in days:
         key = f"{prefix}/age-{day}-days.txt"
         head = _head_object_with_retry(client, settings.bucket, key)

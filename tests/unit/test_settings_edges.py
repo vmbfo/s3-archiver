@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 import s3_archiver_core.settings as settings_module
@@ -202,8 +204,12 @@ def test_load_s3_location_returns_none_when_required_bucket_is_missing(tmp_path:
     env = _dual_env(tmp_path)
     _ = env.pop("S3_SOURCE_BUCKET")
     decoder = EnvDecoder(env)
+    load_s3_location = cast(
+        Callable[[EnvDecoder, str], object | None],
+        getattr(settings_module, "_load_s3_location"),
+    )
 
-    location = settings_module._load_s3_location(decoder, "SOURCE")
+    location = load_s3_location(decoder, "SOURCE")
 
     assert location is None
     with pytest.raises(ConfigError, match="S3_SOURCE_BUCKET is required"):

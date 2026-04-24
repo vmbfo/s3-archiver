@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry, build_archive_manifest
@@ -86,10 +87,12 @@ def _cleanup_preview_payload(
 
 def _write_cleanup_preview_file(payload: dict[str, JsonValue], temp_dir: Path) -> None:
     preview_path = temp_dir / f"{_PREVIEW_PREFIX}{uuid4().hex}.json"
-    preview = dict(payload["cleanup_preview"])
+    preview = cast(dict[str, JsonValue], payload["cleanup_preview"]).copy()
     preview["manifest_file"] = str(preview_path)
     payload["cleanup_preview"] = preview
-    preview_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _ = preview_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _manifest_entry_payload(entry: ManifestEntry) -> dict[str, JsonValue]:

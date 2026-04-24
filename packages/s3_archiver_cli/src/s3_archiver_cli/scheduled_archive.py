@@ -28,7 +28,7 @@ type Echo = Callable[[str], None]
 class Logger(Protocol):
     """Minimal logger protocol for scheduler wait reporting."""
 
-    def info(self, message: str, *, extra: Mapping[str, object]) -> object:
+    def info(self, msg: object, *args: object, extra: Mapping[str, object] | None = None) -> object:
         """Record one structured info event."""
         ...
 

@@ -10,7 +10,7 @@ from typing import Literal, cast
 import pytest
 import s3_archiver_core.s3 as s3_module
 from botocore.response import StreamingBody
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.settings import AppSettings, S3AddressingStyle, S3LocationSettings, S3Provider
 
 from tests.unit.settings_fakes import dual_env
 
@@ -194,10 +194,21 @@ def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
 
 @pytest.mark.unit()
 def test_transfer_profile_for_location_rejects_unknown_provider() -> None:
-    location = cast(
-        object,
-        SimpleNamespace(provider=SimpleNamespace(value="unsupported-provider")),
+    fake_provider = cast(
+        S3Provider,
+        cast(object, SimpleNamespace(value="unsupported-provider")),
+    )
+    location = S3LocationSettings(
+        provider=fake_provider,
+        access_key_id="access",
+        secret_access_key="secret",
+        region="eu-frankfurt-1",
+        bucket="bucket",
+        namespace=None,
+        iam_user_ocid=None,
+        endpoint_url="http://localstack:4566",
+        addressing_style=S3AddressingStyle.PATH,
     )
 
     with pytest.raises(ValueError, match="unsupported provider"):
-        _ = s3_module.transfer_profile_for_location(cast(object, location))
+        _ = s3_module.transfer_profile_for_location(location)

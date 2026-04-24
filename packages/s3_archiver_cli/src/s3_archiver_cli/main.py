@@ -39,11 +39,14 @@ from s3_archiver_cli.visual_demo import run_visual_demo as _run_visual_demo
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+type ReconcileArchiveLock = Callable[..., bool]
+type RunArchiveSubprocess = Callable[..., int]
+type RunScheduledArchive = Callable[..., None]
 
 _log_error_payload = _error_logging.log_error_payload
-reconcile_archive_lock = _scheduled_archive.reconcile_archive_lock
-run_archive_subprocess = _scheduled_archive.run_archive_subprocess
-run_scheduled_archive = _scheduled_archive.run_scheduled_archive
+reconcile_archive_lock: ReconcileArchiveLock = _scheduled_archive.reconcile_archive_lock
+run_archive_subprocess: RunArchiveSubprocess = _scheduled_archive.run_archive_subprocess
+run_scheduled_archive: RunScheduledArchive = _scheduled_archive.run_scheduled_archive
 
 
 app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True)

@@ -13,7 +13,7 @@ import pytest
 import s3_archiver_cli.cleanup_preview as preview_module
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.errors import ArchiveRunError
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -23,6 +23,14 @@ RUNNER = CliRunner()
 
 class _PreviewPayload(dict[str, object]):
     pass
+
+
+def _ok_health_check(_settings: AppSettings, _log_file: Path) -> object:
+    return object()
+
+
+def _fake_build_client(_location: S3LocationSettings) -> object:
+    return object()
 
 
 @pytest.mark.unit()
@@ -78,6 +86,8 @@ def test_run_cleanup_preview_writes_manifest_file_and_ignores_disabled_cleanup(
     )
 
     class FakeArchiveBucket:
+        bucket: str
+
         def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
             self.bucket = bucket
 
@@ -90,8 +100,8 @@ def test_run_cleanup_preview_writes_manifest_file_and_ignores_disabled_cleanup(
                 _listed("archive/recent.txt", 59),
             )
 
-    monkeypatch.setattr(preview_module, "run_health_check", lambda *_args: object())
-    monkeypatch.setattr(preview_module, "build_s3_client", lambda _location: object())
+    monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
+    monkeypatch.setattr(preview_module, "build_s3_client", _fake_build_client)
     monkeypatch.setattr(preview_module, "S3ArchiveBucket", FakeArchiveBucket)
 
     payload = preview_module.run_cleanup_preview(
@@ -128,11 +138,11 @@ def test_run_cleanup_preview_re_raises_archiver_errors_during_manifest_build(
     base_env: dict[str, str],
 ) -> None:
     settings = AppSettings.from_env(base_env)
-    monkeypatch.setattr(
-        preview_module,
-        "run_health_check",
-        lambda *_args: (_ for _ in ()).throw(ArchiveRunError("health failed")),
-    )
+
+    def fail_health_check(_settings: AppSettings, _log_file: Path) -> object:
+        raise ArchiveRunError("health failed")
+
+    monkeypatch.setattr(preview_module, "run_health_check", fail_health_check)
 
     with pytest.raises(ArchiveRunError, match="health failed"):
         _ = preview_module.run_cleanup_preview(settings, settings.log_dir / "s3-archiver.log")
@@ -144,12 +154,12 @@ def test_run_cleanup_preview_wraps_unexpected_manifest_build_errors(
     base_env: dict[str, str],
 ) -> None:
     settings = AppSettings.from_env(base_env)
-    monkeypatch.setattr(preview_module, "run_health_check", lambda *_args: object())
-    monkeypatch.setattr(
-        preview_module,
-        "build_s3_client",
-        lambda _location: (_ for _ in ()).throw(RuntimeError("boom")),
-    )
+    monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
+
+    def fail_build_client(_location: S3LocationSettings) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(preview_module, "build_s3_client", fail_build_client)
 
     with pytest.raises(ArchiveRunError, match="boom"):
         _ = preview_module.run_cleanup_preview(settings, settings.log_dir / "s3-archiver.log")
@@ -176,6 +186,8 @@ def test_run_cleanup_preview_re_raises_archiver_errors_during_manifest_write(
     )
 
     class FakeArchiveBucket:
+        bucket: str
+
         def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
             self.bucket = bucket
 
@@ -185,14 +197,13 @@ def test_run_cleanup_preview_re_raises_archiver_errors_during_manifest_write(
         def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
             return (_listed("archive/old.txt", 61),)
 
-    monkeypatch.setattr(preview_module, "run_health_check", lambda *_args: object())
-    monkeypatch.setattr(preview_module, "build_s3_client", lambda _location: object())
+    def fail_write_preview(_payload: dict[str, preview_module.JsonValue], _temp_dir: Path) -> None:
+        raise ArchiveRunError("write failed")
+
+    monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
+    monkeypatch.setattr(preview_module, "build_s3_client", _fake_build_client)
     monkeypatch.setattr(preview_module, "S3ArchiveBucket", FakeArchiveBucket)
-    monkeypatch.setattr(
-        preview_module,
-        "_write_cleanup_preview_file",
-        lambda *_args: (_ for _ in ()).throw(ArchiveRunError("write failed")),
-    )
+    monkeypatch.setattr(preview_module, "_write_cleanup_preview_file", fail_write_preview)
 
     with pytest.raises(ArchiveRunError, match="write failed"):
         _ = preview_module.run_cleanup_preview(
@@ -223,6 +234,8 @@ def test_run_cleanup_preview_wraps_unexpected_manifest_write_errors(
     )
 
     class FakeArchiveBucket:
+        bucket: str
+
         def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
             self.bucket = bucket
 
@@ -232,14 +245,13 @@ def test_run_cleanup_preview_wraps_unexpected_manifest_write_errors(
         def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
             return (_listed("archive/old.txt", 61),)
 
-    monkeypatch.setattr(preview_module, "run_health_check", lambda *_args: object())
-    monkeypatch.setattr(preview_module, "build_s3_client", lambda _location: object())
+    def fail_write_preview(_payload: dict[str, preview_module.JsonValue], _temp_dir: Path) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
+    monkeypatch.setattr(preview_module, "build_s3_client", _fake_build_client)
     monkeypatch.setattr(preview_module, "S3ArchiveBucket", FakeArchiveBucket)
-    monkeypatch.setattr(
-        preview_module,
-        "_write_cleanup_preview_file",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("disk full")),
-    )
+    monkeypatch.setattr(preview_module, "_write_cleanup_preview_file", fail_write_preview)
 
     with pytest.raises(ArchiveRunError, match="disk full"):
         _ = preview_module.run_cleanup_preview(
@@ -250,5 +262,49 @@ def test_run_cleanup_preview_wraps_unexpected_manifest_write_errors(
 
 
 @pytest.mark.unit()
-def test_cleanup_preview_utc_now_returns_utc_datetime() -> None:
-    assert preview_module._utc_now().tzinfo is UTC
+def test_run_cleanup_preview_uses_default_utc_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    settings = AppSettings(
+        source=settings.source,
+        destination=settings.destination,
+        path_filters=settings.path_filters,
+        retention_days=60,
+        cleanup_enabled=False,
+        max_workers=settings.max_workers,
+        run_timeout=settings.run_timeout,
+        temp_dir=tmp_path / "runtime-temp",
+        log_level=settings.log_level,
+        log_dir=settings.log_dir,
+    )
+
+    class FrozenDateTime:
+        @staticmethod
+        def now(*, tz: object) -> datetime:
+            _ = tz
+            return datetime(2024, 4, 20, tzinfo=UTC)
+
+    class FakeArchiveBucket:
+        bucket: str
+
+        def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
+            self.bucket = bucket
+
+        def versioning_state(self) -> str:
+            return "Enabled"
+
+        def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
+            return (_listed("archive/old.txt", 61),)
+
+    monkeypatch.setattr(preview_module, "datetime", FrozenDateTime)
+    monkeypatch.setattr(preview_module, "run_health_check", _ok_health_check)
+    monkeypatch.setattr(preview_module, "build_s3_client", _fake_build_client)
+    monkeypatch.setattr(preview_module, "S3ArchiveBucket", FakeArchiveBucket)
+
+    payload = preview_module.run_cleanup_preview(settings, settings.log_dir / "s3-archiver.log")
+    preview = cast(dict[str, object], payload["cleanup_preview"])
+
+    assert preview["run_started_at_utc"] == "2024-04-20T00:00:00+00:00"

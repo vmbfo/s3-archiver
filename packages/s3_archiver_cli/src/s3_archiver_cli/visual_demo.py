@@ -37,7 +37,7 @@ def run_visual_demo(
     clock = _utc_now if now is None else now
     started = clock()
     prepare_runtime_temp_dir(settings.temp_dir)
-    health = run_health_check(settings, log_file).as_dict()
+    health = cast(dict[str, JsonValue], run_health_check(settings, log_file).as_dict())
     source = S3ArchiveBucket(
         build_s3_client(settings.source),
         settings.source.bucket,
@@ -84,7 +84,7 @@ def run_visual_demo(
         "log_file": str(log_file),
         "cleanup_enabled_in_settings": settings.cleanup_enabled,
         "run_started_at_utc": started.isoformat(),
-        "health": cast(dict[str, JsonValue], health),
+        "health": health,
         "archive_manifest": {
             "object_count": len(manifest.entries),
             "retention_cutoff_utc": manifest.retention_cutoff_utc.isoformat(),
@@ -116,7 +116,7 @@ def _emit_intro(emit: Emitter, settings: AppSettings, log_file: Path, started: d
     emit(f"run started at utc: {started.isoformat()}")
 
 
-def _emit_health(emit: Emitter, health: dict[str, object]) -> None:
+def _emit_health(emit: Emitter, health: dict[str, JsonValue]) -> None:
     emit("")
     emit("== Preflight ==")
     emit(f"status: {health['status']}")
@@ -127,23 +127,21 @@ def _emit_snapshot(emit: Emitter, title: str, snapshot: dict[str, JsonValue]) ->
     emit("")
     emit(f"== {title} ==")
     emit(
-        "source objects: "
-        f"{snapshot['source_object_count']} "
-        f"(versioning={snapshot['source_versioning_state']})"
+        f"source objects: {snapshot['source_object_count']} "
+        + f"(versioning={snapshot['source_versioning_state']})"
     )
     for row in cast(list[dict[str, JsonValue]], snapshot["source_objects"]):
         emit(
-            "SOURCE "
-            f"key={row['key']} "
-            f"size={row['size']} "
-            f"last_modified={row['last_modified_utc']} "
-            f"eligible={row['eligible_for_follow_up']} "
-            f"present_in_destination={row['present_in_destination']}"
+            f"SOURCE "
+            + f"key={row['key']} "
+            + f"size={row['size']} "
+            + f"last_modified={row['last_modified_utc']} "
+            + f"eligible={row['eligible_for_follow_up']} "
+            + f"present_in_destination={row['present_in_destination']}"
         )
     emit(
-        "destination objects: "
-        f"{snapshot['destination_object_count']} "
-        f"(versioning={snapshot['destination_versioning_state']})"
+        f"destination objects: {snapshot['destination_object_count']} "
+        + f"(versioning={snapshot['destination_versioning_state']})"
     )
     for row in cast(list[dict[str, JsonValue]], snapshot["destination_objects"]):
         emit(f"DEST   key={row['key']} size={row['size']} last_modified={row['last_modified_utc']}")
@@ -156,11 +154,11 @@ def _emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     emit(f"eligible object count: {len(manifest.entries)}")
     for entry in manifest.entries:
         emit(
-            "COPY   "
-            f"key={entry.key} "
-            f"size={entry.size} "
-            f"last_modified={entry.last_modified.isoformat()} "
-            f"version_id={entry.version_id}"
+            f"COPY   "
+            + f"key={entry.key} "
+            + f"size={entry.size} "
+            + f"last_modified={entry.last_modified.isoformat()} "
+            + f"version_id={entry.version_id}"
         )
 
 
@@ -182,11 +180,11 @@ def _emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) 
     emit(f"would delete object count: {cleanup_preview['object_count']}")
     for row in cast(list[dict[str, JsonValue]], cleanup_preview["entries"]):
         emit(
-            "DELETE "
-            f"key={row['key']} "
-            f"size={row['size']} "
-            f"last_modified={row['last_modified_utc']} "
-            f"version_id={row['version_id']}"
+            f"DELETE "
+            + f"key={row['key']} "
+            + f"size={row['size']} "
+            + f"last_modified={row['last_modified_utc']} "
+            + f"version_id={row['version_id']}"
         )
 
 
@@ -285,7 +283,7 @@ def _snapshot_bucket_state(snapshot: dict[str, JsonValue]) -> dict[str, JsonValu
         "source_objects": [
             {
                 key: value
-                for key, value in cast(dict[str, JsonValue], row).items()
+                for key, value in row.items()
                 if key != "eligible_for_follow_up"
             }
             for row in cast(list[dict[str, JsonValue]], snapshot["source_objects"])

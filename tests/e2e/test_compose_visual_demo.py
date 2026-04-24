@@ -67,8 +67,10 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert any(f"COPY   key={key}" in result.stdout for key in source_keys)
     assert any(f"DELETE key={key}" in result.stdout for key in source_keys)
     assert payload["status"] == "ok"
-    assert payload["archive_manifest"]["object_count"] == len(source_keys)
-    assert payload["cleanup_preview"]["object_count"] == len(source_keys)
+    archive_manifest = cast(dict[str, object], payload["archive_manifest"])
+    cleanup_preview = cast(dict[str, object], payload["cleanup_preview"])
+    assert archive_manifest["object_count"] == len(source_keys)
+    assert cleanup_preview["object_count"] == len(source_keys)
     assert payload["cleanup_preview_left_bucket_state_unchanged"] is True
     assert listed_keys(destination_client, bucket_pair.destination) == source_keys
     assert listed_keys(source_client, bucket_pair.source) == source_keys
