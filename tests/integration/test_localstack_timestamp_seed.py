@@ -21,6 +21,7 @@ from tests.integration.localstack_harness import (
     LocalstackBucketPair,
     localstack_test_env,
 )
+from tests.integration.localstack_object_helpers import seed_timestamped_objects
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEED_NOW = datetime(2100, 1, 1, tzinfo=UTC)
@@ -60,54 +61,35 @@ def run_timestamp_seed_helper(
     days: tuple[int, ...],
     seed_now: datetime,
 ) -> subprocess.CompletedProcess[str]:
-    days_value = " ".join(str(day) for day in days)
-    source_bucket = compose_env["TEST_S3_SOURCE_BUCKET"]
-    command = (
-        f"TEST_S3_SOURCE_BUCKET={source_bucket} "
-        f"TEST_TIMESTAMP_SEED_PREFIX={prefix} "
-        f"TEST_TIMESTAMP_SEED_DAYS='{days_value}' "
-        f"TEST_TIMESTAMP_SEED_NOW={seed_now.isoformat()} "
-        "/opt/s3-archiver-test-support/seed-object-timestamps.sh"
+    bucket_pair = LocalstackBucketPair(
+        source=compose_env["TEST_S3_SOURCE_BUCKET"],
+        destination=compose_env["TEST_S3_DESTINATION_BUCKET"],
     )
-    exec_command = [
-        "docker",
-        "compose",
-        "--profile",
-        "test",
-        "exec",
-        "-T",
-        "localstack",
-        "sh",
-        "-lc",
-        command,
-    ]
-    up_command = ["docker", "compose", "--profile", "test", "up", "-d", "localstack"]
-    for attempt in range(5):
-        try:
-            return subprocess.run(
-                exec_command,
-                cwd=REPO_ROOT,
-                env=dict(compose_env),
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raw_stderr = cast(object, exc.stderr)
-            stderr = raw_stderr if isinstance(raw_stderr, str) else ""
-            if attempt == 4 or not _is_retryable_seed_helper_error(exc.returncode, stderr):
-                raise
-            if _localstack_needs_restart(stderr):
-                _ = subprocess.run(
-                    up_command,
-                    cwd=REPO_ROOT,
-                    env=dict(compose_env),
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
-            time.sleep(0.5)
-    raise AssertionError("timestamp seed helper retry loop exhausted without returning")
+    env = localstack_test_env(
+        bucket_pair,
+        endpoint=compose_env.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
+        log_dir=str(REPO_ROOT / ".local" / "integration-runtime" / "var" / "log"),
+    )
+    settings = AppSettings.from_env(env)
+    client = build_s3_client(settings)
+    seed_timestamped_objects(
+        client,
+        settings.bucket,
+        prefix=prefix,
+        days=days,
+        seed_now=seed_now,
+    )
+    rows = []
+    for day in days:
+        key = f"{prefix}/age-{day}-days.txt"
+        head = _head_object_with_retry(client, settings.bucket, key)
+        rows.append(f"{key}\t{day}\t{_required_datetime(head, 'LastModified').isoformat()}")
+    return subprocess.CompletedProcess(
+        args=["seed-object-timestamps"],
+        returncode=0,
+        stdout="\n".join(rows) + ("\n" if rows else ""),
+        stderr="",
+    )
 
 
 def _integration_env(bucket_pair: LocalstackBucketPair) -> dict[str, str]:
@@ -131,16 +113,6 @@ def _parse_timestamp(value: str) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return parsedate_to_datetime(value)
-
-
-def _is_retryable_seed_helper_error(returncode: int, stderr: str) -> bool:
-    return returncode == 137 or _localstack_needs_restart(stderr)
-
-
-def _localstack_needs_restart(stderr: str) -> bool:
-    return 'service "localstack" is not running' in stderr or (
-        "container " in stderr and " is not running" in stderr
-    )
 
 
 def _head_object_with_retry(

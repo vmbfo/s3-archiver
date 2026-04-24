@@ -16,6 +16,9 @@ _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",
     "Could not connect to the endpoint URL",
 )
+CANONICAL_RETENTION_DATASET_DAYS = tuple(range(366))
+_WRITE_RETRY_ATTEMPTS = 20
+_WRITE_RETRY_DELAY_SECONDS = 1.0
 
 
 def localstack_s3_client(
@@ -36,21 +39,29 @@ def put_test_object(
     **kwargs: object,
 ) -> dict[str, object]:
     response = dict(
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=f"payload for {key}\n".encode() if body is None else body,
-            Metadata=dict(metadata or {}),
-            **kwargs,
+        _retry_localstack_call(
+            lambda: client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=f"payload for {key}\n".encode() if body is None else body,
+                Metadata=dict(metadata or {}),
+                **kwargs,
+            ),
+            attempts=_WRITE_RETRY_ATTEMPTS,
+            delay_seconds=_WRITE_RETRY_DELAY_SECONDS,
         )
     )
     if tags:
-        _ = client.put_object_tagging(
-            Bucket=bucket,
-            Key=key,
-            Tagging={
-                "TagSet": [{"Key": tag, "Value": value} for tag, value in sorted(tags.items())]
-            },
+        _ = _retry_localstack_call(
+            lambda: client.put_object_tagging(
+                Bucket=bucket,
+                Key=key,
+                Tagging={
+                    "TagSet": [{"Key": tag, "Value": value} for tag, value in sorted(tags.items())]
+                },
+            ),
+            attempts=_WRITE_RETRY_ATTEMPTS,
+            delay_seconds=_WRITE_RETRY_DELAY_SECONDS,
         )
     return response
 
@@ -100,6 +111,36 @@ def seed_timestamped_objects(
                 "s3-archiver-test-last-modified": target.isoformat(),
             },
         )
+
+
+def seed_canonical_retention_dataset(
+    client: S3Client,
+    bucket: str,
+    *,
+    prefix: str,
+    seed_now: datetime,
+) -> None:
+    seed_timestamped_objects(
+        client,
+        bucket,
+        prefix=prefix,
+        days=CANONICAL_RETENTION_DATASET_DAYS,
+        seed_now=seed_now,
+    )
+
+
+def retention_dataset_keys(
+    prefix: str, *, days: tuple[int, ...] = CANONICAL_RETENTION_DATASET_DAYS
+) -> set[str]:
+    return {f"{prefix}/age-{day}-days.txt" for day in days}
+
+
+def eligible_retention_days(
+    retention_days: int,
+    *,
+    days: tuple[int, ...] = CANONICAL_RETENTION_DATASET_DAYS,
+) -> set[int]:
+    return {day for day in days if day > retention_days}
 
 
 def _object_entries(value: object) -> list[dict[str, object]]:

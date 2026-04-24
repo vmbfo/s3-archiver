@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from s3_archiver_core.archive import run_archive
+from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_s3 import S3ArchiveBucket
+from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.settings import AppSettings
 
-from tests.integration.archive_cli_test_support import ArchiveCommandPayload
+from tests.integration.archive_cli_test_support import (
+    FROZEN_ARCHIVE_RUN_STARTED_AT,
+    ArchiveCommandPayload,
+)
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
@@ -145,6 +154,45 @@ def test_archive_command_retention_matrix_uses_seeded_last_modified_boundary(
     assert listed_keys(source_client, localstack_bucket_pair.source) == {
         f"{prefix}/age-{day}-days.txt" for day in {59, 60, 61}
     }
+
+
+@pytest.mark.integration()
+def test_archive_core_uses_temp_file_backed_transfer_against_localstack(
+    tmp_path: Path,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _archive_env(tmp_path, localstack_bucket_pair)
+    settings = AppSettings.from_env(env)
+    source_client = _client(env, "source")
+    destination_client = _client(env, "destination")
+    key = "temp-file-backed/runtime.txt"
+    runtime_temp_dir = tmp_path / "runtime-temp"
+    _ = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"temp-file\n")
+    options = replace(
+        ArchiveOptions.from_settings(settings),
+        transfer_capabilities=S3TransferCapabilities(
+            native_copy=False,
+            multipart_copy=False,
+            streaming_upload=True,
+            temp_file_backed=True,
+            streaming_limit_bytes=1,
+        ),
+    )
+    decisions: list[str] = []
+
+    result = run_archive(
+        S3ArchiveBucket(source_client, localstack_bucket_pair.source, runtime_temp_dir),
+        S3ArchiveBucket(destination_client, localstack_bucket_pair.destination, runtime_temp_dir),
+        options,
+        run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
+        debug_logger=lambda _entry, strategy: decisions.append(strategy),
+    )
+
+    assert result.ok is True
+    assert decisions == ["temp_file_backed"]
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {key}
+    assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
+    assert list(runtime_temp_dir.iterdir()) == []
 
 
 def _phase_statuses(payload: ArchiveCommandPayload) -> dict[str, str]:

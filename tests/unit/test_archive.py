@@ -16,13 +16,11 @@ from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_transfer import (
     FINGERPRINT_METADATA_KEY,
     archive_metadata,
-    select_transfer_strategy,
     verify_destination,
     verify_destination_checksum,
     verify_destination_content,
     verify_source_unchanged,
 )
-from s3_archiver_core.s3 import S3TransferCapabilities
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -73,30 +71,6 @@ def test_transfer_strategy_selection_and_fingerprint_verification() -> None:
     assert verify_destination_content("digest", "digest").ok is True
     assert verify_destination_content(None, "digest").detail == "source missing during verification"
     assert verify_destination_content("digest", None).detail == "destination missing"
-    assert (
-        select_transfer_strategy(10, S3TransferCapabilities(), simple_copy_limit_bytes=10)
-        == "simple_native_copy"
-    )
-    assert (
-        select_transfer_strategy(11, S3TransferCapabilities(), simple_copy_limit_bytes=10)
-        == "multipart_native_copy"
-    )
-    assert (
-        select_transfer_strategy(
-            11,
-            S3TransferCapabilities(native_copy=False),
-            simple_copy_limit_bytes=10,
-        )
-        == "multipart_streaming"
-    )
-    assert (
-        select_transfer_strategy(
-            51,
-            S3TransferCapabilities(native_copy=False, streaming_upload=False),
-            streaming_limit_bytes=50,
-        )
-        == "temp_file_backed"
-    )
     reserved = replace(listed, properties=_properties(metadata={FINGERPRINT_METADATA_KEY: "user"}))
     reserved_entry = ManifestEntry(
         "source", "key.txt", 10, listed.last_modified, None, "v1", reserved

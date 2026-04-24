@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, cast
 
 import pytest
 import s3_archiver_core.s3 as s3_module
 from botocore.response import StreamingBody
 from s3_archiver_core.settings import AppSettings
+
+from tests.unit.settings_fakes import dual_env
 
 
 class FakeS3Client:
@@ -169,3 +173,31 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     config = cast(RecordingConfig, session.client_call["config"])
     assert session.client_call["endpoint_url"] == "https://override.example.invalid"
     assert config.s3 == {"addressing_style": "virtual"}
+
+
+@pytest.mark.unit()
+def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
+    tmp_path: Path,
+) -> None:
+    settings = AppSettings.from_env(dual_env(tmp_path))
+
+    capabilities = s3_module.transfer_capabilities_for_locations(
+        settings.source,
+        settings.destination,
+    )
+
+    assert capabilities.native_copy is False
+    assert capabilities.multipart_copy is False
+    assert capabilities.streaming_upload is True
+    assert capabilities.temp_file_backed is True
+
+
+@pytest.mark.unit()
+def test_transfer_profile_for_location_rejects_unknown_provider() -> None:
+    location = cast(
+        object,
+        SimpleNamespace(provider=SimpleNamespace(value="unsupported-provider")),
+    )
+
+    with pytest.raises(ValueError, match="unsupported provider"):
+        _ = s3_module.transfer_profile_for_location(cast(object, location))

@@ -81,6 +81,16 @@ def test_options_enable_native_copy_for_same_credentials_on_same_endpoint(tmp_pa
 
 
 @pytest.mark.unit()
+def test_options_disable_native_copy_for_cross_provider_pair(tmp_path: Path) -> None:
+    options = ArchiveOptions.from_settings(AppSettings.from_env(dual_env(tmp_path)))
+
+    assert options.transfer_capabilities.native_copy is False
+    assert options.transfer_capabilities.multipart_copy is False
+    assert options.transfer_capabilities.streaming_upload is True
+    assert options.transfer_capabilities.temp_file_backed is True
+
+
+@pytest.mark.unit()
 def test_options_preserve_path_filter_mode_from_settings(tmp_path: Path) -> None:
     whitelist_env = dual_env(tmp_path)
     whitelist_env["S3_SOURCE_PATH_WHITELIST_ENABLED"] = "true"

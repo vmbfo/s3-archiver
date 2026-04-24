@@ -7,13 +7,15 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from s3_archiver_core._settings_parse import LOCALSTACK_ENDPOINT_HOSTS, EnvDecoder
 from s3_archiver_core._settings_parse import normalize_endpoint_url as _normalize_endpoint_url
-from s3_archiver_core._settings_parse import optional_env as _optional
-from s3_archiver_core._settings_parse import parse_bool as _parse_bool
-from s3_archiver_core._settings_parse import parse_int as _parse_int
-from s3_archiver_core._settings_parse import parse_runtime_duration as _parse_duration
-from s3_archiver_core._settings_parse import parse_string_array as _parse_string_array
-from s3_archiver_core._settings_parse import require_env as _require
+from s3_archiver_core._settings_parse import normalize_endpoint_url_result as _endpoint_result
+from s3_archiver_core._settings_parse import optional_env_result as _optional_result
+from s3_archiver_core._settings_parse import parse_bool_result as _bool_result
+from s3_archiver_core._settings_parse import parse_int_result as _int_result
+from s3_archiver_core._settings_parse import parse_runtime_duration_result as _duration_result
+from s3_archiver_core._settings_parse import parse_string_array_result as _string_array_result
+from s3_archiver_core._settings_parse import require_env_result as _require_result
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.temp_files import default_temp_dir
 
@@ -35,9 +37,6 @@ class S3AddressingStyle(StrEnum):
 _VALID_PROVIDERS = frozenset({provider.value for provider in S3Provider})
 _VALID_ADDRESSING_STYLES = frozenset({style.value for style in S3AddressingStyle})
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
-_LOCALSTACK_ENDPOINT_HOSTS = frozenset(
-    {"127.0.0.1", "localhost", "localstack", "localstack-alt", "localhost.localstack.cloud"}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +71,9 @@ class S3LocationSettings:
             return self.endpoint_url
         if self.provider is S3Provider.LOCALSTACK:
             return "http://localstack:4566"
-        namespace = self.namespace
-        if namespace is None:
+        if self.namespace is None:
             raise ConfigError("S3_NAMESPACE is required for OCI endpoint resolution")
-        return f"https://{namespace}.compat.objectstorage.{self.region}.oraclecloud.com"
+        return f"https://{self.namespace}.compat.objectstorage.{self.region}.oraclecloud.com"
 
     def storage_identity(self) -> StorageLocationIdentity:
         """Return the normalized physical bucket identity."""
@@ -127,25 +125,51 @@ class AppSettings:
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
         """Parse and validate application settings from environment values."""
 
+        decoder = EnvDecoder(env)
         log_level = env.get("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in _VALID_LOG_LEVELS:
-            raise ConfigError(f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}")
-
-        source = _load_s3_location(env, "SOURCE")
-        destination = _load_s3_location(env, "DESTINATION")
-        _validate_localstack_endpoint(source, "S3_SOURCE_ENDPOINT_URL")
-        _validate_localstack_endpoint(destination, "S3_DESTINATION_ENDPOINT_URL")
-        path_filters = _load_path_filters(env)
-        retention_days = _parse_int(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=1)
-        max_workers = _parse_int(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
-        cleanup_enabled = _parse_bool(env, "ARCHIVER_ENABLE_CLEANUP", default=False)
-        run_timeout = _parse_duration(env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
-
-        if source.storage_identity() == destination.storage_identity():
-            raise ConfigError(
-                "ARCHIVER_STORAGE_LOCATION must differ between source and destination"
+            decoder.fail(
+                "LOG_LEVEL", f"LOG_LEVEL must be one of {_VALID_LOG_LEVELS}, got {log_level!r}"
             )
-
+        source = _load_s3_location(decoder, "SOURCE")
+        destination = _load_s3_location(decoder, "DESTINATION")
+        for field, location in (
+            ("S3_SOURCE_ENDPOINT_URL", source),
+            ("S3_DESTINATION_ENDPOINT_URL", destination),
+        ):
+            if location is None or location.provider is not S3Provider.LOCALSTACK:
+                continue
+            host = urlsplit(location.resolved_endpoint_url()).hostname
+            if host not in LOCALSTACK_ENDPOINT_HOSTS:
+                decoder.fail(
+                    field, f"{field} host {host!r} is not allowed when provider=localstack"
+                )
+        path_filters = _load_path_filters(decoder)
+        retention_days = decoder.consume(
+            _int_result(env, "ARCHIVER_RETENTION_DAYS", default=60, minimum=1)
+        )
+        max_workers = decoder.consume(
+            _int_result(env, "ARCHIVER_MAX_WORKERS", default=16, minimum=1)
+        )
+        cleanup_enabled = decoder.consume(
+            _bool_result(env, "ARCHIVER_ENABLE_CLEANUP", default=False)
+        )
+        run_timeout = decoder.consume(
+            _duration_result(env.get("ARCHIVER_RUN_TIMEOUT", "7d"), "ARCHIVER_RUN_TIMEOUT")
+        )
+        if (
+            source is not None
+            and destination is not None
+            and source.storage_identity() == destination.storage_identity()
+        ):
+            decoder.fail(
+                "ARCHIVER_STORAGE_LOCATION",
+                "ARCHIVER_STORAGE_LOCATION must differ between source and destination",
+            )
+        decoder.finish()
+        assert source is not None and destination is not None and path_filters is not None
+        assert retention_days is not None and max_workers is not None
+        assert cleanup_enabled is not None and run_timeout is not None
         return cls(
             source=source,
             destination=destination,
@@ -189,40 +213,59 @@ class AppSettings:
         return self.source.resolved_endpoint_url()
 
 
-def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
+def _load_s3_location(decoder: EnvDecoder, side: str) -> S3LocationSettings | None:
+    env = decoder.env
     prefix = f"S3_{side}_"
     provider_key = f"{prefix}PROVIDER"
-    provider_value = _require(env, provider_key).lower()
+    provider_value = decoder.consume(_require_result(env, provider_key))
+    namespace = decoder.consume(_optional_result(env, f"{prefix}NAMESPACE"))
+    iam_user_ocid = decoder.consume(_optional_result(env, f"{prefix}IAM_USER_OCID"))
     addressing_key = f"{prefix}ADDRESSING_STYLE"
     addressing_value = env.get(addressing_key, "path").strip().lower()
-    namespace = _optional(env, f"{prefix}NAMESPACE")
-    iam_user_ocid = _optional(env, f"{prefix}IAM_USER_OCID")
-
-    if provider_value not in _VALID_PROVIDERS:
-        raise ConfigError(
-            f"{provider_key} must be one of {_VALID_PROVIDERS}, got {provider_value!r}"
+    if provider_value is None:
+        return None
+    provider_text = provider_value.lower()
+    if provider_text not in _VALID_PROVIDERS:
+        decoder.fail(
+            provider_key,
+            f"{provider_key} must be one of {_VALID_PROVIDERS}, got {provider_text!r}",
         )
+        return None
     if addressing_value not in _VALID_ADDRESSING_STYLES:
-        raise ConfigError(
-            f"{addressing_key} must be one of {_VALID_ADDRESSING_STYLES}, got {addressing_value!r}"
+        decoder.fail(
+            addressing_key,
+            f"{addressing_key} must be one of {_VALID_ADDRESSING_STYLES}, got {addressing_value!r}",
         )
-    provider = S3Provider(provider_value)
+        return None
+    provider = S3Provider(provider_text)
     if provider is S3Provider.OCI and namespace is None:
-        namespace_key = f"{prefix}NAMESPACE"
-        raise ConfigError(f"{namespace_key} is required when {provider_key}=oci")
+        decoder.fail(f"{prefix}NAMESPACE", f"{prefix}NAMESPACE is required when {provider_key}=oci")
+        return None
     if provider is S3Provider.OCI and iam_user_ocid is None:
-        raise ConfigError(f"{prefix}IAM_USER_OCID is required when {provider_key}=oci")
-
-    endpoint_url = _optional(env, f"{prefix}ENDPOINT_URL")
+        decoder.fail(
+            f"{prefix}IAM_USER_OCID",
+            f"{prefix}IAM_USER_OCID is required when {provider_key}=oci",
+        )
+        return None
+    endpoint_url = decoder.consume(_optional_result(env, f"{prefix}ENDPOINT_URL"))
     if endpoint_url is not None:
-        _ = _normalize_endpoint_url(endpoint_url, field=f"{prefix}ENDPOINT_URL")
-
+        endpoint_url = decoder.consume(
+            _endpoint_result(endpoint_url, field=f"{prefix}ENDPOINT_URL")
+        )
+        if endpoint_url is None:
+            return None
+    access_key_id = decoder.consume(_require_result(env, f"{prefix}ACCESS_KEY_ID"))
+    secret_access_key = decoder.consume(_require_result(env, f"{prefix}SECRET_ACCESS_KEY"))
+    region = decoder.consume(_require_result(env, f"{prefix}REGION"))
+    bucket = decoder.consume(_require_result(env, f"{prefix}BUCKET"))
+    if access_key_id is None or secret_access_key is None or region is None or bucket is None:
+        return None
     return S3LocationSettings(
         provider=provider,
-        access_key_id=_require(env, f"{prefix}ACCESS_KEY_ID"),
-        secret_access_key=_require(env, f"{prefix}SECRET_ACCESS_KEY"),
-        region=_require(env, f"{prefix}REGION"),
-        bucket=_require(env, f"{prefix}BUCKET"),
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+        region=region,
+        bucket=bucket,
         namespace=namespace,
         iam_user_ocid=iam_user_ocid,
         endpoint_url=endpoint_url,
@@ -230,22 +273,27 @@ def _load_s3_location(env: Mapping[str, str], side: str) -> S3LocationSettings:
     )
 
 
-def _load_path_filters(env: Mapping[str, str]) -> PathFilterSettings:
-    whitelist_enabled = _parse_bool(env, "S3_SOURCE_PATH_WHITELIST_ENABLED", default=False)
-    blacklist_enabled = _parse_bool(env, "S3_SOURCE_PATH_BLACKLIST_ENABLED", default=False)
-    if whitelist_enabled and blacklist_enabled:
-        raise ConfigError("S3_SOURCE_PATH_FILTER_MODE allows only one enabled filter mode")
-    return PathFilterSettings(
-        whitelist_enabled=whitelist_enabled,
-        blacklist_enabled=blacklist_enabled,
-        whitelist=_parse_string_array(env, "S3_SOURCE_PATH_WHITELIST"),
-        blacklist=_parse_string_array(env, "S3_SOURCE_PATH_BLACKLIST"),
+def _load_path_filters(decoder: EnvDecoder) -> PathFilterSettings | None:
+    env = decoder.env
+    whitelist_enabled = decoder.consume(
+        _bool_result(env, "S3_SOURCE_PATH_WHITELIST_ENABLED", default=False)
     )
-
-
-def _validate_localstack_endpoint(location: S3LocationSettings, field: str) -> None:
-    if location.provider is not S3Provider.LOCALSTACK:
-        return
-    host = urlsplit(location.resolved_endpoint_url()).hostname
-    if host not in _LOCALSTACK_ENDPOINT_HOSTS:
-        raise ConfigError(f"{field} host {host!r} is not allowed when provider=localstack")
+    blacklist_enabled = decoder.consume(
+        _bool_result(env, "S3_SOURCE_PATH_BLACKLIST_ENABLED", default=False)
+    )
+    whitelist = decoder.consume(_string_array_result(env, "S3_SOURCE_PATH_WHITELIST"))
+    blacklist = decoder.consume(_string_array_result(env, "S3_SOURCE_PATH_BLACKLIST"))
+    if whitelist_enabled and blacklist_enabled:
+        decoder.fail(
+            "S3_SOURCE_PATH_FILTER_MODE",
+            "S3_SOURCE_PATH_FILTER_MODE allows only one enabled filter mode",
+        )
+        return None
+    if (
+        whitelist_enabled is None
+        or blacklist_enabled is None
+        or whitelist is None
+        or blacklist is None
+    ):
+        return None
+    return PathFilterSettings(whitelist_enabled, blacklist_enabled, whitelist, blacklist)

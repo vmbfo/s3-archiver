@@ -17,7 +17,10 @@ from s3_archiver_core.archive_fingerprint import (
     fingerprint_matches_entry as _fingerprint_matches_entry,
 )
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.s3 import S3ObjectProperties, S3TransferCapabilities
+from s3_archiver_core.s3 import (
+    S3ObjectProperties,
+    S3TransferCapabilities,
+)
 
 TransferStrategy = Literal[
     "simple_native_copy",
@@ -25,9 +28,6 @@ TransferStrategy = Literal[
     "multipart_streaming",
     "temp_file_backed",
 ]
-
-DEFAULT_SIMPLE_COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
-DEFAULT_STREAMING_LIMIT_BYTES = 50 * 1024 * 1024 * 1024
 
 __all__ = (
     "FINGERPRINT_METADATA_KEY",
@@ -56,18 +56,30 @@ def select_transfer_strategy(
     size: int,
     capabilities: S3TransferCapabilities,
     *,
-    simple_copy_limit_bytes: int = DEFAULT_SIMPLE_COPY_LIMIT_BYTES,
-    streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES,
+    simple_copy_limit_bytes: int | None = None,
+    streaming_limit_bytes: int | None = None,
 ) -> TransferStrategy:
     """Choose the transfer strategy for a source object."""
 
-    if capabilities.native_copy and size <= simple_copy_limit_bytes:
+    effective_simple_limit = (
+        capabilities.simple_copy_limit_bytes
+        if simple_copy_limit_bytes is None
+        else simple_copy_limit_bytes
+    )
+    effective_streaming_limit = (
+        capabilities.streaming_limit_bytes
+        if streaming_limit_bytes is None
+        else streaming_limit_bytes
+    )
+    if capabilities.native_copy and size <= effective_simple_limit:
         return "simple_native_copy"
     if capabilities.native_copy and capabilities.multipart_copy:
         return "multipart_native_copy"
-    if capabilities.streaming_upload and size <= streaming_limit_bytes:
+    if capabilities.streaming_upload and size <= effective_streaming_limit:
         return "multipart_streaming"
-    return "temp_file_backed"
+    if capabilities.temp_file_backed:
+        return "temp_file_backed"
+    raise ValueError("no supported transfer strategy for configured source and destination")
 
 
 def verify_destination(

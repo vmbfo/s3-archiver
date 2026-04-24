@@ -91,6 +91,8 @@ class S3Client(Protocol):
 
 VersioningState = Literal["Disabled", "Enabled", "Suspended"]
 S3_CHUNK_BYTES = 8 * 1024 * 1024
+DEFAULT_SIMPLE_COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
+DEFAULT_STREAMING_LIMIT_BYTES = 50 * 1024 * 1024 * 1024
 
 
 def _empty_checksums() -> dict[str, str]:
@@ -135,6 +137,21 @@ class S3TransferCapabilities:
     native_copy: bool = True
     multipart_copy: bool = True
     streaming_upload: bool = True
+    temp_file_backed: bool = True
+    simple_copy_limit_bytes: int = DEFAULT_SIMPLE_COPY_LIMIT_BYTES
+    streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
+
+
+@dataclass(frozen=True, slots=True)
+class S3ProviderTransferProfile:
+    """Provider-level transfer primitives and thresholds."""
+
+    native_copy: bool = True
+    multipart_copy: bool = True
+    streaming_upload: bool = True
+    temp_file_backed: bool = True
+    simple_copy_limit_bytes: int = DEFAULT_SIMPLE_COPY_LIMIT_BYTES
+    streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
 
 
 class S3ClientFactory(Protocol):
@@ -168,6 +185,57 @@ def build_s3_client(settings: AppSettings | S3LocationSettings) -> S3Client:
             signature_version="s3v4",
             s3={"addressing_style": addressing_style},
         ),
+    )
+
+
+def transfer_capabilities_for_locations(
+    source: S3LocationSettings,
+    destination: S3LocationSettings,
+) -> S3TransferCapabilities:
+    """Derive pair capabilities from provider profiles plus location compatibility."""
+
+    source_profile = transfer_profile_for_location(source)
+    destination_profile = transfer_profile_for_location(destination)
+    native_copy = _native_copy_backend_matches(source, destination)
+    return S3TransferCapabilities(
+        native_copy=native_copy and source_profile.native_copy and destination_profile.native_copy,
+        multipart_copy=(
+            native_copy and source_profile.multipart_copy and destination_profile.multipart_copy
+        ),
+        streaming_upload=(source_profile.streaming_upload and destination_profile.streaming_upload),
+        temp_file_backed=(source_profile.temp_file_backed and destination_profile.temp_file_backed),
+        simple_copy_limit_bytes=min(
+            source_profile.simple_copy_limit_bytes,
+            destination_profile.simple_copy_limit_bytes,
+        ),
+        streaming_limit_bytes=min(
+            source_profile.streaming_limit_bytes,
+            destination_profile.streaming_limit_bytes,
+        ),
+    )
+
+
+def transfer_profile_for_location(location: S3LocationSettings) -> S3ProviderTransferProfile:
+    """Return the transfer profile for one configured provider location."""
+
+    if location.provider.value == "localstack":
+        return S3ProviderTransferProfile()
+    if location.provider.value == "oci":
+        return S3ProviderTransferProfile()
+    raise ValueError(f"unsupported provider {location.provider.value!r}")
+
+
+def _native_copy_backend_matches(
+    source: S3LocationSettings,
+    destination: S3LocationSettings,
+) -> bool:
+    source_identity = source.storage_identity()
+    destination_identity = destination.storage_identity()
+    return (
+        source_identity.provider == destination_identity.provider
+        and source_identity.endpoint_url == destination_identity.endpoint_url
+        and source_identity.region == destination_identity.region
+        and source_identity.namespace == destination_identity.namespace
     )
 
 

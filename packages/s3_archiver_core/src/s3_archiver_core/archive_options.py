@@ -9,7 +9,7 @@ from datetime import timedelta
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.archive_manifest import SourcePathFilter
 from s3_archiver_core.errors import ConfigError
-from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.s3 import S3TransferCapabilities, transfer_capabilities_for_locations
 from s3_archiver_core.settings import AppSettings
 
 
@@ -73,15 +73,7 @@ def _source_filter(settings: AppSettings) -> SourcePathFilter:
 
 
 def _transfer_capabilities(settings: AppSettings) -> S3TransferCapabilities:
-    source = settings.source.storage_identity()
-    destination = settings.destination.storage_identity()
-    native_copy = (
-        source.provider == destination.provider
-        and source.endpoint_url == destination.endpoint_url
-        and source.region == destination.region
-        and source.namespace == destination.namespace
-    )
-    return S3TransferCapabilities(native_copy=native_copy, multipart_copy=native_copy)
+    return transfer_capabilities_for_locations(settings.source, settings.destination)
 
 
 def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:

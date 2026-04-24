@@ -45,7 +45,7 @@ def test_archive_command_cleans_up_exact_latest_version_only(
     first = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"first\n")
     second = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"second\n")
 
-    payload = _run_archive(monkeypatch, env)
+    payload = _run_archive(monkeypatch, env, attempts=6)
 
     assert payload["status"] == "ok"
     assert payload["manifest"]["object_count"] == 1
@@ -134,7 +134,7 @@ def test_archive_command_cleans_up_pre_versioning_null_version(
         "for the null-version cleanup contract"
     )
 
-    payload = _run_archive(monkeypatch, env)
+    payload = _run_archive(monkeypatch, env, attempts=6)
 
     assert payload["status"] == "ok"
     assert (
@@ -155,6 +155,63 @@ def test_archive_command_cleans_up_pre_versioning_null_version(
     assert key not in listed_keys(source_client, localstack_bucket_pair.source)
     versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
     assert versions == [(key, "null", False)]
+
+
+@pytest.mark.integration()
+def test_archive_command_handles_suspended_version_history_current_null_version(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    localstack_bucket_pair: LocalstackBucketPair,
+) -> None:
+    env = _archive_env(tmp_path, localstack_bucket_pair)
+    env["ARCHIVER_ENABLE_CLEANUP"] = "true"
+    source_client = _client(env, "source")
+    destination_client = _client(env, "destination")
+    key = "versioned/suspended-null.txt"
+    _ = source_client.put_bucket_versioning(
+        Bucket=localstack_bucket_pair.source,
+        VersioningConfiguration={"Status": "Enabled"},
+    )
+    first = put_test_object(
+        source_client,
+        localstack_bucket_pair.source,
+        key,
+        body=b"enabled-version\n",
+    )
+    _ = source_client.put_bucket_versioning(
+        Bucket=localstack_bucket_pair.source,
+        VersioningConfiguration={"Status": "Suspended"},
+    )
+    current = put_test_object(
+        source_client,
+        localstack_bucket_pair.source,
+        key,
+        body=b"suspended-current\n",
+    )
+
+    payload = _run_archive(monkeypatch, env)
+
+    assert payload["status"] == "ok"
+    assert current.get("VersionId") in {None, "null"}
+    assert (
+        read_object_text(destination_client, localstack_bucket_pair.destination, key)
+        == "suspended-current\n"
+    )
+    destination_metadata = cast(
+        dict[str, str],
+        destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=key)[
+            "Metadata"
+        ],
+    )
+    fingerprint = cast(
+        SourceFingerprintPayload,
+        json.loads(destination_metadata["s3-archiver-source-fingerprint"]),
+    )
+    assert fingerprint["source_version_id"] is None
+    assert key not in listed_keys(source_client, localstack_bucket_pair.source)
+    versions = listed_key_versions(source_client, localstack_bucket_pair.source, key)
+    assert all(version_id != str(current.get("VersionId")) for _, version_id, _ in versions)
+    assert any(version_id == str(first["VersionId"]) for _, version_id, _ in versions)
 
 
 @pytest.mark.integration()

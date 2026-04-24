@@ -65,6 +65,8 @@ def test_archive_options_disable_native_copy_for_mixed_endpoints(tmp_path: Path)
     assert options.transfer_capabilities.native_copy is False
     assert options.transfer_capabilities.multipart_copy is False
     assert options.transfer_capabilities.streaming_upload is True
+    assert options.transfer_capabilities.temp_file_backed is True
+    assert options.transfer_capabilities.streaming_limit_bytes > 1
 
 
 @pytest.mark.unit()
@@ -81,6 +83,7 @@ def test_archive_options_allow_native_copy_with_dual_credentials(tmp_path: Path)
     assert settings.source.access_key_id != settings.destination.access_key_id
     assert options.transfer_capabilities.native_copy is True
     assert options.transfer_capabilities.multipart_copy is True
+    assert options.transfer_capabilities.simple_copy_limit_bytes > 1
 
 
 @pytest.mark.unit()

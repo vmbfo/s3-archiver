@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+import s3_archiver_core.settings as settings_module
+from s3_archiver_core._settings_parse import (
+    EnvDecoder,
+    optional_env,
+    parse_bool,
+    parse_bool_result,
+    parse_int,
+    parse_runtime_duration,
+    parse_string_array,
+    require_env,
+)
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3AddressingStyle, S3LocationSettings, S3Provider
 
@@ -138,3 +150,61 @@ def test_from_env_validates_localstack_endpoint_hosts(
 
     with pytest.raises(ConfigError, match="S3_DESTINATION_ENDPOINT_URL"):
         _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
+def test_parse_result_boundary_captures_issue_without_raising() -> None:
+    result = parse_bool_result(
+        {"ARCHIVER_ENABLE_CLEANUP": "maybe"}, "ARCHIVER_ENABLE_CLEANUP", default=False
+    )
+
+    assert result.ok is False
+    assert result.value is None
+    assert result.issue is not None
+    assert result.issue.field == "ARCHIVER_ENABLE_CLEANUP"
+
+
+@pytest.mark.unit()
+def test_parse_wrappers_cover_successful_result_boundary() -> None:
+    env = {
+        "BOOL": "true",
+        "COUNT": "2",
+        "ARRAY": '["prefix/"]',
+        "VALUE": "configured",
+    }
+
+    assert parse_bool(env, "BOOL", default=False) is True
+    assert parse_int(env, "COUNT", default=1, minimum=1) == 2
+    assert parse_runtime_duration("7d", "DURATION") == timedelta(days=7)
+    assert parse_string_array(env, "ARRAY") == ("prefix/",)
+    assert require_env(env, "VALUE") == "configured"
+    assert optional_env(env, "VALUE") == "configured"
+
+
+@pytest.mark.unit()
+def test_parse_wrappers_raise_config_errors_for_invalid_values() -> None:
+    with pytest.raises(ConfigError, match="BOOL must be true or false"):
+        _ = parse_bool({"BOOL": "maybe"}, "BOOL", default=False)
+
+
+@pytest.mark.unit()
+def test_env_decoder_preserves_first_issue_when_fail_called_twice() -> None:
+    decoder = EnvDecoder({})
+    decoder.fail("FIRST", "first failure")
+    decoder.fail("SECOND", "second failure")
+
+    with pytest.raises(ConfigError, match="first failure"):
+        decoder.finish()
+
+
+@pytest.mark.unit()
+def test_load_s3_location_returns_none_when_required_bucket_is_missing(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    _ = env.pop("S3_SOURCE_BUCKET")
+    decoder = EnvDecoder(env)
+
+    location = settings_module._load_s3_location(decoder, "SOURCE")
+
+    assert location is None
+    with pytest.raises(ConfigError, match="S3_SOURCE_BUCKET is required"):
+        decoder.finish()
