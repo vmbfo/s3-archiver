@@ -86,7 +86,7 @@ def test_compose_archive_copies_keys_and_honors_cleanup_gate(
     run_env["APP_ENV_FILE"] = str(env_file)
 
     result = _run_compose(run_env, "run", "--rm", "app", "archive")
-    payload = cast(ArchivePayload, _payload(result.stdout))
+    payload = cast(ArchivePayload, cast(object, _payload(result.stdout)))
 
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == bucket_pair.source
