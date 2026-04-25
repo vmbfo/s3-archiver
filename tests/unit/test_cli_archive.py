@@ -58,6 +58,36 @@ def test_archive_command_uses_timeout_enforced_wrapper(
 
 
 @pytest.mark.unit()
+def test_archive_command_exits_with_wrapper_failure_without_lock_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    base_env["LOG_DIR"] = str(tmp_path / "logs")
+    monkeypatch.setattr(os, "environ", base_env)
+    subprocess_calls: list[tuple[str, Path]] = []
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def fail_reconcile(*_args: object, **_kwargs: object) -> bool:
+        raise AssertionError("lock reconciliation should not run without an existing lock")
+
+    def run_subprocess(settings: AppSettings, log_file: Path, **_kwargs: object) -> int:
+        subprocess_calls.append((settings.source.bucket, log_file))
+        return 1
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "reconcile_archive_lock", fail_reconcile)
+    monkeypatch.setattr(cli_module, "run_archive_subprocess", run_subprocess)
+
+    result = RUNNER.invoke(cli_module.app, ["archive"])
+
+    assert result.exit_code == 1
+    assert subprocess_calls == [("archive-bucket", Path("/tmp/s3-archiver.log"))]
+
+
+@pytest.mark.unit()
 def test_archive_command_reports_startup_error_before_wrapper_runs(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

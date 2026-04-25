@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 from s3_archiver_core.archive_fingerprint import (
+    FINGERPRINT_METADATA_KEY,
     fingerprint_from_metadata,
     fingerprint_matches_entry,
 )
@@ -60,6 +61,47 @@ def test_recover_archived_entry_returns_original_for_invalid_timestamp_metadata(
     recovered = recover_archived_entry(entry, destination, _properties_for_version)
 
     assert recovered is entry
+
+
+@pytest.mark.unit()
+def test_fingerprint_from_metadata_ignores_invalid_json_and_non_mapping_values() -> None:
+    assert fingerprint_from_metadata({FINGERPRINT_METADATA_KEY: "not-json"}) is None
+    assert fingerprint_from_metadata({FINGERPRINT_METADATA_KEY: "[]"}) is None
+
+
+@pytest.mark.unit()
+def test_fingerprint_from_metadata_ignores_malformed_mapping() -> None:
+    assert fingerprint_from_metadata({FINGERPRINT_METADATA_KEY: '{"source_bucket":3}'}) is None
+
+
+@pytest.mark.unit()
+def test_fingerprint_from_metadata_defaults_non_mapping_checksums() -> None:
+    fingerprint = fingerprint_from_metadata(
+        {
+            FINGERPRINT_METADATA_KEY: (
+                '{"source_bucket":"bucket","source_key":"key","source_size":1,'
+                '"source_last_modified":"time","source_checksums":"sha256"}'
+            )
+        }
+    )
+
+    assert fingerprint is not None
+    assert fingerprint.source_checksums == {}
+
+
+@pytest.mark.unit()
+def test_fingerprint_from_metadata_coerces_checksum_mapping_values() -> None:
+    fingerprint = fingerprint_from_metadata(
+        {
+            FINGERPRINT_METADATA_KEY: (
+                '{"source_bucket":"bucket","source_key":"key","source_size":1,'
+                '"source_last_modified":"time","source_checksums":{"sha256":123,"crc32":null}}'
+            )
+        }
+    )
+
+    assert fingerprint is not None
+    assert fingerprint.source_checksums == {"sha256": "123"}
 
 
 @pytest.mark.unit()

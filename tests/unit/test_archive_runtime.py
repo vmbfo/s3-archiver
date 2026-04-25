@@ -232,3 +232,21 @@ def test_key_only_cleanup_rechecks_source_before_delete() -> None:
 
     assert result.cleanup.failures == ("old.txt: source changed before cleanup",)
     assert source.deleted == []
+
+
+@pytest.mark.unit()
+def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
+    listed = _listed("old.txt", 90, None)
+    source = FakeBucket("source", (listed,), destination={"old.txt": listed.properties})
+    destination = FakeBucket("destination")
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=_clock,
+    )
+
+    assert result.ok is True
+    assert source.deleted == [("old.txt", None)]

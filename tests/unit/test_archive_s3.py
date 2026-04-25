@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
-from typing import override
+from typing import cast, override
 
 import pytest
 from botocore.exceptions import ClientError
@@ -107,6 +107,26 @@ def test_s3_archive_bucket_multipart_native_copy_preserves_properties() -> None:
         "Parts": [{"ETag": '"copy-1"', "PartNumber": 1}, {"ETag": '"copy-2"', "PartNumber": 2}]
     }
     assert client.tagging_calls[0]["Tagging"] == {"TagSet": [{"Key": "kind", "Value": "source"}]}
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_multipart_native_copy_supports_50_gib_without_payload() -> None:
+    client = FakeArchiveClient()
+    bucket = S3ArchiveBucket(client, "destination")
+    size = 50 * 1024 * 1024 * 1024
+    expected_part_count = size // S3_CHUNK_BYTES
+
+    copy_object(bucket, properties(size), "multipart_native_copy")
+
+    assert len(client.upload_part_copy_calls) == expected_part_count
+    assert client.upload_part_copy_calls[0]["CopySourceRange"] == f"bytes=0-{S3_CHUNK_BYTES - 1}"
+    assert client.upload_part_copy_calls[-1]["CopySourceRange"] == (
+        f"bytes={size - S3_CHUNK_BYTES}-{size - 1}"
+    )
+    completed_upload = client.complete_calls[0]["MultipartUpload"]
+    assert isinstance(completed_upload, dict)
+    parts = cast(list[object], completed_upload["Parts"])
+    assert len(parts) == expected_part_count
 
 
 @pytest.mark.unit()

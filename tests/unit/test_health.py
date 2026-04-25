@@ -17,13 +17,19 @@ class SuccessfulClient:
     """Minimal client double for successful requests."""
 
     called_bucket: str | None = None
+    _versioning_status: str | None
+
+    def __init__(self, versioning_status: str | None = "Enabled") -> None:
+        self._versioning_status = versioning_status
 
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         self.called_bucket = Bucket
 
     def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
         self.called_bucket = Bucket
-        return {"Status": "Enabled"}
+        if self._versioning_status is None:
+            return {}
+        return {"Status": self._versioning_status}
 
 
 class AuthFailingClient:
@@ -83,6 +89,36 @@ def test_run_health_check_reports_success(
     assert report.source_versioning == "Enabled"
     assert clients == []
     assert report.status == "ok"
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("raw_status", "expected_status"),
+    [
+        ("Suspended", "Suspended"),
+        (None, "Disabled"),
+    ],
+)
+def test_run_health_check_reports_non_enabled_source_versioning_states(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+    raw_status: str | None,
+    expected_status: str,
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    clients = [SuccessfulClient(raw_status), SuccessfulClient()]
+
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.health.build_s3_client",
+        build_client,
+    )
+
+    report = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
+
+    assert report.source_versioning == expected_status
 
 
 @pytest.mark.unit()

@@ -270,6 +270,28 @@
   - a failed run exits cleanly and does not continue into later phases
   - the next scheduled run restarts from copy using the new run timestamp
 
+## Coverage And Validation Evidence Closure
+- The local unit coverage gate must be kept at `100%` for all authored package source. Coverage gaps are not waived; they must be closed with focused tests for the missing branch or statement before any push.
+- The previously observed unit-only gap at `99.53%` must be closed by covering:
+  - structured archive error-log scalar extraction while ignoring nested mismatch payloads
+  - `archive` command behavior when the timeout-enforced wrapper returns a non-zero status and no stale lock exists
+  - `check`/health source-versioning reporting for `Suspended` and provider-default `Disabled` states
+- A quick unit coverage pass is not sufficient evidence for this plan. Before any push, run the full validation path required by the repository gate, including warnings-as-errors, type checks, the 300 LOC policy, all tests, integration tests, e2e compose tests, and the full coverage report.
+- LocalStack/compose validation remains required evidence for the workflow guarantees that cannot be proven by unit fakes alone:
+  - isolated UUID source/destination buckets per test
+  - startup preflight against real S3 APIs
+  - versioning-enabled and versioning-suspended bucket probes
+  - scheduler lock refusal, timeout, stale-lock recovery, and missed-tick behavior
+  - runtime image exclusion of repo tests and LocalStack-only tooling
+- Large-object support must have explicit evidence beyond threshold-only assertions. The validation set must include resource-safe tests or probes that exercise the strategy boundary for objects at or near `50 GiB` without materializing that payload in memory, plus real transfer-path probes for multipart streaming and temp-file-backed copy.
+- Mixed-provider production realism is not proven by LocalStack alone. Before production rollout, run a staging validation against the intended provider mix, including OCI source/destination settings, cross-endpoint streaming fallback, independent credentials, source/destination identity rejection for same physical buckets, metadata/tag preservation, and cleanup safety.
+- Any final project-status report must distinguish:
+  - implementation-plan coverage percentage
+  - unit code coverage percentage
+  - full-suite CI status
+  - LocalStack/compose validation status
+  - live mixed-provider staging validation status
+
 ## Assumptions And Defaults
 - `ARCHIVER_MAX_WORKERS` defaults to `16`.
 - `ARCHIVER_RUN_TIMEOUT` defaults to `7d`.
