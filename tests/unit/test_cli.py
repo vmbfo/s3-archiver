@@ -9,7 +9,7 @@ from typing import TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
-from s3_archiver_core.errors import ConfigError
+from s3_archiver_core.errors import ConfigError, HealthCheckError, LoggingError, S3ArchiverError
 from s3_archiver_core.health import HealthReport
 from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
@@ -55,7 +55,7 @@ def test_check_command_emits_json(
 
 
 @pytest.mark.unit()
-def test_check_command_exits_non_zero_on_config_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_command_uses_config_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_error(_: dict[str, str]) -> AppSettings:
         raise ConfigError("bad env")
 
@@ -63,10 +63,77 @@ def test_check_command_exits_non_zero_on_config_error(monkeypatch: pytest.Monkey
 
     result = RUNNER.invoke(cli_module.app, ["check"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
     assert payload["message"] == "bad env"
+
+
+@pytest.mark.unit()
+def test_check_command_uses_logging_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def raise_error(_: AppSettings) -> Path:
+        raise LoggingError("log sink failed")
+
+    monkeypatch.setattr(cli_module, "configure_logging", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.LOGGING_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "log sink failed"
+
+
+@pytest.mark.unit()
+def test_check_command_uses_health_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def configure(_: AppSettings) -> Path:
+        return Path("/tmp/s3-archiver.log")
+
+    def raise_error(_: AppSettings, _log_file: Path) -> HealthReport:
+        raise HealthCheckError("bucket unavailable")
+
+    monkeypatch.setattr(cli_module, "configure_logging", configure)
+    monkeypatch.setattr(cli_module, "run_health_check", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == cli_module.HEALTH_CHECK_ERROR_EXIT_CODE
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "bucket unavailable"
+
+
+@pytest.mark.unit()
+def test_check_command_uses_generic_exit_code_for_unknown_domain_error(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    class UnknownDomainError(S3ArchiverError):
+        """Test-only domain error to exercise fallback exit handling."""
+
+    monkeypatch.setattr(os, "environ", base_env)
+
+    def raise_error(_: AppSettings) -> Path:
+        raise UnknownDomainError("unexpected failure")
+
+    monkeypatch.setattr(cli_module, "configure_logging", raise_error)
+
+    result = RUNNER.invoke(cli_module.app, ["check"])
+
+    assert result.exit_code == 1
+    payload = _load_payload(result.stderr)
+    assert payload["status"] == "error"
+    assert payload["message"] == "unexpected failure"
 
 
 @pytest.mark.unit()
