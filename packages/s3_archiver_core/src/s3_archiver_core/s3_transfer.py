@@ -56,25 +56,30 @@ def copy_s3_object(
             metadata,
         )
         return
-    body = _source_body(source_client, source_bucket, source_key, source_version_id)
-    if strategy == "multipart_streaming":
-        _upload_stream(
-            destination_client, destination_bucket, destination_key, properties, metadata, body
-        )
-        return
-    path = _stage(body, temp_dir)
+    body: ReadableBody | None = None
     try:
-        with path.open("rb") as file:
+        body = _source_body(source_client, source_bucket, source_key, source_version_id)
+        if strategy == "multipart_streaming":
             _upload_stream(
-                destination_client,
-                destination_bucket,
-                destination_key,
-                properties,
-                metadata,
-                cast(ReadableBody, cast(object, file)),
+                destination_client, destination_bucket, destination_key, properties, metadata, body
             )
+            return
+        path = _stage(body, temp_dir)
+        try:
+            with path.open("rb") as file:
+                _upload_stream(
+                    destination_client,
+                    destination_bucket,
+                    destination_key,
+                    properties,
+                    metadata,
+                    cast(ReadableBody, cast(object, file)),
+                )
+        finally:
+            path.unlink(missing_ok=True)
     finally:
-        path.unlink(missing_ok=True)
+        if body is not None:
+            _close_body(body)
 
 
 def _multipart_copy(
@@ -195,6 +200,12 @@ def _source_body(client: S3Client, bucket: str, key: str, version_id: str | None
     if not callable(getattr(body, "read", None)):
         raise TypeError("S3 get_object response Body is not readable")
     return cast(ReadableBody, body)
+
+
+def _close_body(body: ReadableBody) -> None:
+    close = getattr(body, "close", None)
+    if callable(close):
+        _ = close()
 
 
 def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:

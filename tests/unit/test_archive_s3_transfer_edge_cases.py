@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import override
 
@@ -47,10 +48,35 @@ class RaisingBody:
         raise RuntimeError("read failed")
 
 
+class CloseTrackingBody(BytesIO):
+    closed_count: int
+
+    def __init__(self, value: bytes) -> None:
+        super().__init__(value)
+        self.closed_count = 0
+
+    @override
+    def close(self) -> None:
+        self.closed_count += 1
+        super().close()
+
+
 class RaisingBodyClient(FakeArchiveClient):
     @override
     def get_object(self, **kwargs: object) -> Mapping[str, object]:
         return self._set("get_call", kwargs, {"Body": RaisingBody()})
+
+
+class CloseTrackingBodyClient(FakeArchiveClient):
+    body: CloseTrackingBody
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.body = CloseTrackingBody(b"body")
+
+    @override
+    def get_object(self, **kwargs: object) -> Mapping[str, object]:
+        return self._set("get_call", kwargs, {"Body": self.body})
 
 
 @pytest.mark.unit()
@@ -117,6 +143,21 @@ def test_s3_transfer_rejects_non_readable_body() -> None:
             "multipart_streaming",
             S3ArchiveBucket(NonReadableBodyClient(), "source"),
         )
+
+
+@pytest.mark.unit()
+def test_s3_transfer_closes_streaming_source_body() -> None:
+    source_client = CloseTrackingBodyClient()
+
+    copy_object(
+        S3ArchiveBucket(FakeArchiveClient(), "destination"),
+        properties(4),
+        "multipart_streaming",
+        S3ArchiveBucket(source_client, "source"),
+    )
+
+    assert source_client.body.closed is True
+    assert source_client.body.closed_count == 1
 
 
 @pytest.mark.unit()

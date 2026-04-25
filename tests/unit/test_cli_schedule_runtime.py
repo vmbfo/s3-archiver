@@ -198,6 +198,15 @@ def test_run_scheduled_archive_times_out_and_recovers_stale_lock(
     assert payload["reason"] == "archive_run_timeout"
     assert payload["timed_out"] is True
     assert logged_payloads[-1]["phase"] == "archive.run"
+    records = sorted((Path(base_env["LOG_DIR"]) / "archive-runs").glob("*.json"))
+    assert len(records) == 1
+    decoded = cast(object, json.loads(records[0].read_text(encoding="utf-8")))
+    assert isinstance(decoded, dict)
+    record = cast(dict[str, object], decoded)
+    assert record["status"] == "failed"
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    assert payload["reason"] == "archive_run_timeout"
 
 
 @pytest.mark.unit()

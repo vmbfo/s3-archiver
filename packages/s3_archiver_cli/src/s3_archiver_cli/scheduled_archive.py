@@ -17,6 +17,7 @@ import typer
 from s3_archiver_core.archive_lock import FileArchiveRunLock, LockRecoveryLogger
 from s3_archiver_core.settings import AppSettings
 
+from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
 
 type JsonScalar = str | int | float | bool | None
@@ -113,8 +114,15 @@ def run_archive_subprocess(
     except subprocess.TimeoutExpired as exc:
         _relay_output(_as_text(exc.stdout), emit_stdout)
         _relay_output(_as_text(exc.stderr), emit_stderr)
-        _ = reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
         payload = _timeout_payload(settings, log_file)
+        lock_payload = _run_records.read_lock_payload(_archive_lock_path(settings))
+        _run_records.record_subprocess_timeout(
+            settings,
+            payload=payload,
+            log_file=log_file,
+            lock_payload=lock_payload,
+        )
+        _ = reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
         log_error(payload)
         emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
         return 1

@@ -92,7 +92,7 @@ def archive_failure_payload(
             "message": detail if timed_out else "archive run failed",
             "details": detail,
             "key": _failure_key(detail),
-            "mismatch": detail,
+            "mismatch": _mismatch_payload(phase, detail),
             "reason": "archive_run_timeout" if timed_out else None,
             "timed_out": timed_out,
         }
@@ -144,6 +144,36 @@ def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
 def _failure_key(detail: str) -> str | None:
     key, separator, _ = detail.partition(":")
     return key if separator else None
+
+
+def _mismatch_payload(phase: str, detail: str) -> dict[str, JsonValue] | None:
+    if detail == "archive run timed out":
+        return None
+    key, separator, remainder = detail.partition(":")
+    return {
+        "phase": phase,
+        "key": key if separator else None,
+        "category": _mismatch_category(remainder.strip() if separator else detail),
+        "detail": remainder.strip() if separator else detail,
+    }
+
+
+def _mismatch_category(detail: str) -> str:
+    normalized = detail.lower()
+    for category in (
+        "source fingerprint",
+        "size",
+        "object property",
+        "metadata",
+        "tag",
+        "content",
+        "source changed",
+        "destination missing",
+        "source missing",
+    ):
+        if category in normalized:
+            return category.replace(" ", "_")
+    return "archive_failure"
 
 
 def _error_field(error: S3ArchiverError) -> str | None:

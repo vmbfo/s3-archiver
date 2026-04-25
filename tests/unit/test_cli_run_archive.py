@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from datetime import datetime
@@ -133,6 +134,49 @@ def test_run_archive_reraises_domain_errors_and_releases_lock(
         _ = _run_archive(settings, Path("/tmp/log"))
 
     assert len(released) == 1
+
+
+@pytest.mark.unit()
+def test_run_archive_records_failed_run_when_preflight_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    monkeypatch.setattr(os, "environ", base_env)
+    settings = AppSettings.from_env(base_env)
+
+    class FixedUuid:
+        hex: str = "locked-run"
+
+    class RecordingLock:
+        def __init__(self, _path: Path, **_kwargs: object) -> None:
+            return
+
+        def acquire(self, *, run_id: str, run_started_at_utc: datetime, timeout: object) -> bool:
+            _ = (run_id, run_started_at_utc, timeout)
+            return True
+
+        def release(self, *, run_id: str) -> None:
+            _ = run_id
+
+    def raise_health_error(_settings: AppSettings, _log_file: Path) -> object:
+        raise HealthCheckError("auth failed: denied")
+
+    monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
+    monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
+    monkeypatch.setattr(cli_module, "run_health_check", raise_health_error)
+
+    with pytest.raises(HealthCheckError, match="auth failed: denied"):
+        _ = _run_archive(settings, Path("/tmp/log"))
+
+    record_path = Path(base_env["LOG_DIR"]) / "archive-runs" / "locked-run.json"
+    decoded = cast(object, json.loads(record_path.read_text(encoding="utf-8")))
+    assert isinstance(decoded, dict)
+    record = cast(dict[str, object], decoded)
+    assert record["status"] == "failed"
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    assert payload["message"] == "auth failed: denied"
+    assert payload["phase"] == "startup.preflight"
 
 
 def _archive_result(*, run_id: str = "run-id") -> ArchiveRunResult:

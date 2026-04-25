@@ -242,6 +242,38 @@ def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
 
 
 @pytest.mark.unit()
+def test_transfer_capabilities_honor_provider_profile_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env = dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "localstack"
+    env["S3_SOURCE_REGION"] = "us-east-1"
+    env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    env["S3_DESTINATION_PROVIDER"] = "localstack"
+    env["S3_DESTINATION_REGION"] = "us-east-1"
+    env["S3_DESTINATION_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    settings = AppSettings.from_env(env)
+    monkeypatch.setattr(
+        s3_module,
+        "_TRANSFER_PROFILES",
+        {
+            "localstack": s3_module.S3ProviderTransferProfile(native_copy=False),
+            "oci": s3_module.S3ProviderTransferProfile(),
+        },
+    )
+
+    capabilities = s3_module.transfer_capabilities_for_locations(
+        settings.source,
+        settings.destination,
+    )
+
+    assert capabilities.native_copy is False
+    assert capabilities.multipart_copy is False
+    assert capabilities.streaming_upload is True
+
+
+@pytest.mark.unit()
 def test_transfer_profile_for_location_rejects_unknown_provider() -> None:
     fake_provider = cast(
         S3Provider,

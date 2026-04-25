@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from s3_archiver_core.archive_transfer import select_transfer_strategy
-from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.s3 import DEFAULT_STREAMING_LIMIT_BYTES, S3TransferCapabilities
 
 
 @pytest.mark.unit()
@@ -63,3 +63,16 @@ def test_transfer_strategy_rejects_missing_fallback_capability() -> None:
                 temp_file_backed=False,
             ),
         )
+
+
+@pytest.mark.unit()
+def test_transfer_strategy_supports_50_gib_streaming_boundary() -> None:
+    capabilities = S3TransferCapabilities(native_copy=False, multipart_copy=False)
+
+    assert DEFAULT_STREAMING_LIMIT_BYTES == 50 * 1024 * 1024 * 1024
+    assert select_transfer_strategy(DEFAULT_STREAMING_LIMIT_BYTES, capabilities) == (
+        "multipart_streaming"
+    )
+    assert select_transfer_strategy(DEFAULT_STREAMING_LIMIT_BYTES + 1, capabilities) == (
+        "temp_file_backed"
+    )

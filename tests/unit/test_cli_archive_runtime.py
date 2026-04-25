@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from typing import cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -130,7 +132,7 @@ def test_archive_once_command_skips_temp_cleanup_when_lock_is_held(
 
 
 @pytest.mark.unit()
-def test_archive_once_timeout_leaves_lock_for_stale_recovery(
+def test_archive_once_timeout_releases_lock_and_records_failed_run(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
@@ -181,4 +183,12 @@ def test_archive_once_timeout_leaves_lock_for_stale_recovery(
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
     assert result.exit_code == 1
-    assert released == []
+    assert len(released) == 1
+    record_path = Path(base_env["LOG_DIR"]) / "archive-runs" / f"{released[0]}.json"
+    decoded = cast(object, json.loads(record_path.read_text(encoding="utf-8")))
+    assert isinstance(decoded, dict)
+    record = cast(dict[str, object], decoded)
+    assert record["status"] == "failed"
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    assert payload["reason"] == "archive_run_timeout"

@@ -30,6 +30,7 @@ from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
@@ -58,7 +59,6 @@ HEALTH_CHECK_ERROR_EXIT_CODE = 4
 @app.callback()
 def root(ctx: typer.Context) -> None:
     """Run s3-archiver commands."""
-
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
         raise typer.Exit(code=0)
@@ -67,7 +67,6 @@ def root(ctx: typer.Context) -> None:
 @app.command()
 def check() -> None:
     """Validate configuration, logging, and bucket access."""
-
     settings: AppSettings | None = None
     try:
         settings, log_file = _load_settings_and_log_file()
@@ -83,7 +82,6 @@ def check() -> None:
 @app.command()
 def archive() -> None:
     """Run one archive workflow invocation via a timeout-enforced child process."""
-
     settings: AppSettings | None = None
     try:
         settings, log_file = _load_settings_and_log_file()
@@ -99,7 +97,6 @@ def archive() -> None:
 @app.command("archive-once", hidden=True)
 def archive_once() -> None:
     """Run one archive workflow invocation."""
-
     payload = _run_payload_command(_run_archive)
     if not _emit_archive_payload(payload):
         raise typer.Exit(code=1)
@@ -108,7 +105,6 @@ def archive_once() -> None:
 @app.command("cleanup-preview")
 def cleanup_preview() -> None:
     """Print and persist the cleanup manifest without deleting any source objects."""
-
     payload = _run_payload_command(_run_cleanup_preview)
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
 
@@ -153,7 +149,6 @@ def schedule(
 
 def main() -> None:
     """Run the CLI app."""
-
     app()
 
 
@@ -198,7 +193,6 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     started = datetime.now(tz=UTC)
     locked_run_id = uuid4().hex
     run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=_log_lock_recovery)
-    release_lock = True
     if not run_lock.acquire(
         run_id=locked_run_id,
         run_started_at_utc=started,
@@ -206,6 +200,12 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     ):
         raise ArchiveRunError("archive run lock is already held")
     try:
+        _run_records.record_started(
+            settings,
+            run_id=locked_run_id,
+            run_started_at_utc=started,
+            log_file=log_file,
+        )
         prepare_runtime_temp_dir(settings.temp_dir)
         _ = run_health_check(settings, log_file)
         source = S3ArchiveBucket(
@@ -232,17 +232,29 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
                 result.cleanup,
                 result.list,
             )
-        release_lock = not _run_result_timed_out(result)
-    except S3ArchiverError:
-        raise
     except Exception as exc:
-        raise ArchiveRunError(str(exc)) from exc
+        error: S3ArchiverError = (
+            exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))
+        )
+        _run_records.record_failure(
+            settings,
+            run_id=locked_run_id,
+            run_started_at_utc=started,
+            payload=_error_logging.error_payload(error, settings),
+            log_file=log_file,
+        )
+        if error is exc:
+            raise
+        raise error from exc
     finally:
-        if release_lock:
-            run_lock.release(run_id=locked_run_id)
-    if result.ok:
-        return _error_logging.archive_result_payload("ok", result, settings, log_file)
-    return _error_logging.archive_failure_payload(result, settings, log_file)
+        run_lock.release(run_id=locked_run_id)
+    payload = (
+        _error_logging.archive_result_payload("ok", result, settings, log_file)
+        if result.ok
+        else _error_logging.archive_failure_payload(result, settings, log_file)
+    )
+    _run_records.record_result(settings, result=result, payload=payload, log_file=log_file)
+    return payload
 
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
@@ -260,13 +272,6 @@ def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:
         return False
     typer.echo(json.dumps(payload, sort_keys=True))
     return True
-
-
-def _run_result_timed_out(result: ArchiveRunResult) -> bool:
-    for phase in (result.copy, result.verify, result.cleanup, result.list):
-        if "archive run timed out" in phase.failures:
-            return True
-    return False
 
 
 def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:

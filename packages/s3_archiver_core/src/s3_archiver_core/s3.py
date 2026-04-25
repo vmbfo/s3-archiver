@@ -157,6 +157,12 @@ class S3ProviderTransferProfile:
     streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
 
 
+_TRANSFER_PROFILES: Mapping[str, S3ProviderTransferProfile] = {
+    "localstack": S3ProviderTransferProfile(),
+    "oci": S3ProviderTransferProfile(),
+}
+
+
 class S3ClientFactory(Protocol):
     """Typed callable wrapper around the boto3 client factory boundary."""
 
@@ -215,9 +221,12 @@ def transfer_capabilities_for_locations(
 
     source_profile = transfer_profile_for_location(source)
     destination_profile = transfer_profile_for_location(destination)
-    native_copy = _native_copy_backend_matches(source, destination)
+    same_native_backend = _native_copy_backend_matches(source, destination)
+    native_copy = (
+        same_native_backend and source_profile.native_copy and destination_profile.native_copy
+    )
     return S3TransferCapabilities(
-        native_copy=native_copy and source_profile.native_copy and destination_profile.native_copy,
+        native_copy=native_copy,
         multipart_copy=(
             native_copy and source_profile.multipart_copy and destination_profile.multipart_copy
         ),
@@ -237,10 +246,9 @@ def transfer_capabilities_for_locations(
 def transfer_profile_for_location(location: S3LocationSettings) -> S3ProviderTransferProfile:
     """Return the transfer profile for one configured provider location."""
 
-    if location.provider.value == "localstack":
-        return S3ProviderTransferProfile()
-    if location.provider.value == "oci":
-        return S3ProviderTransferProfile()
+    profile = _TRANSFER_PROFILES.get(location.provider.value)
+    if profile is not None:
+        return profile
     raise ValueError(f"unsupported provider {location.provider.value!r}")
 
 

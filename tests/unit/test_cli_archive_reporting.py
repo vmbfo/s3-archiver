@@ -103,6 +103,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     assert payload.get("message") == "archive run timed out"
     assert payload.get("details") == "archive run timed out"
     assert payload.get("key") is None
+    assert payload.get("mismatch") is None
     assert payload.get("reason") == "archive_run_timeout"
     assert payload.get("timed_out") is True
     assert phases["copy"]["status"] == "error"
@@ -143,6 +144,38 @@ def test_archive_command_reports_error_when_skipped_phase_has_failures(
     assert copy_phase["status"] == "error"
     assert copy_phase["failure_count"] == 1
     assert copy_phase["failures"] == ["old.txt: mismatch"]
+
+
+@pytest.mark.unit()
+def test_archive_command_reports_structured_object_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    _stub_runtime(monkeypatch, base_env)
+
+    def run_core_archive(
+        source: object,
+        destination: object,
+        options: ArchiveOptions,
+        *,
+        run_lock: object | None = None,
+        **_kwargs: object,
+    ) -> ArchiveRunResult:
+        _ = (source, destination, options, run_lock, _kwargs)
+        return _archive_result(copy=ArchivePhaseResult("copy", ("old.txt: content mismatch",)))
+
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+
+    result = RUNNER.invoke(cli_module.app, ["archive-once"])
+
+    assert result.exit_code == 1
+    mismatch = _load_payload(result.stderr).get("mismatch")
+    assert mismatch == {
+        "category": "content",
+        "detail": "content mismatch",
+        "key": "old.txt",
+        "phase": "copy",
+    }
 
 
 @pytest.mark.unit()
