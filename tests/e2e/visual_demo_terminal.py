@@ -100,6 +100,8 @@ def print_verified_summary(
     print(f"  retained in source only by retention policy: {retained_count}")
     print(f"  archived to destination: {copied_count}")
     print(f"  cleanup preview objects: {cleanup_preview['object_count']}")
+    print(f"  source objects after real cleanup would be: {retained_count}")
+    print(f"  destination objects after real cleanup would be: {copied_count}")
     print(
         "  cleanup preview left buckets unchanged: "
         + str(payload["cleanup_preview_left_bucket_state_unchanged"])
@@ -125,13 +127,44 @@ def _run_visual_demo_once(
     output_lines: list[str] = []
     if process.stdout is None:
         raise AssertionError("visual demo process stdout was not captured")
+    printer = _SampledDemoPrinter(retention_days)
     with process.stdout:
         for raw_line in process.stdout:
             output_lines.append(raw_line)
-            _print_visual_demo_line(raw_line.rstrip("\n"), retention_days=retention_days)
+            printer.print_line(raw_line.rstrip("\n"))
+    printer.finish()
     return_code = process.wait()
     output = "".join(output_lines)
     return subprocess.CompletedProcess(command, return_code, stdout=output, stderr="")
+
+
+class _SampledDemoPrinter:
+    def __init__(self, retention_days: int) -> None:
+        self.retention_days: int = retention_days
+        self.object_count: int = 0
+        self.tail: list[str] = []
+
+    def print_line(self, line: str) -> None:
+        if line.startswith(("SOURCE ", "DEST   ", "COPY   ", "DELETE ")):
+            formatted = _friendly_demo_line(line)
+            self.object_count += 1
+            if self.object_count <= 3:
+                print(f"  {formatted}")
+                return
+            self.tail = [*self.tail[-2:], formatted]
+            return
+        self.finish()
+        _print_visual_demo_line(line, retention_days=self.retention_days)
+
+    def finish(self) -> None:
+        if self.object_count > 3:
+            omitted = self.object_count - 6
+            if omitted > 0:
+                print(f"  ... {omitted} rows omitted; showing the last 3 rows ...")
+            for line in self.tail:
+                print(f"  {line}")
+        self.object_count = 0
+        self.tail = []
 
 
 def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
@@ -187,6 +220,10 @@ def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
         case "== After cleanup preview ==":
             print()
             print("  s3 ls-style view after cleanup preview")
+            print(
+                "  This is the real unchanged bucket state; preview mode wrote a manifest "
+                + "but did not delete source objects."
+            )
         case _:
             print(f"  {_friendly_demo_line(line)}")
 
