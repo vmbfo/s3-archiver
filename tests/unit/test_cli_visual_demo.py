@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -136,7 +137,16 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
             return tuple(state[self.bucket])
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
-        state[settings.destination.bucket] = [_listed("demo/old.txt", 61)]
+        archived = _listed("demo/old.txt", 61)
+        metadata = {
+            "s3-archiver-source-fingerprint": (
+                '{"source_bucket":"source","source_key":"demo/old.txt",'
+                '"source_last_modified":"2024-02-19T00:00:00+00:00","source_size":10}'
+            )
+        }
+        state[settings.destination.bucket] = [
+            replace(archived, properties=replace(archived.properties, metadata=metadata))
+        ]
         return {
             "status": "ok",
             "phases": {
@@ -194,6 +204,7 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
     assert after_archive["destination_object_count"] == 1
     assert summary["cleanup_preview_left_bucket_state_unchanged"] is True
     assert any("== Archive Candidates ==" in line for line in lines)
+    assert any("source_last_modified=2024-02-19T00:00:00+00:00" in line for line in lines)
     assert any("DELETE key=demo/old.txt" in line for line in lines)
     assert json.loads(lines[-1])["status"] == "ok"
 

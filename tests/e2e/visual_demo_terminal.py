@@ -256,9 +256,10 @@ def _s3_ls_style_line(label: str, fields: str) -> str:
     present_in_destination = _field(fields, "present_in_destination")
     if present_in_destination is not None:
         details.append(f"in_destination={present_in_destination.lower()}")
-    version_id = _field(fields, "version_id")
-    if version_id is not None:
-        details.append(f"version_id={version_id}")
+    for name in ("version_id", "source_last_modified"):
+        value = _field(fields, name)
+        if value is not None:
+            details.append(f"{name}={value}")
     if details:
         return f"{row} | {', '.join(details)}"
     return row

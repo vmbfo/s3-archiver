@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from s3_archiver_core.archive_fingerprint import fingerprint_from_metadata
 from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry, build_archive_manifest
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
@@ -144,7 +145,12 @@ def _emit_snapshot(emit: Emitter, title: str, snapshot: dict[str, JsonValue]) ->
         + f"(versioning={snapshot['destination_versioning_state']})"
     )
     for row in cast(list[dict[str, JsonValue]], snapshot["destination_objects"]):
-        emit(f"DEST   key={row['key']} size={row['size']} last_modified={row['last_modified_utc']}")
+        source_modified = row["source_last_modified"]
+        source_detail = f" source_last_modified={source_modified}" if source_modified else ""
+        emit(
+            f"DEST   key={row['key']} size={row['size']} "
+            + f"last_modified={row['last_modified_utc']}{source_detail}"
+        )
 
 
 def _emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
@@ -233,12 +239,14 @@ def _listed_object_payload(
     eligible_for_follow_up: bool,
     present_in_destination: bool,
 ) -> dict[str, JsonValue]:
+    fingerprint = fingerprint_from_metadata(item.properties.metadata)
     return {
         "key": item.key,
         "size": item.size,
         "last_modified_utc": item.last_modified.isoformat(),
         "etag": item.etag,
         "version_id": item.version_id,
+        "source_last_modified": None if fingerprint is None else fingerprint.source_last_modified,
         "eligible_for_follow_up": eligible_for_follow_up,
         "present_in_destination": present_in_destination,
     }
