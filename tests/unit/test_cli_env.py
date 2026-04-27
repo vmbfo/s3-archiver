@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
+from s3_archiver_cli.env import load_runtime_env, parse_env_file
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.health import HealthReport
 from s3_archiver_core.settings import AppSettings
 from typer.testing import CliRunner
 
 RUNNER = CliRunner()
-PARSE_ENV_FILE = cast(Callable[[Path], dict[str, str]], cli_module.__dict__["_parse_env_file"])
-LOAD_RUNTIME_ENV = cast(Callable[[], dict[str, str]], cli_module.__dict__["_load_runtime_env"])
+PARSE_ENV_FILE = parse_env_file
+LOAD_RUNTIME_ENV = load_runtime_env
 
 
 class HealthPayload(TypedDict):
@@ -43,14 +43,7 @@ def test_check_command_loads_default_dotenv_file(
         return tmp_path / "s3-archiver.log"
 
     def run_check(settings: AppSettings, log_file: Path) -> HealthReport:
-        return HealthReport(
-            status="ok",
-            provider=settings.provider.value,
-            bucket=settings.bucket,
-            endpoint_url=settings.resolved_endpoint_url(),
-            log_file=str(log_file),
-            checked_at="2026-04-09T17:00:43+00:00",
-        )
+        return _health_report(settings, log_file)
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_check)
@@ -75,7 +68,7 @@ def test_check_command_prefers_process_env_over_env_file(
         "environ",
         {
             "ENV_FILE": str(env_file),
-            "S3_BUCKET": "bucket-from-process-env",
+            "S3_SOURCE_BUCKET": "bucket-from-process-env",
         },
     )
 
@@ -84,14 +77,7 @@ def test_check_command_prefers_process_env_over_env_file(
         return tmp_path / "s3-archiver.log"
 
     def run_check(settings: AppSettings, log_file: Path) -> HealthReport:
-        return HealthReport(
-            status="ok",
-            provider=settings.provider.value,
-            bucket=settings.bucket,
-            endpoint_url=settings.resolved_endpoint_url(),
-            log_file=str(log_file),
-            checked_at="2026-04-09T17:00:43+00:00",
-        )
+        return _health_report(settings, log_file)
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_check)
@@ -150,17 +136,37 @@ def test_load_runtime_env_returns_process_env_when_env_file_is_missing(
     assert loaded["S3_BUCKET"] == "from-process"
 
 
+@pytest.mark.unit()
+def test_load_runtime_env_honors_explicit_dev_null_over_default_dotenv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _ = (tmp_path / ".env").write_text("S3_BUCKET=from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(os, "environ", {"APP_ENV_FILE": "/dev/null"})
+
+    loaded = LOAD_RUNTIME_ENV()
+
+    assert "S3_BUCKET" not in loaded
+
+
 def _env_file_contents(tmp_path: Path) -> str:
     return "\n".join(
         (
-            "S3_PROVIDER=oci",
-            "S3_ACCESS_KEY_ID=access-key",
-            "S3_SECRET_ACCESS_KEY=secret-key",
-            "S3_REGION=eu-frankfurt-1",
-            "S3_NAMESPACE=tenant",
-            "S3_BUCKET=archive-bucket",
-            "OCI_IAM_USER_OCID=ocid1.user.oc1..example",
-            "S3_ADDRESSING_STYLE=path",
+            "S3_SOURCE_PROVIDER=oci",
+            "S3_SOURCE_ACCESS_KEY_ID=access-key",
+            "S3_SOURCE_SECRET_ACCESS_KEY=secret-key",
+            "S3_SOURCE_REGION=eu-frankfurt-1",
+            "S3_SOURCE_NAMESPACE=tenant",
+            "S3_SOURCE_BUCKET=archive-bucket",
+            "S3_SOURCE_IAM_USER_OCID=ocid1.user.oc1..example",
+            "S3_SOURCE_ADDRESSING_STYLE=path",
+            "S3_DESTINATION_PROVIDER=localstack",
+            "S3_DESTINATION_ACCESS_KEY_ID=destination-access",
+            "S3_DESTINATION_SECRET_ACCESS_KEY=destination-secret",
+            "S3_DESTINATION_REGION=us-east-1",
+            "S3_DESTINATION_BUCKET=destination-bucket",
+            "S3_DESTINATION_ADDRESSING_STYLE=path",
             "LOG_LEVEL=INFO",
             f"LOG_DIR={tmp_path / 'logs'}",
         )
@@ -169,3 +175,18 @@ def _env_file_contents(tmp_path: Path) -> str:
 
 def _load_payload(output: str) -> HealthPayload:
     return cast(HealthPayload, json.loads(output))
+
+
+def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
+    return HealthReport(
+        status="ok",
+        source_provider=settings.source.provider.value,
+        source_bucket=settings.source.bucket,
+        source_endpoint_url=settings.source.resolved_endpoint_url(),
+        source_versioning="Enabled",
+        destination_provider=settings.destination.provider.value,
+        destination_bucket=settings.destination.bucket,
+        destination_endpoint_url=settings.destination.resolved_endpoint_url(),
+        log_file=str(log_file),
+        checked_at="2026-04-09T17:00:43+00:00",
+    )

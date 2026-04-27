@@ -1,0 +1,315 @@
+# TDD Plan For The Archive Workflow With Isolated LocalStack Tests
+
+## Summary
+- Keep `check`, add explicit `s3-archiver archive`, and make bare `s3-archiver` print help and exit `0`.
+- Standardize runtime config on separate source and destination S3 connection settings so the two buckets can use entirely different credentials, users, and endpoints.
+- Add `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, and `ARCHIVER_RUN_TIMEOUT=7d`.
+- Freeze one `run_started_at_utc` timestamp at the beginning of every archive invocation and use that same timestamp for eligibility, verification, and cleanup decisions for the entire run.
+- Support large objects, including objects up to at least `50 GiB`, by automatically choosing the appropriate transfer strategy: single-request copy for smaller objects and multipart or streamed multipart transfer for larger objects.
+- Implement the archive job as strict phases: `list -> copy -> verify -> cleanup`. Each phase may run bounded parallel workers, but the next phase never starts until the previous one completed successfully for every eligible object.
+- Treat cleanup as globally gated: unset or `false` means cleanup code must not run at all, and even when `true`, any copy or verify failure blocks all deletes.
+- Run the archive job from a daily task scheduler. Each daily run takes a fresh frozen timestamp and retries from the start if the previous day failed, but the scheduler must never start a second archive run while a prior run is still active. Missed daily triggers during an active run are skipped rather than replayed later.
+
+## Runtime And Safety Contract
+- `check` remains a first-class command and must continue to verify startup configuration, logging, and bucket access for both sides. It must work with LocalStack in tests and with mixed multi-provider source/destination setups in real deployments.
+- Source and destination S3 settings are independent. Each side must support its own provider, credentials, region, bucket, endpoint override, and addressing style so the archive job can bridge between different S3 users or even different S3-compatible systems.
+- All env vars must be parsed and validated at startup before any archive work begins. Type checks, enum validation, and numeric range checks must happen there so runtime invariants are established once and relied on afterwards.
+- The runtime contract uses separate env groups for source and destination:
+  - source: `S3_SOURCE_PROVIDER`, `S3_SOURCE_ACCESS_KEY_ID`, `S3_SOURCE_SECRET_ACCESS_KEY`, `S3_SOURCE_REGION`, `S3_SOURCE_BUCKET`
+  - destination: `S3_DESTINATION_PROVIDER`, `S3_DESTINATION_ACCESS_KEY_ID`, `S3_DESTINATION_SECRET_ACCESS_KEY`, `S3_DESTINATION_REGION`, `S3_DESTINATION_BUCKET`
+  - optional per-side overrides: `S3_SOURCE_ENDPOINT_URL`, `S3_DESTINATION_ENDPOINT_URL`, `S3_SOURCE_ADDRESSING_STYLE`, `S3_DESTINATION_ADDRESSING_STYLE`
+  - OCI-only per-side fields when relevant: `S3_SOURCE_NAMESPACE`, `S3_SOURCE_IAM_USER_OCID`, `S3_DESTINATION_NAMESPACE`, `S3_DESTINATION_IAM_USER_OCID`
+- Source and destination identity must be evaluated as underlying storage locations, not bucket labels or credentials alone. The normalized storage-location identity tuple is:
+  - provider
+  - normalized endpoint URL or the provider default endpoint when no override is set
+  - region when that provider uses region in bucket addressing or bucket placement
+  - storage namespace or tenant identifier only when it changes the underlying bucket namespace
+  - bucket name
+- Access credentials must never make the source and destination appear distinct if they resolve to the same underlying bucket. Access key ids, secret keys, IAM user ids, and other principal-specific settings are not part of storage-location identity unless the provider documents them as part of the bucket namespace itself.
+- Startup must reject the configuration when the normalized source and destination storage-location tuples are identical. Bucket-name equality by itself must never be treated as sufficient proof that the source and destination are the same target, but different credentials alone must also never be treated as sufficient proof that they are different targets.
+- Source-bucket path filtering is configured only on the source side:
+  - `S3_SOURCE_PATH_WHITELIST_ENABLED=false`
+  - `S3_SOURCE_PATH_BLACKLIST_ENABLED=false`
+  - `S3_SOURCE_PATH_WHITELIST=[]`
+  - `S3_SOURCE_PATH_BLACKLIST=[]`
+- `S3_SOURCE_PATH_WHITELIST` and `S3_SOURCE_PATH_BLACKLIST` must be JSON arrays of strings. They default to empty arrays.
+- Only one source path filter mode may be enabled at a time. Startup must fail if both whitelist and blacklist mode are enabled.
+- In whitelist mode, the archive job operates only on source objects whose keys match one of the configured whitelist path prefixes. In blacklist mode, the archive job operates only on source objects whose keys do not match any configured blacklist path prefixes.
+- Path filters apply only to source-bucket eligibility. Filtered-out source objects must never be copied and must never be cleaned up.
+- Optional env vars may fall back to explicit defaults, but required auth and bucket settings must hard-fail startup when missing. In particular, non-LocalStack providers must not start without valid S3 auth inputs for that side.
+- Invalid env values must crash startup immediately and print a clear error to regular `stderr`. Early env-validation failures happen before the logging stack is initialized, so they must not depend on structured logging infrastructure being available.
+- Startup must include a real S3 connectivity/auth check against the configured source and destination buckets so invalid credentials or unreachable endpoints fail before the archive phases begin.
+- Startup must also query source-bucket versioning state. The archive workflow must support source buckets whose versioning state is disabled, enabled, or suspended, and it must switch to version-aware source discovery and cleanup behavior whenever the source bucket exposes version-history semantics. `check` must succeed for versioning-enabled and versioning-suspended buckets as part of this probe path.
+- `archive` must run under a single-run exclusivity guard. If an archive run is already active, the scheduler or invocation wrapper must not start another one until the active run finishes or times out.
+- `ARCHIVER_RUN_TIMEOUT` must be configurable and default to `7d`. If a run exceeds that timeout, the runtime must mark the run as failed, emit that failure clearly in stdout/stderr JSON and structured logs, release the single-run lock, and allow the next scheduled run to retry from the start.
+- The single-run exclusivity guard must recover safely from crashes and restarts. A stale lock from a dead process or prior container instance must not block the system forever:
+  - the lock record must include enough run metadata to distinguish an active run from an abandoned one
+  - startup and scheduler entry must reconcile stale locks against `ARCHIVER_RUN_TIMEOUT` and any liveness information the implementation records
+  - if the prior run is no longer alive or has exceeded the timeout, the runtime must mark that abandoned run as failed, log the stale-lock recovery clearly, clear the lock, and allow the next scheduled run to start fresh
+- `archive` captures `run_started_at_utc` once when the command starts and archives objects where `LastModified < run_started_at_utc - retention_days`. Objects exactly on the cutoff remain in the source bucket.
+- When source-bucket versioning is enabled or suspended, the archive manifest must pin the exact source version selected for copy and cleanup when one exists. Version-history buckets may also surface a live current object whose version id is `null` for objects that predate versioning; in that case, the manifest still records the source key and source last-modified timestamp, and cleanup uses the bucket's ordinary delete semantics for that current null-version object. The portable fingerprint persisted in destination-controlled metadata must include the exact source version id whenever one exists so reruns can recover that same version id and exact-version cleanup can target it again.
+- Source and destination keys are preserved `1:1`.
+- Archive copies must preserve object properties, not only payload bytes. At minimum the destination object must preserve:
+  - content type
+  - content encoding
+  - content language
+  - content disposition
+  - cache-control and expires metadata
+  - user-defined object metadata
+  - object tags
+- The archive workflow must support cross-provider and cross-endpoint transfers. It should prefer native server-side copy when both sides support it, but it may stream object data through the app process when native copy is unavailable.
+- Object payloads may use local temp-file staging as a controlled fallback when direct streaming is unavailable or impractical for very large objects. Any temp files created for transfer must be cleaned up on success and on failure.
+- The same frozen `run_started_at_utc` must be reused during cleanup so no object can become newly eligible mid-run because the task took a long time.
+- The portable source-fingerprint record must be explicit and stable. It consists of:
+  - source bucket
+  - source key
+  - source size
+  - source last-modified timestamp
+  - source version id when available
+  - source ETag or provider checksum fields when available
+- Cleanup verification must use a portable archiver-controlled source-fingerprint record, not only provider-native metadata:
+  - size must match
+  - preserved object properties and user-defined metadata must match the archived source object for the fields listed above
+  - object tags must match
+  - for copied objects, persist a lightweight source fingerprint in destination-controlled metadata
+  - the source fingerprint must include the fields listed above
+  - when the source bucket exposes version ids, the persisted source fingerprint must include the exact source version id used for copy and cleanup, and reruns must recover that exact source version id from destination metadata before verification or exact-version cleanup proceeds
+  - provider-native checksum fields are preferred when both sides expose compatible checksum data, but they are an optimization rather than the only legal verification path
+  - ETag may be used only as one part of the source fingerprint, and only when the transfer mode and provider semantics make it meaningful for that object
+  - multipart or provider-specific ETags must not be treated as sufficient proof of equality on their own unless the implementation can prove they are comparable for that exact transfer
+  - if the run cannot establish or recover a portable source-fingerprint record for an object, verification fails hard and cleanup remains blocked
+- Every failure must be surfaced in stdout/stderr JSON and structured logs, but the payload contract depends on failure class:
+  - env-validation failures that occur before logging initialization must be written to regular `stderr`; they must include the startup phase name, the relevant config field that failed, and diagnostic details, while object key and mismatch fields may be `null`
+  - later startup and pre-flight failures that occur after logging initialization must include the startup phase name, the relevant config field or connectivity check that failed, source bucket and destination bucket when those values were parsed successfully, and diagnostic details; object key and mismatch fields may be `null`
+  - per-object archive failures must include phase, key, source bucket, destination bucket, and mismatch or verification details when applicable
+- Add an opt-in debug logging mode that records per-object transfer decisions, including which copy strategy was selected for that object, such as simple native copy, multipart native copy, in-process streaming, or temp-file-backed transfer.
+- Reject only identical source and destination storage locations as defined by the normalized storage-location identity tuple.
+- Listing must be version-aware:
+  - when the source bucket is unversioned, use `ListObjectsV2` pagination with continuation tokens and `MaxKeys=1000`
+  - when the source bucket versioning state is enabled or suspended, use version-aware listing so each manifest entry is bound to the selected live source object, carrying the exact source version id when one exists or `null` for the live current object in a version-history bucket, delete markers are excluded from archive eligibility, and pagination across multiple version-aware pages is handled correctly at page boundaries
+- Cleanup must delete the exact archived source version when a non-null source version id is available. For any version-history bucket, a live current object with source version id `null` must use ordinary key-only delete semantics for that exact current object because no exact-version delete target exists. Generic key-only delete remains forbidden for versioned cleanup when a non-null version id is available because it can create delete markers instead of reclaiming the archived bytes.
+- If any copy worker fails, the run stops after the copy phase and does not progress to verify or cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
+- If any verify worker fails, the run stops after the verify phase and does not progress to cleanup. The next daily scheduled run starts again from the copy phase with a new frozen timestamp.
+- Any failure at any stage must terminate the current invocation cleanly with a non-zero result, stop all further progress for that run, and leave retry to the next scheduled daily invocation.
+- Retries must be idempotent. If the destination already contains an object from a prior partial run or from external writers, the next run must not assume it is safe to delete the source. It must re-evaluate the destination object through the same verification rules and only treat it as copied when the destination matches the current source object under the accepted verification policy, including the portable source-fingerprint record when required.
+- Scheduler-triggered retries must respect the single-run exclusivity guard. Missed daily triggers while a long run is still active must be skipped rather than queued or replayed later, and once a timed-out, failed, or stale-locked run releases the lock, the next scheduled run starts only at the next eligible schedule with a new frozen timestamp.
+
+## Test Isolation And LocalStack Guard Rails
+- Integration and e2e tests must create fresh UUID-named source and destination buckets for every test case, not per session.
+- Bucket names should include a stable test prefix plus a lowercase UUID suffix so reruns are idempotent and isolated.
+- Each test fixture must create its own bucket pair, seed only those buckets, and in teardown empty and delete both buckets even on failure.
+- Remove reliance on one static integration bucket for test execution. LocalStack readiness should verify the S3 API is up, not depend on a shared test bucket.
+- Test code must fail fast unless the target is LocalStack:
+  - `S3_SOURCE_PROVIDER` must be `localstack`
+  - `S3_DESTINATION_PROVIDER` must be `localstack`
+  - both resolved endpoint hosts must match a strict LocalStack allowlist such as `127.0.0.1`, `localhost`, `localstack`, or `localhost.localstack.cloud`
+  - integration and e2e fixtures must fail if either side falls back to a non-LocalStack default endpoint or any host outside that allowlist
+  - test scripts must not load the normal production `.env`
+- Keep LocalStack test env generation inside fixtures/scripts so integration and e2e runs cannot accidentally point at OCI or any live S3 endpoint.
+- The LocalStack-only timestamp seeding path must be mounted only into the LocalStack test service and must never be part of the app runtime image.
+
+## Implementation Changes
+- Add core archive modules for per-side settings, dual-client run context with frozen timestamp, manifest building, transfer orchestration, verification, cleanup, and structured archive reporting.
+- Add a dedicated env decoding layer that validates every variable up front and models parse results in a pureenv/result-style boundary so defaults and hard failures are handled explicitly and consistently.
+- Extend the typed S3 boundary to support separate source and destination clients plus paginated listing, simple copy, multipart copy, multipart streaming transfer, temp-file-backed transfer, `head_object`, `get_object`, `put_object` or multipart upload primitives, `delete_object`, bucket-versioning inspection, version-aware source listing, version-aware delete by exact source version id, and any checksum-capable metadata lookups needed for verification.
+- Add source-key filter evaluation ahead of eligibility selection so whitelist/blacklist rules are resolved before copy, verify, and cleanup manifests are built.
+- Validate type and range invariants at startup, including booleans, retention days, worker counts, providers, addressing styles, and any per-side required field combinations.
+- Validate source path filter invariants at startup, including JSON decoding, string-only members, and mutual exclusivity between whitelist and blacklist mode.
+- Add structured debug logging around transfer strategy selection so operators can see which copy path each object used when debug logging is enabled.
+- Add a normalized storage-location identity helper used by startup validation, `check`, and archive safety checks so identical-location rejection is based on the same physical-bucket tuple everywhere, independent of which credentials access it.
+- Add a portable verification layer for streamed and temp-file-backed cross-provider copies:
+  - capture a lightweight source fingerprint before transfer
+  - persist that fingerprint in destination metadata when supported, including the exact source version id whenever one exists
+  - make cleanup depend on recovering that source-fingerprint record successfully so reruns can reuse the same exact source version id for cleanup
+- Add metadata-copy support for every transfer strategy so simple copy, multipart copy, multipart streaming, and temp-file-backed transfer all preserve the required object properties, user metadata, and tags.
+- Add version-aware source discovery and cleanup:
+  - inspect source-bucket versioning state during startup and archive initialization
+  - teach `check` to exercise the versioning probe path successfully for versioning-enabled and versioning-suspended buckets
+  - use `ListObjectsV2` and ordinary delete cleanup when the source bucket is versioning `Disabled`
+  - use version-aware listing or equivalent manifest construction when the source bucket exposes version-history semantics
+  - bind each manifest entry to the exact source version id chosen for the run when one exists
+  - allow the current object with version id `null` in any version-history bucket to clean up through ordinary key-only delete semantics
+  - exclude delete markers from archive eligibility
+  - paginate version-aware listing across multiple pages and preserve correct page-boundary handling
+  - delete by exact source version id during cleanup whenever a non-null source version id is present
+- Select transfer strategy automatically per object size and provider capability:
+  - use simple native copy for smaller objects when the backing systems support it
+  - use multipart native copy when supported for larger objects
+  - use multipart streaming transfer when native copy is unavailable or unsuitable and memory-safe
+  - use temp-file-backed transfer when direct streaming is unavailable or impractical for object size or resource constraints
+- Make temp-file handling explicit:
+  - store temp files only in a dedicated runtime temp directory
+  - delete temp files after successful upload
+  - delete temp files on any failure path and on startup recovery if stale files from a prior aborted run are found
+- Define explicit idempotency behavior for reruns:
+  - if destination is missing, copy it
+  - if destination exists and verifies against source using the stored source fingerprint, treat it as already copied
+  - if destination exists but does not verify, fail the run rather than overwriting silently or progressing to cleanup
+- Add scheduler-facing runtime support so the archive command is the unit of daily execution, with one fresh frozen timestamp per scheduled run.
+- Add single-run scheduler coordination:
+  - acquire a run lock before archive work begins
+  - refuse to start a second run while the lock is held by an active run
+  - track run start time against `ARCHIVER_RUN_TIMEOUT`
+  - mark timed-out runs as failed, log the timeout clearly, and release the lock so the next scheduled run can retry
+  - persist enough run-lock metadata to detect stale locks after crash or container restart
+  - reconcile stale locks on startup and before each scheduled run attempt
+  - skip missed ticks instead of replaying them after the lock clears
+- Keep `check` compatible with the dual-client configuration so it validates both source and destination connectivity without performing archive mutations.
+- Split structured archive error reporting into startup/pre-flight errors and per-object archive errors, with explicitly nullable object-specific fields for startup failures.
+- Keep env-validation error emission independent of the logging stack so config parse failures can report to regular `stderr` before logging setup completes.
+- Add a test-only LocalStack extension or equivalent in-container hook that rewrites object `last_modified` for deterministic retention tests.
+- Add a seed helper that uploads predictable keys into the per-test source bucket and then sets exact timestamps through the LocalStack-only hook.
+- Update the Compose test profile so LocalStack gets the test-only extension, while the app container remains the production-style runtime image.
+- Keep test assets outside the shipped application packages. The current wheel-only runtime already excludes repo tests; preserve that as an explicit packaging rule and add a regression check for it.
+- Add a runtime image check that asserts the production app container does not contain repo `tests/`, LocalStack seed helpers, or the LocalStack test extension.
+- Add scheduler documentation and local orchestration helpers so the archive task runs only locally and on the production machine. Do not rely on GitHub Actions for the orchestrator or for archive scheduling.
+
+## Test Plan
+- Unit tests first, run red before any implementation:
+  - env parsing and validation for the new per-side S3 contract
+  - defaults are applied only where explicitly allowed
+  - invalid type, enum, and range values fail fast at startup
+  - missing required auth settings fail fast at startup
+  - `ARCHIVER_RUN_TIMEOUT` defaults to `7d`
+  - invalid run-timeout values fail fast at startup
+  - env-validation failures emit to regular `stderr` before logging initialization
+  - identical bucket names across different storage-location tuples remain allowed
+  - the same physical bucket reached with different credentials still fails fast at startup
+  - fully identical normalized storage-location tuples fail fast at startup
+  - source buckets with versioning `Disabled` use `ListObjectsV2` pagination and ordinary delete semantics
+  - source buckets with versioning `Enabled` or `Suspended` activate version-aware archive behavior instead of failing fast
+  - whitelist and blacklist env vars decode from JSON arrays of strings
+  - enabling both whitelist and blacklist mode fails fast at startup
+  - whitelist mode includes only matching source path prefixes
+  - blacklist mode excludes matching source path prefixes
+  - filtered-out paths are never eligible for copy or cleanup
+  - bare-command help behavior
+  - strict cleanup gating for unset and `false`
+  - frozen `run_started_at_utc` is captured once and reused across all phases
+  - separate source and destination credentials are loaded independently
+  - transfer strategy selection chooses native copy, multipart streaming, or temp-file-backed transfer correctly based on object size and capability
+  - exact cutoff boundary for `59`, `60`, and `61` day objects
+  - paginated multi-page listing
+  - version-aware pagination spans multiple pages without dropping entries at page boundaries
+  - delete markers are filtered out of every version-aware page before eligibility is decided
+  - phase ordering and global cleanup blocking
+  - a second run cannot start while another run is active
+  - a timed-out run is marked failed, releases the run lock, and allows the next run to start
+  - a timed-out run emits a timeout-specific failure payload in stdout/stderr JSON and structured logs
+  - a stale lock left by a crashed run is detected, logged, cleared, and does not block future scheduled runs forever
+  - copy failure prevents verify and cleanup from starting
+  - verify failure prevents cleanup from starting
+  - any stage failure exits the invocation cleanly and prevents later stages from running
+  - reruns treat already-verified destination objects as already copied
+  - reruns fail cleanly when destination contains a conflicting non-matching object
+  - portable fingerprint metadata round-trips the exact source version id and reruns recover it for exact-version cleanup
+  - startup/pre-flight error payload shape allows nullable object-specific fields
+  - per-object verification mismatch behavior and archive-error payload shape
+  - version-aware listing captures the exact source version id for versioned-source manifest entries
+  - version-history buckets record the null current source version as a special case and use ordinary key-only delete semantics for that exact object
+  - cleanup uses exact version-id delete when a non-null source version id is present and never falls back to generic delete in that case
+  - delete markers are excluded from archive eligibility
+  - streamed and temp-file-backed transfers preserve required content headers, user metadata, and object tags
+  - verification fails if required metadata or tags are not preserved
+  - streamed and temp-file-backed transfers persist a portable source-fingerprint record
+  - cleanup succeeds for cross-provider copies only when the portable source-fingerprint record is present and matches
+  - multipart and provider-specific ETags are not accepted unless explicitly proven valid for that case
+  - debug logging emits the selected transfer operation for each object when enabled
+  - temp files are cleaned up on success, failure, and stale-startup recovery
+  - LocalStack endpoint safety guard behavior
+- Integration tests against LocalStack:
+  - per-test bucket pair creation and teardown
+  - isolated source and destination clients with distinct credentials
+  - LocalStack safety guard rejects the run unless both source and destination resolve to LocalStack-only endpoints
+  - startup rejects the same LocalStack bucket even when source and destination use different credentials
+  - source buckets with versioning enabled or suspended complete startup successfully and activate version-aware archive behavior
+  - version-aware listing paginates across multiple pages, including exact page-boundary handling and delete-marker filtering
+  - source buckets with versioning disabled use `ListObjectsV2` and ordinary delete cleanup semantics
+  - a long-running archive invocation blocks overlapping scheduled invocations until it finishes or times out
+  - a crashed or restarted container reconciles a stale run lock before the next eligible scheduled run
+  - startup bucket/auth validation happens before any archive phase work
+  - deterministic timestamp seeding in isolated buckets
+  - whitelist mode copies and cleans up only keys under allowed source prefixes
+  - blacklist mode never copies or cleans up keys under blocked source prefixes
+  - `check` succeeds against LocalStack with the dual-client config
+  - `check` succeeds against versioning-enabled buckets and versioning-suspended buckets, proving the versioning probe path accepts both states
+  - cross-endpoint transfers use streaming fallback when native copy is impossible
+  - versioned-source cleanup deletes the exact archived source version instead of creating a delete marker
+  - versioned-source reruns recover the exact source version id from destination metadata and reuse it for exact-version cleanup
+  - version-history buckets surface current `null` versions through ordinary key-only delete semantics
+  - version-aware pagination preserves page boundaries across multiple pages and filters delete markers from every page
+  - delete markers are never treated as archiveable source objects
+  - streamed fallback preserves required content headers, user metadata, and object tags
+  - retention `60` with cleanup disabled
+  - retention `60` with cleanup enabled
+  - alternate retention such as `30`
+  - exact expected source and destination key sets after each run
+  - verification failure produces non-zero status and zero deletes
+- E2E compose tests:
+  - `docker compose run --rm app` shows help and does not archive
+  - explicit `s3-archiver check` still validates the dual-client configuration
+  - explicit `s3-archiver archive` with cleanup unset
+  - explicit `s3-archiver archive` with cleanup `false`
+  - explicit `s3-archiver archive` with cleanup `true`
+  - runtime image excludes test suite assets and test-only LocalStack tooling
+- Seed dataset for archive assertions:
+  - one known object per day for ages `0..365`
+  - explicit boundary fixtures for `59`, `60`, and `61`
+  - destination bucket starts empty
+  - expected split is asserted exactly for each configured retention
+- Scheduler behavior assertions:
+  - each run uses a fresh frozen timestamp
+  - only one run may be active at a time
+  - missed daily triggers during an active run do not start overlapping runs
+  - missed daily triggers are skipped rather than replayed after the active run ends
+  - `ARCHIVER_RUN_TIMEOUT` defaults to `7d`
+  - when a run exceeds the configured timeout, it is marked failed, logged as timed out, and releases the run lock
+  - timeout failures are operator-visible in stdout/stderr JSON and structured logs
+  - stale locks from crashed or restarted runs are detected, logged, marked failed, and cleared before the next eligible scheduled run
+  - a failed run does not leave cleanup partially executed
+  - a failed run exits cleanly and does not continue into later phases
+  - the next scheduled run restarts from copy using the new run timestamp
+
+## Coverage And Validation Evidence Closure
+- The local unit coverage gate must be kept at `100%` for all authored package source. Coverage gaps are not waived; they must be closed with focused tests for the missing branch or statement before any push.
+- The previously observed unit-only gap at `99.53%` must be closed by covering:
+  - structured archive error-log scalar extraction while ignoring nested mismatch payloads
+  - `archive` command behavior when the timeout-enforced wrapper returns a non-zero status and no stale lock exists
+  - `check`/health source-versioning reporting for `Suspended` and provider-default `Disabled` states
+- A quick unit coverage pass is not sufficient evidence for this plan. Before any push, run the full validation path required by the repository gate, including warnings-as-errors, type checks, the 300 LOC policy, all tests, integration tests, e2e compose tests, and the full coverage report.
+- LocalStack/compose validation remains required evidence for the workflow guarantees that cannot be proven by unit fakes alone:
+  - isolated UUID source/destination buckets per test
+  - startup preflight against real S3 APIs
+  - versioning-enabled and versioning-suspended bucket probes
+  - scheduler lock refusal, timeout, stale-lock recovery, and missed-tick behavior
+  - runtime image exclusion of repo tests and LocalStack-only tooling
+- Large-object support must have explicit evidence beyond threshold-only assertions. The validation set must include resource-safe tests or probes that exercise the strategy boundary for objects at or near `50 GiB` without materializing that payload in memory, plus real transfer-path probes for multipart streaming and temp-file-backed copy.
+- Mixed-provider production realism is not proven by LocalStack alone. Before production rollout, run a staging validation against the intended provider mix, including OCI source/destination settings, cross-endpoint streaming fallback, independent credentials, source/destination identity rejection for same physical buckets, metadata/tag preservation, and cleanup safety.
+- Any final project-status report must distinguish:
+  - implementation-plan coverage percentage
+  - unit code coverage percentage
+  - full-suite CI status
+  - LocalStack/compose validation status
+  - live mixed-provider staging validation status
+
+## Assumptions And Defaults
+- `ARCHIVER_MAX_WORKERS` defaults to `16`.
+- `ARCHIVER_RUN_TIMEOUT` defaults to `7d`.
+- Time comparisons use UTC-aware datetimes only.
+- Each archive run owns one immutable `run_started_at_utc` timestamp from process start to process exit.
+- Only one archive run may be active at a time in production. Daily scheduling is best-effort and non-overlapping; if one run is still active, later triggers are skipped rather than replayed, and the next run starts only at the next eligible schedule after the active, timed-out, or stale-locked run has been resolved.
+- Env validation is a startup boundary: after startup succeeds, the rest of the runtime can assume env-derived settings are present, correctly typed, and within valid ranges.
+- Env validation runs before logging initialization is complete, so env-parse and env-validation failures are reported via regular `stderr` rather than the structured logging pipeline.
+- The intended production deployment model is exactly one Docker container instance running this system. It is not intended to run via host-level cron, in both a container and an external scheduler at the same time, or across multiple containers or hosts.
+- Versioned source buckets are supported. When version-history semantics are active, the workflow is expected to bind each archiveable source object to an exact source version id when one exists. Version-history buckets may surface the live current object with version id `null` for objects that predate versioning; that object is still archiveable, but its cleanup path uses ordinary key-only delete semantics because there is no exact version id to target. When a non-null version id exists, the same exact version id must round-trip through destination metadata so reruns can recover it and perform exact-version cleanup against the same archived source version.
+- Source and destination may use different S3 identities, providers, and independent configuration. Native copy is preferred when available, but the app may stream payloads through itself when required for interoperability.
+- Source and destination credentials may differ, but same-bucket detection is based on the underlying storage location rather than which principal accessed it.
+- Source path filters apply only to source-key selection and default to no filtering when both modes are disabled and both lists are empty.
+- Large-object support is automatic. The operator should not need to choose manually between simple copy and multipart transfer for normal operation.
+- Native copy or direct streaming remains preferred, but the app may use controlled local temp-file staging as a fallback for interoperability or large-object safety. Any staged payload must live only in the dedicated runtime temp directory and must be cleaned up on success, failure, and stale-startup recovery.
+- Payload fidelity is not sufficient on its own; archive copies are expected to preserve the required object properties, user metadata, and tags or fail the object copy.
+- Idempotency is conservative: existing destination objects are trusted only after successful verification against the current source object using the stored source fingerprint.
+- Mixed-provider cleanup support depends on a portable source-fingerprint record that the archiver itself can produce and recover across runs.
+- Parallelism is allowed only inside a phase, never across phases.
+- The LocalStack-only timestamp hook is test infrastructure, not application functionality.
+- The production app image continues to be built from wheels only and must not ship the repository test suite or any LocalStack-only test code.

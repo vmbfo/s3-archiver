@@ -24,15 +24,32 @@ Run the canonical compose-backed health check flow:
 
 ```bash
 docker compose build app
+suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+source_bucket="s3-archiver-source-${suffix}"
+destination_bucket="s3-archiver-destination-${suffix}"
+mkdir -p .local
+sed \
+  -e "s/s3-archiver-source-replace-with-uuid/${source_bucket}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${destination_bucket}/" \
+  .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
-APP_ENV_FILE=.env.e2e docker compose --profile test run --rm app s3-archiver check
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${source_bucket}"
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${destination_bucket}"
+APP_ENV_FILE=".local/e2e-${suffix}.env" docker compose --profile test run --rm app s3-archiver check
 docker compose --profile test down -v
 ```
+
+Running the app container without an explicit command prints CLI help and exits `0`.
+Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
 The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
-Use `.env.example` for OCI-backed runs and `.env.e2e` for the LocalStack compose flow shown above.
+Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
+Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, `ARCHIVER_TEMP_DIR=/tmp/s3-archiver`, and disabled source whitelist/blacklist filters.
+LocalStack readiness now only proves the S3 API is reachable. The pytest integration and e2e harnesses generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test, then create and tear down those buckets in fixtures.
 
 ## Local Development
 
@@ -55,18 +72,57 @@ If your local user cannot write `/var/log/s3-archiver`, override `LOG_DIR` to a 
 If you want to run against LocalStack instead of OCI credentials:
 
 ```bash
+suffix="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+source_bucket="s3-archiver-source-${suffix}"
+destination_bucket="s3-archiver-destination-${suffix}"
+mkdir -p .local
+sed \
+  -e "s/s3-archiver-source-replace-with-uuid/${source_bucket}/" \
+  -e "s/s3-archiver-destination-replace-with-uuid/${destination_bucket}/" \
+  .env.e2e >".local/e2e-${suffix}.env"
 docker compose --profile test up -d localstack
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 ./scripts/run.sh
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 make run
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${source_bucket}"
+docker compose --profile test exec -T localstack \
+  awslocal s3api create-bucket --bucket "${destination_bucket}"
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  ./scripts/run.sh
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  make run
 ```
 
-`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
+`./scripts/run.sh` is the canonical host-native smoke-test wrapper, and `make run` delegates to it. The CLI now loads `.env` itself, while the wrapper only selects the env file through `ENV_FILE` or `APP_ENV_FILE`. Inline overrides like `S3_SOURCE_ENDPOINT_URL=...` and `S3_DESTINATION_ENDPOINT_URL=...` still win because process env takes precedence over file values. Docker Compose continues to set `/var/log/s3-archiver` inside the container so the named-volume behavior is unchanged.
 
 Run the health check directly without the wrapper:
 
 ```bash
 uv run s3-archiver check
-ENV_FILE=.env.e2e S3_ENDPOINT_URL=http://127.0.0.1:4566 uv run s3-archiver check
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  uv run s3-archiver check
+```
+
+Run one archive invocation directly:
+
+```bash
+ENV_FILE=".local/e2e-${suffix}.env" \
+  S3_SOURCE_ENDPOINT_URL=http://127.0.0.1:4566 \
+  S3_DESTINATION_ENDPOINT_URL=http://127.0.0.1:4566 \
+  uv run s3-archiver archive
+```
+
+Run the production-style local wrapper:
+
+```bash
+ENV_FILE=.env ./scripts/run_archive.sh
+make archive
+ARCHIVER_SCHEDULE_UTC=02:00 ENV_FILE=.env ./scripts/run_archive.sh schedule
+ARCHIVER_SCHEDULE_UTC=02:00 make archive-schedule
 ```
 
 Run checks:
@@ -116,9 +172,34 @@ docker run --rm \
 ## Tests
 
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
-- Integration tests run against LocalStack S3 and verify bucket access plus object round-trips.
-- E2E tests build and run the compose stack and assert the rootless container can complete `s3-archiver check` and persist logs.
-- GitHub Actions runs the same verification flow on pushes and pull requests.
+- Integration tests run against LocalStack S3 with fixture-managed per-test source and destination buckets, LocalStack endpoint guard rails, and object round-trips.
+- E2E tests build and run the compose stack, assert the rootless container can complete `s3-archiver check` and persist logs, and verify the runtime image excludes repo tests and LocalStack test support.
+- CI is currently intended to run locally through the documented scripts and Make targets.
+
+LocalStack test-only helpers live under `docker/localstack/test-support` and are mounted only into the LocalStack service by the `test` compose profile. They are not copied into the application runtime image.
+Built source distributions and wheels also carry explicit exclusions for test and LocalStack-only assets.
+
+## Local Scheduling
+
+Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick, so missed days are skipped instead of replayed.
+
+```bash
+cd /opt/s3-archiver
+ARCHIVER_SCHEDULE_UTC=02:00 ENV_FILE=/opt/s3-archiver/.env ./scripts/run_archive.sh schedule
+```
+
+The same loop is available in Docker Compose:
+
+```bash
+ARCHIVER_SCHEDULE_UTC=02:00 docker compose --profile schedule up -d scheduler
+docker compose --profile schedule logs -f scheduler
+```
+
+If you prefer a host scheduler such as systemd, point it at one `archive` invocation and keep catch-up disabled. For a timer unit, set `Persistent=false` so missed runs are not replayed.
+
+Do not schedule the same archive from GitHub Actions, host cron, systemd, and a container at the same time. Archive exclusivity is acquired before S3 preflight work starts, the lock lives in `LOG_DIR`, and stale-lock recovery is limited to timed-out runs, invalid lock metadata, or a dead owner process proven on the current host.
+
+Timeout failures now surface explicitly with `field="ARCHIVER_RUN_TIMEOUT"`, `reason="archive_run_timeout"`, and `timed_out=true` in the archive JSON payload and structured error logs.
 
 ## Conventional Commits And Releases
 

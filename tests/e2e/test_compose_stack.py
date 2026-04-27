@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import textwrap
-import time
 from pathlib import Path
 from typing import TypedDict, cast
 
 import pytest
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
 
-_COMPOSE_RETRY_DELAY_SECONDS = 2.0
-_COMPOSE_RUN_RETRIES = 4
+from tests.e2e.compose_helpers import run_compose
+from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
+
+_COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
+_COMPOSE_RETRYABLE_RETURNCODES = (137, HEALTH_CHECK_ERROR_EXIT_CODE)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -29,53 +32,76 @@ class RotationPayload(TypedDict):
 
 
 @pytest.mark.e2e()
-def test_compose_app_healthcheck_succeeds(
-    compose_env: dict[str, str],
-    localstack_service: None,
-) -> None:
-    _ = localstack_service
+def test_compose_app_without_command_shows_help(compose_env: dict[str, str]) -> None:
     result = _run_compose(compose_env, "run", "--rm", "app")
+
+    assert "Usage:" in result.stdout
+    assert "check" in result.stdout
+    assert "archive" in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_app_check_succeeds(
+    compose_env: dict[str, str],
+    localstack_bucket_pair: object,
+) -> None:
+    _ = localstack_bucket_pair
+    result = _run_compose(compose_env, "run", "--rm", "app", "check")
     final_line = result.stdout.strip().splitlines()[-1]
 
     assert '"event": "logging.configured"' in result.stdout
     assert '"event": "health.started"' in result.stdout
     assert '"event": "health.succeeded"' in result.stdout
     assert '"status": "ok"' in final_line
-    assert '"bucket": "s3-archiver-integration"' in final_line
+    assert f'"bucket": "{bucket_pair_from_env(compose_env).source}"' in final_line
 
 
 @pytest.mark.e2e()
-def test_compose_run_starts_localstack_without_pytest_orchestration(
+def test_compose_localstack_startup_does_not_precreate_test_buckets(
     compose_env: dict[str, str],
 ) -> None:
     _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
     try:
-        result = _run_compose(compose_env, "run", "--rm", "app")
+        _ = _run_compose(compose_env, "up", "-d", "localstack")
+        result = _run_compose(
+            compose_env,
+            "exec",
+            "-T",
+            "localstack",
+            "awslocal",
+            "s3api",
+            "list-buckets",
+        )
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
-    final_line = result.stdout.strip().splitlines()[-1]
+    payload = cast(dict[str, object], json.loads(result.stdout))
+    bucket_names = {
+        str(bucket["Name"])
+        for bucket in cast(list[dict[str, object]], payload.get("Buckets", []))
+        if "Name" in bucket
+    }
+    bucket_pair = bucket_pair_from_env(compose_env)
 
-    assert '"event": "health.started"' in result.stdout
-    assert '"event": "health.succeeded"' in result.stdout
-    assert '"status": "ok"' in final_line
-    assert '"bucket": "s3-archiver-integration"' in final_line
+    assert bucket_pair.source not in bucket_names
+    assert bucket_pair.destination not in bucket_names
 
 
 @pytest.mark.e2e()
 def test_compose_app_writes_persisted_logs(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
-    _ = _run_compose(compose_env, "run", "--rm", "app")
+    _ = localstack_bucket_pair
+    _ = _run_compose(compose_env, "run", "--rm", "app", "check")
     result = _run_compose(
         compose_env,
         "run",
         "--rm",
-        "app",
+        "--entrypoint",
         "sh",
+        "app",
         "-lc",
-        "test -s /var/log/s3-archiver/s3-archiver.log && cat /var/log/s3-archiver/s3-archiver.log",
+        'test -s "$LOG_DIR/s3-archiver.log" && cat "$LOG_DIR/s3-archiver.log"',
     )
 
     assert '"event": "health.succeeded"' in result.stdout
@@ -84,9 +110,9 @@ def test_compose_app_writes_persisted_logs(
 @pytest.mark.e2e()
 def test_compose_app_persists_rotated_logs(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     rotation_probe = textwrap.dedent(
         """
         /opt/venv/bin/python - <<'PY'
@@ -125,8 +151,9 @@ def test_compose_app_persists_rotated_logs(
         compose_env,
         "run",
         "--rm",
-        "app",
+        "--entrypoint",
         "sh",
+        "app",
         "-lc",
         rotation_probe,
     )
@@ -140,9 +167,9 @@ def test_compose_app_persists_rotated_logs(
 @pytest.mark.e2e()
 def test_compose_app_fails_fast_when_log_dir_is_unwritable(
     compose_env: dict[str, str],
-    localstack_service: None,
+    localstack_bucket_pair: object,
 ) -> None:
-    _ = localstack_service
+    _ = localstack_bucket_pair
     result = _run_compose(
         compose_env,
         "run",
@@ -150,6 +177,7 @@ def test_compose_app_fails_fast_when_log_dir_is_unwritable(
         "-e",
         "LOG_DIR=/proc/s3-archiver",
         "app",
+        "check",
         check=False,
     )
 
@@ -159,45 +187,83 @@ def test_compose_app_fails_fast_when_log_dir_is_unwritable(
     assert "Failed to initialize log directory" in payload["message"]
 
 
+@pytest.mark.unit()
+def test_compose_env_uses_bucket_isolated_log_dir(compose_env: dict[str, str]) -> None:
+    bucket_pair = bucket_pair_from_env(compose_env)
+    env_file = Path(compose_env["APP_ENV_FILE"])
+    env_lines = env_file.read_text(encoding="utf-8").splitlines()
+
+    assert f"LOG_DIR={compose_runtime_log_dir(bucket_pair)}" in env_lines
+
+
+@pytest.mark.e2e()
+def test_runtime_image_excludes_test_and_localstack_assets(compose_env: dict[str, str]) -> None:
+    probe = (
+        "test ! -e /app/tests && "
+        "test ! -e /app/docker/localstack && "
+        "test ! -e /opt/s3-archiver-test-support"
+    )
+    result = _run_compose(
+        compose_env,
+        "run",
+        "--rm",
+        "--no-deps",
+        "--entrypoint",
+        "sh",
+        "app",
+        "-lc",
+        probe,
+    )
+
+    assert result.returncode == 0
+
+
+@pytest.mark.e2e()
+def test_compose_scheduler_service_runs_schedule_command(
+    compose_env: dict[str, str],
+) -> None:
+    result = subprocess.run(
+        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config", "scheduler"],
+        cwd=REPO_ROOT,
+        env=compose_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "command:" in result.stdout
+    assert "- schedule" in result.stdout
+    assert "restart: unless-stopped" in result.stdout
+
+
+@pytest.mark.e2e()
+def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
+    env = os.environ.copy()
+    _ = env.pop("APP_ENV_FILE", None)
+    _ = env.pop("ENV_FILE", None)
+
+    result = subprocess.run(
+        ["docker", "compose", "--profile", "test", "--profile", "schedule", "config"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "APP_ENV_FILE: /dev/null" in result.stdout
+    assert "path: .env" not in result.stdout
+
+
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", *args]
-    for attempt in range(_COMPOSE_RUN_RETRIES + 1):
-        result = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result
-        if not check:
-            return result
-        if attempt == _COMPOSE_RUN_RETRIES or _is_non_retryable_compose_error(result):
-            raise subprocess.CalledProcessError(
-                result.returncode,
-                command,
-                output=result.stdout,
-                stderr=result.stderr,
-            )
-        time.sleep(_COMPOSE_RETRY_DELAY_SECONDS)
-    raise AssertionError("compose retry loop exhausted without returning")
-
-
-def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
-    retryable_messages = (
-        "No such container",
-        "marked for removal",
-        "HeadBucket operation: Not Found",
-        'Could not connect to the endpoint URL: "http://localstack:4566/',
-    )
-    if result.returncode in {137, HEALTH_CHECK_ERROR_EXIT_CODE}:
-        return False
-    return not any(
-        message in result.stderr or message in result.stdout for message in retryable_messages
+    return run_compose(
+        env,
+        *args,
+        check=check,
+        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
     )
 
 

@@ -14,7 +14,7 @@ import pytest
 from botocore.exceptions import ClientError
 from s3_archiver_core.settings import AppSettings
 
-harness = importlib.import_module("conftest")
+harness = importlib.import_module("tests.conftest")
 TIME_MODULE = cast(ModuleType, harness.__dict__["time"])
 RUN_COMPOSE = cast(
     Callable[..., subprocess.CompletedProcess[str]],
@@ -81,13 +81,28 @@ class BucketClientFailure:
 def _base_localstack_settings() -> AppSettings:
     return AppSettings.from_env(
         {
-            "S3_PROVIDER": "localstack",
-            "S3_ACCESS_KEY_ID": "test",
-            "S3_SECRET_ACCESS_KEY": "test",
-            "S3_REGION": "us-east-1",
-            "S3_BUCKET": "s3-archiver-integration",
-            "S3_ENDPOINT_URL": "http://127.0.0.1:4566",
-            "S3_ADDRESSING_STYLE": "path",
+            "S3_SOURCE_PROVIDER": "localstack",
+            "S3_SOURCE_ACCESS_KEY_ID": "source-test",
+            "S3_SOURCE_SECRET_ACCESS_KEY": "source-test",
+            "S3_SOURCE_REGION": "us-east-1",
+            "S3_SOURCE_BUCKET": "s3-archiver-source",
+            "S3_SOURCE_ENDPOINT_URL": "http://127.0.0.1:4566",
+            "S3_SOURCE_ADDRESSING_STYLE": "path",
+            "S3_DESTINATION_PROVIDER": "localstack",
+            "S3_DESTINATION_ACCESS_KEY_ID": "destination-test",
+            "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-test",
+            "ARCHIVER_RETENTION_DAYS": "60",
+            "ARCHIVER_ENABLE_CLEANUP": "false",
+            "ARCHIVER_MAX_WORKERS": "16",
+            "ARCHIVER_RUN_TIMEOUT": "7d",
+            "S3_SOURCE_PATH_WHITELIST_ENABLED": "false",
+            "S3_SOURCE_PATH_BLACKLIST_ENABLED": "false",
+            "S3_SOURCE_PATH_WHITELIST": "[]",
+            "S3_SOURCE_PATH_BLACKLIST": "[]",
+            "S3_DESTINATION_REGION": "us-east-1",
+            "S3_DESTINATION_BUCKET": "s3-archiver-destination",
+            "S3_DESTINATION_ENDPOINT_URL": "http://127.0.0.1:4566",
+            "S3_DESTINATION_ADDRESSING_STYLE": "path",
             "LOG_LEVEL": "INFO",
             "LOG_DIR": "/tmp/s3-archiver-logs",
         }

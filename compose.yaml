@@ -9,9 +9,30 @@ services:
         condition: service_healthy
         required: false
     env_file:
-      - ${APP_ENV_FILE:-.env}
+      - ${APP_ENV_FILE:-/dev/null}
     environment:
+      APP_ENV_FILE: ${APP_ENV_FILE:-/dev/null}
       LOG_DIR: /var/log/s3-archiver
+    volumes:
+      - app_logs:/var/log/s3-archiver
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["schedule"]
+    depends_on:
+      localstack:
+        condition: service_healthy
+        required: false
+    env_file:
+      - ${APP_ENV_FILE:-/dev/null}
+    environment:
+      APP_ENV_FILE: ${APP_ENV_FILE:-/dev/null}
+      LOG_DIR: /var/log/s3-archiver
+    profiles: ["schedule"]
+    restart: unless-stopped
     volumes:
       - app_logs:/var/log/s3-archiver
 
@@ -21,16 +42,25 @@ services:
     environment:
       AWS_DEFAULT_REGION: us-east-1
       SERVICES: s3
-      TEST_S3_BUCKET: s3-archiver-integration
     healthcheck:
-      test: ["CMD-SHELL", "awslocal s3api head-bucket --bucket \"$${TEST_S3_BUCKET}\" >/dev/null 2>&1"]
+      test:
+        [
+          "CMD-SHELL",
+          "awslocal s3api list-buckets >/dev/null 2>&1",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
     ports:
-      - "4566:4566"
+      - "${LOCALSTACK_HOST_PORT:-4566}:4566"
+    networks:
+      default:
+        aliases:
+          - localstack-alt
     volumes:
-      - ./docker/localstack/init:/etc/localstack/init/ready.d:ro
+      - ./docker/localstack/init/boot.d:/etc/localstack/init/boot.d:ro
+      - ./docker/localstack/init/ready.d:/etc/localstack/init/ready.d:ro
+      - ./docker/localstack/test-support:/opt/s3-archiver-test-support:ro
 
 volumes:
   app_logs:
