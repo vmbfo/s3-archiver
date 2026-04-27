@@ -29,6 +29,33 @@ def _fake_build_client(_location: S3LocationSettings) -> object:
     return object()
 
 
+def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
+    settings = AppSettings.from_env(base_env)
+    return replace(
+        settings,
+        retention_days=60,
+        cleanup_enabled=False,
+        temp_dir=tmp_path / "runtime-temp",
+    )
+
+
+def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:
+    return {
+        "status": "ok",
+        "phases": {
+            "list": {"status": "ok", "failure_count": 0},
+            "copy": {"status": "ok", "failure_count": 0},
+            "verify": {"status": "ok", "failure_count": 0},
+            "cleanup": {"status": "skipped", "failure_count": 0},
+        },
+    }
+
+
+class FakeReport:
+    def as_dict(self) -> dict[str, demo_module.JsonValue]:
+        return {"status": "ok", "checked_at": "2026-04-24T12:00:00+00:00"}
+
+
 @pytest.mark.unit()
 def test_demo_command_relays_visual_output_and_summary_json(
     monkeypatch: pytest.MonkeyPatch,
@@ -99,30 +126,14 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
     base_env: dict[str, str],
     tmp_path: Path,
 ) -> None:
-    settings = AppSettings.from_env(base_env)
-    settings = AppSettings(
-        source=settings.source,
-        destination=settings.destination,
-        path_filters=settings.path_filters,
-        retention_days=60,
-        cleanup_enabled=False,
-        max_workers=settings.max_workers,
-        run_timeout=settings.run_timeout,
-        temp_dir=tmp_path / "runtime-temp",
-        log_level=settings.log_level,
-        log_dir=settings.log_dir,
-    )
+    settings = _demo_settings(base_env, tmp_path)
     state: dict[str, list[object]] = {
         settings.source.bucket: [
-            _listed("demo/old.txt", 61),
-            _listed("demo/recent.txt", 10),
+            _listed("demo/2024-02-20T00-00-00.txt", 61),
+            _listed("demo/2024-02-21T00-00-00.txt", 59),
         ],
         settings.destination.bucket: [],
     }
-
-    class FakeReport:
-        def as_dict(self) -> dict[str, demo_module.JsonValue]:
-            return {"status": "ok", "checked_at": "2026-04-24T12:00:00+00:00"}
 
     class FakeArchiveBucket:
         bucket: str
@@ -137,42 +148,55 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
             return tuple(state[self.bucket])
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
-        archived = _listed("demo/old.txt", 61)
+        archived = _listed("demo/2024-02-20T00-00-00.txt", 61)
         metadata = {
             "s3-archiver-source-fingerprint": (
-                '{"source_bucket":"source","source_key":"demo/old.txt",'
+                '{"source_bucket":"source","source_key":"demo/2024-02-20T00-00-00.txt",'
                 '"source_last_modified":"2024-02-19T00:00:00+00:00","source_size":10}'
             )
         }
         state[settings.destination.bucket] = [
             replace(archived, properties=replace(archived.properties, metadata=metadata))
         ]
-        return {
-            "status": "ok",
-            "phases": {
-                "list": {"status": "ok", "failure_count": 0},
-                "copy": {"status": "ok", "failure_count": 0},
-                "verify": {"status": "ok", "failure_count": 0},
-                "cleanup": {"status": "skipped", "failure_count": 0},
-            },
+        return _ok_archive_payload()
+
+    cleanup_entries: list[demo_module.JsonValue] = [
+        {
+            "key": "demo/2024-02-20T00-00-00.txt",
+            "size": 10,
+            "last_modified_utc": "2024-02-19T00:00:00+00:00",
+            "version_id": "v1",
         }
+    ]
+    original_cleanup_entries = list(cleanup_entries)
+    cleanup_preview_payload: dict[str, demo_module.JsonValue] = {
+        "cleanup_enabled_in_settings": False,
+        "manifest_file": str(settings.temp_dir / "cleanup-preview-demo.json"),
+        "object_count": 1,
+        "entries": cleanup_entries,
+        "archive_groups": [
+            {
+                "destination_archive_key": "demo/2024-02-20.tar.gz",
+                "source_object_count": 1,
+                "skipped_object_count": 0,
+                "cleanup_status": "skipped",
+                "skipped_objects": [],
+                "source_objects": [
+                    {
+                        "key": "demo/2024-02-21T00-00-00.txt",
+                        "size": 10,
+                        "last_modified_utc": "2024-02-20T00:00:00+00:00",
+                        "version_id": None,
+                    }
+                ],
+            }
+        ],
+    }
 
     def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return {
             "status": "ok",
-            "cleanup_preview": {
-                "cleanup_enabled_in_settings": False,
-                "manifest_file": str(settings.temp_dir / "cleanup-preview-demo.json"),
-                "object_count": 1,
-                "entries": [
-                    {
-                        "key": "demo/old.txt",
-                        "size": 10,
-                        "last_modified_utc": "2024-02-19T00:00:00+00:00",
-                        "version_id": "v1",
-                    }
-                ],
-            },
+            "cleanup_preview": cleanup_preview_payload,
         }
 
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
@@ -197,6 +221,7 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
     assert manifest["object_count"] == 1
     cleanup_preview = cast(dict[str, object], summary["cleanup_preview"])
     assert cleanup_preview["object_count"] == 1
+    assert cleanup_preview["entries"] == original_cleanup_entries
     snapshots = cast(dict[str, object], summary["snapshots"])
     before_archive = cast(dict[str, object], snapshots["before_archive"])
     after_archive = cast(dict[str, object], snapshots["after_archive"])
@@ -205,7 +230,7 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
     assert summary["cleanup_preview_left_bucket_state_unchanged"] is True
     assert any("== Archive Candidates ==" in line for line in lines)
     assert any("source_last_modified=2024-02-19T00:00:00+00:00" in line for line in lines)
-    assert any("DELETE key=demo/old.txt" in line for line in lines)
+    assert any("DELETE key=demo/2024-02-20T00-00-00.txt" in line for line in lines)
     assert json.loads(lines[-1])["status"] == "ok"
 
 
@@ -215,29 +240,13 @@ def test_run_visual_demo_uses_default_utc_clock(
     base_env: dict[str, str],
     tmp_path: Path,
 ) -> None:
-    settings = AppSettings.from_env(base_env)
-    settings = AppSettings(
-        source=settings.source,
-        destination=settings.destination,
-        path_filters=settings.path_filters,
-        retention_days=60,
-        cleanup_enabled=False,
-        max_workers=settings.max_workers,
-        run_timeout=settings.run_timeout,
-        temp_dir=tmp_path / "runtime-temp",
-        log_level=settings.log_level,
-        log_dir=settings.log_dir,
-    )
+    settings = _demo_settings(base_env, tmp_path)
 
     class FrozenDateTime:
         @staticmethod
         def now(*, tz: object) -> datetime:
             _ = tz
             return datetime(2024, 4, 20, tzinfo=UTC)
-
-    class FakeReport:
-        def as_dict(self) -> dict[str, demo_module.JsonValue]:
-            return {"status": "ok", "checked_at": "2026-04-24T12:00:00+00:00"}
 
     class FakeArchiveBucket:
         bucket: str
@@ -252,15 +261,7 @@ def test_run_visual_demo_uses_default_utc_clock(
             return (_listed("demo/old.txt", 61),)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
-        return {
-            "status": "ok",
-            "phases": {
-                "list": {"status": "ok", "failure_count": 0},
-                "copy": {"status": "ok", "failure_count": 0},
-                "verify": {"status": "ok", "failure_count": 0},
-                "cleanup": {"status": "skipped", "failure_count": 0},
-            },
-        }
+        return _ok_archive_payload()
 
     def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return {

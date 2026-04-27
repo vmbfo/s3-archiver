@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from s3_archiver_core.archive import run_archive
@@ -22,7 +22,13 @@ def _clock() -> datetime:
 def _canonical_source(prefix: str) -> FakeBucket:
     return FakeBucket(
         "source",
-        tuple(_listed(f"{prefix}/age-{day}-days.txt", day) for day in CANONICAL_DAYS),
+        tuple(
+            _listed(
+                f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt",
+                day,
+            )
+            for day in CANONICAL_DAYS
+        ),
     )
 
 
@@ -47,13 +53,15 @@ def test_canonical_retention_dataset_has_exact_archive_split(
         clock=_clock,
     )
 
-    archived_days = {day for day in CANONICAL_DAYS if day > retention_days}
-    expected_keys = {f"{prefix}/age-{day}-days.txt" for day in archived_days}
+    target_day = STARTED.date() - timedelta(days=retention_days)
+    expected_key = f"{prefix}/{target_day.isoformat()}T00-00-00.txt"
+    expected_archive_key = f"{prefix}/{target_day.isoformat()}.tar.gz"
 
     assert result.ok is True
-    assert len(result.manifest.entries) == len(archived_days)
-    assert set(destination.copied) == expected_keys
+    assert [entry.key for entry in result.manifest.entries] == [expected_key]
+    assert destination.uploaded == [expected_archive_key]
+    assert destination.copied == []
     if cleanup_enabled:
-        assert {key for key, _version_id in source.deleted} == expected_keys
+        assert source.deleted == [(expected_key, "v1")]
     else:
         assert source.deleted == []

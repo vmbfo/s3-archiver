@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import gzip
+import tarfile
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from typing import Literal, cast
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -89,6 +92,26 @@ def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[s
 def read_object_text(client: S3Client, bucket: str, key: str) -> str:
     response = _retry_localstack_call(lambda: client.get_object(Bucket=bucket, Key=key))
     return cast(StreamingBody, response["Body"]).read().decode()
+
+
+def read_object_bytes(client: S3Client, bucket: str, key: str) -> bytes:
+    response = _retry_localstack_call(lambda: client.get_object(Bucket=bucket, Key=key))
+    return cast(StreamingBody, response["Body"]).read()
+
+
+def read_tar_gz_members_text(client: S3Client, bucket: str, key: str) -> dict[str, str]:
+    payload = read_object_bytes(client, bucket, key)
+    with (
+        gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as gzip_file,
+        tarfile.open(fileobj=gzip_file, mode="r:") as archive,
+    ):
+        members: dict[str, str] = {}
+        for member in archive.getmembers():
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            members[member.name] = extracted.read().decode()
+        return members
 
 
 def seed_timestamped_objects(

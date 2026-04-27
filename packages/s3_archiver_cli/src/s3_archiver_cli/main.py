@@ -6,13 +6,14 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchiveRunResult, run_archive
+from s3_archiver_core.archive import run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -224,14 +225,7 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
             debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
         )
         if result.run_id != locked_run_id:
-            result = ArchiveRunResult(
-                locked_run_id,
-                result.manifest,
-                result.copy,
-                result.verify,
-                result.cleanup,
-                result.list,
-            )
+            result = replace(result, run_id=locked_run_id)
     except Exception as exc:
         error: S3ArchiverError = (
             exc if isinstance(exc, S3ArchiverError) else ArchiveRunError(str(exc))

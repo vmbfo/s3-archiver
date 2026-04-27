@@ -17,6 +17,15 @@ from s3_archiver_core.errors import (
 )
 from s3_archiver_core.settings import AppSettings
 
+from s3_archiver_cli.archive_payloads import (
+    archive_group_payloads,
+    destination_archive_keys,
+    json_list,
+    manifest_target_day,
+    phase_status,
+    skipped_object_payloads,
+)
+
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 
@@ -55,17 +64,40 @@ def archive_result_payload(
 ) -> dict[str, JsonValue]:
     """Build the CLI payload for a completed archive invocation."""
 
+    target_day = manifest_target_day(result.manifest)
+    archive_groups = archive_group_payloads(
+        result.manifest, cleanup_status=phase_status(result.cleanup)
+    )
+    _apply_group_cleanup_statuses(result, archive_groups)
+    destination_keys = destination_archive_keys(archive_groups)
+    skipped_objects = skipped_object_payloads(result.manifest)
+    archive_group_values = json_list(archive_groups)
+    skipped_object_values = json_list(skipped_objects)
+    manifest_payload: dict[str, JsonValue] = {
+        "object_count": len(result.manifest.entries),
+        "target_day": target_day,
+        "archive_count": len(archive_groups),
+        "source_object_count": len(result.manifest.entries),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": destination_keys,
+        "skipped_objects": skipped_object_values,
+        "archive_groups": archive_group_values,
+        "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
+        "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
+    }
     return {
         "status": status,
         "run_id": result.run_id,
         "source_bucket": settings.source.bucket,
         "destination_bucket": settings.destination.bucket,
         "log_file": str(log_file),
-        "manifest": {
-            "object_count": len(result.manifest.entries),
-            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
-            "retention_cutoff_utc": result.manifest.retention_cutoff_utc.isoformat(),
-        },
+        "target_day": target_day,
+        "archive_count": len(archive_groups),
+        "source_object_count": len(result.manifest.entries),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": destination_keys,
+        "archive_groups": archive_group_values,
+        "manifest": manifest_payload,
         "phases": {
             "list": _phase_payload(result.list),
             "copy": _phase_payload(result.copy),
@@ -126,12 +158,26 @@ def error_payload(
 
 
 def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
-    status = "error" if not result.ok else "skipped" if result.skipped else "ok"
     return {
-        "status": status,
+        "status": phase_status(result),
         "failure_count": len(result.failures),
         "failures": list(result.failures),
     }
+
+
+def _apply_group_cleanup_statuses(
+    result: ArchiveRunResult, groups: list[dict[str, JsonValue]]
+) -> None:
+    if not result.cleanup.ok or result.cleanup.skipped:
+        return
+    verified = set(result.verified_archive_keys)
+    skipped = set(result.skipped_archive_keys)
+    for group in groups:
+        key = group["destination_archive_key"]
+        if key in skipped:
+            group["cleanup_status"] = "skipped"
+        elif key in verified:
+            group["cleanup_status"] = "ok"
 
 
 def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:

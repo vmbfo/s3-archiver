@@ -17,6 +17,19 @@ from s3_archiver_core.s3 import S3ListedObject, build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli.archive_payloads import (
+    archive_group_payloads,
+    json_list,
+    manifest_target_day,
+    skipped_object_payloads,
+)
+from s3_archiver_cli.visual_demo_output import emit_archive_result as _emit_archive_result
+from s3_archiver_cli.visual_demo_output import emit_cleanup_preview as _emit_cleanup_preview
+from s3_archiver_cli.visual_demo_output import emit_health as _emit_health
+from s3_archiver_cli.visual_demo_output import emit_intro as _emit_intro
+from s3_archiver_cli.visual_demo_output import emit_manifest as _emit_manifest
+from s3_archiver_cli.visual_demo_output import emit_snapshot as _emit_snapshot
+
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type ArchiveRunner = Callable[[AppSettings, Path], dict[str, JsonValue]]
@@ -77,6 +90,20 @@ def run_visual_demo(
     _emit_cleanup_preview(emit, cleanup_preview)
     after_preview_snapshot = _snapshot_payload(source, destination, eligible_keys=cleanup_keys)
     _emit_snapshot(emit, "After cleanup preview", after_preview_snapshot)
+    archive_groups = archive_group_payloads(manifest)
+    skipped_objects = skipped_object_payloads(manifest)
+    archive_manifest: dict[str, JsonValue] = {
+        "object_count": len(manifest.entries),
+        "target_day": manifest_target_day(manifest),
+        "archive_count": len(archive_groups),
+        "source_object_count": len(manifest.entries),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": [group["destination_archive_key"] for group in archive_groups],
+        "archive_groups": json_list(archive_groups),
+        "skipped_objects": json_list(skipped_objects),
+        "retention_cutoff_utc": manifest.retention_cutoff_utc.isoformat(),
+        "entries": json_list([_manifest_entry_payload(entry) for entry in manifest.entries]),
+    }
 
     summary: dict[str, JsonValue] = {
         "status": "ok" if archive_payload.get("status") == "ok" else "error",
@@ -86,11 +113,7 @@ def run_visual_demo(
         "cleanup_enabled_in_settings": settings.cleanup_enabled,
         "run_started_at_utc": started.isoformat(),
         "health": health,
-        "archive_manifest": {
-            "object_count": len(manifest.entries),
-            "retention_cutoff_utc": manifest.retention_cutoff_utc.isoformat(),
-            "entries": [_manifest_entry_payload(entry) for entry in manifest.entries],
-        },
+        "archive_manifest": archive_manifest,
         "archive_result": archive_payload,
         "cleanup_preview": cleanup_preview,
         "snapshots": {
@@ -106,92 +129,6 @@ def run_visual_demo(
     emit("Demo summary JSON follows on the next line.")
     emit(json.dumps(summary, sort_keys=True))
     return summary
-
-
-def _emit_intro(emit: Emitter, settings: AppSettings, log_file: Path, started: datetime) -> None:
-    emit("== S3 Archiver Visual Demo ==")
-    emit(f"source bucket: {settings.source.bucket}")
-    emit(f"destination bucket: {settings.destination.bucket}")
-    emit(f"cleanup enabled in settings: {settings.cleanup_enabled}")
-    emit(f"log file: {log_file}")
-    emit(f"run started at utc: {started.isoformat()}")
-
-
-def _emit_health(emit: Emitter, health: dict[str, JsonValue]) -> None:
-    emit("")
-    emit("== Preflight ==")
-    emit(f"status: {health['status']}")
-    emit(f"checked_at: {health['checked_at']}")
-
-
-def _emit_snapshot(emit: Emitter, title: str, snapshot: dict[str, JsonValue]) -> None:
-    emit("")
-    emit(f"== {title} ==")
-    emit(
-        f"source objects: {snapshot['source_object_count']} "
-        + f"(versioning={snapshot['source_versioning_state']})"
-    )
-    for row in cast(list[dict[str, JsonValue]], snapshot["source_objects"]):
-        emit(
-            "SOURCE "
-            + f"key={row['key']} "
-            + f"size={row['size']} "
-            + f"last_modified={row['last_modified_utc']} "
-            + f"eligible={row['eligible_for_follow_up']} "
-            + f"present_in_destination={row['present_in_destination']}"
-        )
-    emit(
-        f"destination objects: {snapshot['destination_object_count']} "
-        + f"(versioning={snapshot['destination_versioning_state']})"
-    )
-    for row in cast(list[dict[str, JsonValue]], snapshot["destination_objects"]):
-        source_modified = row["source_last_modified"]
-        source_detail = f" source_last_modified={source_modified}" if source_modified else ""
-        emit(
-            f"DEST   key={row['key']} size={row['size']} "
-            + f"last_modified={row['last_modified_utc']}{source_detail}"
-        )
-
-
-def _emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
-    emit("")
-    emit("== Archive Candidates ==")
-    emit(f"retention cutoff utc: {manifest.retention_cutoff_utc.isoformat()}")
-    emit(f"eligible object count: {len(manifest.entries)}")
-    for entry in manifest.entries:
-        emit(
-            "COPY   "
-            + f"key={entry.key} "
-            + f"size={entry.size} "
-            + f"last_modified={entry.last_modified.isoformat()} "
-            + f"version_id={entry.version_id}"
-        )
-
-
-def _emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
-    emit("")
-    emit("== Archive Result ==")
-    emit(f"status: {payload['status']}")
-    phases = cast(dict[str, dict[str, JsonValue]], payload["phases"])
-    for phase_name in ("list", "copy", "verify", "cleanup"):
-        phase = phases[phase_name]
-        emit(f"{phase_name}: status={phase['status']} failure_count={phase['failure_count']}")
-
-
-def _emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) -> None:
-    emit("")
-    emit("== Cleanup Preview ==")
-    emit(f"cleanup enabled in settings: {cleanup_preview['cleanup_enabled_in_settings']}")
-    emit(f"preview manifest file: {cleanup_preview['manifest_file']}")
-    emit(f"would delete object count: {cleanup_preview['object_count']}")
-    for row in cast(list[dict[str, JsonValue]], cleanup_preview["entries"]):
-        emit(
-            "DELETE "
-            + f"key={row['key']} "
-            + f"size={row['size']} "
-            + f"last_modified={row['last_modified_utc']} "
-            + f"version_id={row['version_id']}"
-        )
 
 
 def _snapshot_payload(
@@ -268,7 +205,9 @@ def _manifest_key_set(manifest: ArchiveManifest) -> set[tuple[str, str | None]]:
 
 
 def _payload_key_set(cleanup_preview: dict[str, JsonValue]) -> set[tuple[str, str | None]]:
-    entries = cast(list[dict[str, JsonValue]], cleanup_preview["entries"])
+    entries = list(cast(list[dict[str, JsonValue]], cleanup_preview.get("entries", [])))
+    for group in cast(list[dict[str, JsonValue]], cleanup_preview.get("archive_groups", [])):
+        entries.extend(cast(list[dict[str, JsonValue]], group.get("source_objects", [])))
     return {
         (
             str(entry["key"]),

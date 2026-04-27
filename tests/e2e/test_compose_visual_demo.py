@@ -58,9 +58,11 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     seed_now = datetime.now(tz=UTC)
     daily_keys = _daily_demo_keys(source_prefix, seed_now=seed_now)
     source_keys = set(daily_keys.values())
-    archived_days = {day for day in CANONICAL_RETENTION_DATASET_DAYS if day >= DEMO_RETENTION_DAYS}
+    archived_days = {DEMO_RETENTION_DAYS}
     archived_keys = {daily_keys[day] for day in archived_days}
     retained_keys = source_keys - archived_keys
+    target_day = (seed_now.astimezone(UTC) - timedelta(days=DEMO_RETENTION_DAYS)).date()
+    archive_keys = {f"{source_prefix}/{target_day}.tar.gz"}
     _seed_daily_demo_objects(
         source_client,
         bucket_pair.source,
@@ -79,17 +81,27 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert "== Archive Candidates ==" in result.stdout
     assert "== Cleanup Preview ==" in result.stdout
     assert all(f"SOURCE key={key}" in result.stdout for key in source_keys)
-    assert all(f"COPY   key={key}" in result.stdout for key in archived_keys)
-    assert not any(f"COPY   key={key}" in result.stdout for key in retained_keys)
+    assert f"GROUP  target_day={target_day}" in result.stdout
+    assert all(f"destination_archive_key={key}" in result.stdout for key in archive_keys)
+    assert all(
+        f"SKIP   key={key} reason=outside target day" in result.stdout for key in retained_keys
+    )
+    assert "COPY   key=" not in result.stdout
     assert all(f"DELETE key={key}" in result.stdout for key in archived_keys)
     assert not any(f"DELETE key={key}" in result.stdout for key in retained_keys)
     assert payload["status"] == "ok"
     archive_manifest = cast(dict[str, object], payload["archive_manifest"])
     cleanup_preview = cast(dict[str, object], payload["cleanup_preview"])
+    archive_result = cast(dict[str, object], payload["archive_result"])
     assert archive_manifest["object_count"] == len(archived_keys)
+    assert archive_manifest["destination_archive_keys"] == sorted(archive_keys)
+    assert archive_manifest["archive_count"] == len(archive_keys)
     assert cleanup_preview["object_count"] == len(archived_keys)
+    assert cleanup_preview["destination_archive_keys"] == sorted(archive_keys)
+    assert _cleanup_statuses(archive_result) == ["skipped"]
+    assert _cleanup_statuses(cleanup_preview) == ["skipped"]
     assert payload["cleanup_preview_left_bucket_state_unchanged"] is True
-    assert listed_keys(destination_client, bucket_pair.destination) == archived_keys
+    assert listed_keys(destination_client, bucket_pair.destination) == archive_keys
     assert listed_keys(source_client, bucket_pair.source) == source_keys
     print_verified_summary(
         payload,
@@ -190,3 +202,8 @@ def _run_visual_demo(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 def _demo_payload(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
+
+
+def _cleanup_statuses(payload: dict[str, object]) -> list[str]:
+    groups = cast(list[dict[str, object]], payload["archive_groups"])
+    return [str(group["cleanup_status"]) for group in groups]
