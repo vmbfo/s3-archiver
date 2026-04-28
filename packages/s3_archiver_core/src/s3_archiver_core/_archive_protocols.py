@@ -31,6 +31,11 @@ class ArchiveBucket(Protocol):
         """Return the bucket name."""
         ...
 
+    @property
+    def temp_dir(self) -> Path:
+        """Return the runtime temp directory for staged files."""
+        ...
+
     def versioning_state(self) -> VersioningState:
         """Return bucket versioning state."""
         ...

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 class FakeReadableBody:
@@ -76,6 +77,7 @@ class FakeBucket:
     """In-memory archive bucket test double."""
 
     bucket: str
+    temp_dir: Path
     copied: list[str]
     uploaded: list[str]
     deleted: list[tuple[str, str | None]]
@@ -98,8 +100,10 @@ class FakeBucket:
         payloads: Mapping[str, bytes] | None = None,
         version_payloads: Mapping[tuple[str, str | None], bytes] | None = None,
         versioning_state: VersioningState = "Enabled",
+        temp_dir: Path | None = None,
     ) -> None:
         self.bucket = bucket
+        self.temp_dir = temp_dir or default_temp_dir()
         self.copied = []
         self.uploaded = []
         self.deleted = []

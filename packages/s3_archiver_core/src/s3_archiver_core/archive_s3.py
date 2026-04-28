@@ -28,7 +28,7 @@ from s3_archiver_core.s3 import (
     S3ObjectProperties,
     VersioningState,
 )
-from s3_archiver_core.s3_transfer import copy_s3_object
+from s3_archiver_core.s3_transfer import copy_s3_object, upload_s3_file
 from s3_archiver_core.temp_files import default_temp_dir
 
 
@@ -115,14 +115,14 @@ class S3ArchiveBucket:
         self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
     ) -> None:
         """Upload an archive file with deterministic metadata."""
-        with archive_path.open("rb") as file:
-            _ = self.client.put_object(
-                Bucket=self.bucket,
-                Key=destination_key,
-                Body=file,
-                Metadata=dict(metadata),
-                ContentType="application/gzip",
-            )
+        upload_s3_file(
+            cast(S3Client, self.client),
+            self.bucket,
+            destination_key,
+            archive_path,
+            metadata,
+            content_type="application/gzip",
+        )
 
     def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
         properties = self.head_object(key, version_id)

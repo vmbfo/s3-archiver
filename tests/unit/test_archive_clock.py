@@ -11,10 +11,12 @@ from s3_archiver_core._archive_protocols import ArchiveReadableBody
 from s3_archiver_core.archive import run_archive
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
+from s3_archiver_core.temp_files import default_temp_dir
 
 
 class EmptyBucket:
     bucket: str = "bucket"
+    temp_dir: Path = default_temp_dir()
 
     def versioning_state(self) -> VersioningState:
         return "Disabled"

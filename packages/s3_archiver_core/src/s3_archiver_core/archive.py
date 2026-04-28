@@ -25,6 +25,7 @@ from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_workers import run_archive_group_workers, run_archive_workers
+from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
 __all__ = (
     "ARCHIVE_SHA256_METADATA_KEY",
@@ -199,8 +200,9 @@ def _copy_group(
         for entry in group.entries:
             if debug_logger is not None:
                 debug_logger(entry, "deterministic_tar_gzip")
+        destination.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            "wb", delete=False, prefix="s3-archiver-archive-"
+            "wb", delete=False, dir=destination.temp_dir, prefix=TRANSFER_TEMP_PREFIX
         ) as archive_file:
             archive_path = Path(archive_file.name)
         write_tar_gz_archive(source, group, archive_path)
