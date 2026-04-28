@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-_COMPOSE_RETRY_DELAY_SECONDS = 1.0
-_COMPOSE_RUN_RETRIES = 2
+_COMPOSE_RETRY_DELAY_SECONDS = 2.0
+_COMPOSE_RUN_RETRIES = 4
 
 
 @pytest.mark.e2e()
@@ -68,6 +68,14 @@ def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess
 
 
 def _is_non_retryable_compose_error(result: subprocess.CompletedProcess[str]) -> bool:
-    if result.returncode == 137 or "No such container" in result.stderr:
+    retryable_messages = (
+        "No such container",
+        "marked for removal",
+        "HeadBucket operation: Not Found",
+        'Could not connect to the endpoint URL: "http://localstack:4566/',
+    )
+    if result.returncode == 137:
         return False
-    return "HeadBucket operation: Not Found" not in result.stdout
+    return not any(
+        message in result.stderr or message in result.stdout for message in retryable_messages
+    )
