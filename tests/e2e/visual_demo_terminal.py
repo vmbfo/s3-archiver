@@ -52,7 +52,7 @@ def run_visual_demo(
     print(
         "  Seeded "
         + f"{seeded_count} source objects: "
-        + "one per day from 365 days ago through today."
+        + "valid, invalid, and unsafe-key timestamp examples."
     )
     print(f"  Retention policy: archive objects older than {retention_days} days.")
     print("  The next lines are live output from `s3-archiver demo`, with JSON logs hidden.")
@@ -188,19 +188,16 @@ def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
             print("  Confirming configuration, logging, and bucket access before archiving.")
         case "== Before archive ==":
             _print_step("2/5", "Starting bucket state")
-            print(
-                "  s3 ls-style view before archive: source has daily files; destination is empty."
-            )
+            print("  s3 ls-style view before archive: timestamped source; empty destination.")
         case "== Archive Candidates ==":
             _print_step("3/5", "Archive selection")
             print(
-                "  Applying the strict runtime retention cutoff. "
-                + f"Days 0-{retention_days - 1} stay put; days "
-                + f"{retention_days}-365 are archive candidates."
+                "  Applying strict target-day selection from filenames and path folders "
+                + f"using {retention_days} retention days."
             )
             print(
-                "  The age-60 boundary file was seeded just before the run, "
-                + "so by runtime it is already older than the cutoff."
+                "  The seed includes flat filenames, YYYY/MM/DD folders, compact dates, "
+                + "offsets, Z suffixes, and retained outside-day objects."
             )
         case "Running archive workflow against the configured buckets...":
             _print_step("4/5", "Archive execution")

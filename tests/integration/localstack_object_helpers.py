@@ -114,6 +114,17 @@ def read_tar_gz_members_text(client: S3Client, bucket: str, key: str) -> dict[st
         return members
 
 
+def read_tar_gz_member_pax_headers(
+    client: S3Client, bucket: str, key: str
+) -> dict[str, dict[str, str]]:
+    payload = read_object_bytes(client, bucket, key)
+    with (
+        gzip.GzipFile(fileobj=BytesIO(payload), mode="rb") as gzip_file,
+        tarfile.open(fileobj=gzip_file, mode="r:") as archive,
+    ):
+        return {member.name: dict(member.pax_headers) for member in archive.getmembers()}
+
+
 def seed_timestamped_objects(
     client: S3Client,
     bucket: str,
