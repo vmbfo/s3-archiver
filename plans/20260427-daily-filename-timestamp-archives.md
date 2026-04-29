@@ -20,7 +20,8 @@
   - Examples:
     - `data/fae/2026/04/13/07/2026-04-13T07-00-00.xml` -> `data/fae/2026-04-13.tar.gz`
     - `data/harmonie/HARMONIE_DINI_SF_2026-04-24T000000Z_2026-04-24T000000Z.bz2` -> `data/harmonie/2026-04-24.tar.gz`
-  - Tar members use the full original S3 key.
+  - Tar members use the full original S3 key when the key is safe as a tar member name.
+  - Unsafe tar member names are rewritten to deterministic `s3-archiver-safe/<sha256(original-key)>` member names, with the original S3 key preserved in the `s3-archiver.original-key` pax header.
 - Replace S3-to-S3 copy:
   - Download each manifest object into container temp storage or stream through the container.
   - Create deterministic `tar.gz` output with stable member ordering and metadata.
@@ -46,7 +47,7 @@
 - Unit-test timestamp parsing for ISO variants, `Z`, dash-separated times, path segment dates, multiple equal timestamps, conflicting timestamps, and no-timestamp skips.
 - Unit-test target-day selection so runs never include partial days or multiple UTC dates.
 - Unit-test flattening for `data/fae/...` and `data/harmonie/...`.
-- Unit-test deterministic tar creation, full S3 key tar member names, manifest hash metadata, and archive hash metadata.
+- Unit-test deterministic tar creation, full safe S3 key tar member names, unsafe member-name rewrite plus original-key pax header behavior, manifest hash metadata, and archive hash metadata.
 - Unit-test existing archive cases: matching hash permits cleanup, differing/missing metadata skips cleanup.
 - Unit-test relaxed cleanup: no source `LastModified` recheck before delete; versioned deletes still use exact version IDs.
 - Run the quick validation pass only: focused unit tests plus type/lint checks for changed modules. Full suite/reviewer loop remains reserved for push.
