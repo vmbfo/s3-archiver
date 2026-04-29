@@ -118,7 +118,8 @@ def build_archive_manifest(
 ) -> ArchiveManifest:
     """Build a target-day archive manifest from source object keys."""
 
-    target_day = run_started_at_utc.date() - timedelta(days=retention_days)
+    run_started = _as_utc(run_started_at_utc)
+    target_day = run_started.date() - timedelta(days=retention_days)
     cutoff = datetime.combine(target_day, time.min, UTC)
     entries: list[ManifestEntry] = []
     skipped: list[SkippedObject] = []
@@ -135,9 +136,7 @@ def build_archive_manifest(
             continue
         entries.append(_entry(source.bucket, listed, timestamp, timestamp_source, target_day))
     grouped = _archive_groups(tuple(entries), target_day)
-    return ArchiveManifest(
-        run_started_at_utc, cutoff, tuple(entries), target_day, grouped, tuple(skipped)
-    )
+    return ArchiveManifest(run_started, cutoff, tuple(entries), target_day, grouped, tuple(skipped))
 
 
 def _entry(
@@ -180,3 +179,9 @@ def _archive_groups(
 
 def _root_entries(entries: tuple[ManifestEntry, ...], root: str) -> Iterable[ManifestEntry]:
     return (entry for entry in entries if entry.archive_root == root)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

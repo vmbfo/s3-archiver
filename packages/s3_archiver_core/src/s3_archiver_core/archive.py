@@ -53,7 +53,7 @@ def run_archive(
     """Run one archive pass from source objects into daily destination archives."""
 
     now = clock or (lambda: datetime.now(tz=UTC))
-    started = run_started_at_utc or now()
+    started = _as_utc(run_started_at_utc or now())
     deadline = started + options.run_timeout
     run_id = uuid4().hex
     if run_lock is not None and not run_lock.acquire(
@@ -287,3 +287,9 @@ def _empty_manifest(started: datetime, options: ArchiveOptions) -> ArchiveManife
     target_day = started.date() - timedelta(days=options.retention_days)
     cutoff = datetime.combine(target_day, datetime.min.time(), UTC)
     return ArchiveManifest(started, cutoff, (), target_day, (), ())
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

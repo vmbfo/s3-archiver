@@ -17,6 +17,12 @@ from s3_archiver_core.errors import (
 )
 from s3_archiver_core.settings import AppSettings
 
+from s3_archiver_cli.archive_cleanup_status import (
+    apply_group_cleanup_statuses,
+    failure_key,
+    mismatch_payload,
+    payload_cleanup_known_keys,
+)
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
     destination_archive_keys,
@@ -68,7 +74,7 @@ def archive_result_payload(
     archive_groups = archive_group_payloads(
         result.manifest, cleanup_status=phase_status(result.cleanup)
     )
-    _apply_group_cleanup_statuses(result, archive_groups)
+    apply_group_cleanup_statuses(result, archive_groups)
     destination_keys = destination_archive_keys(archive_groups)
     skipped_objects = skipped_object_payloads(result.manifest)
     archive_group_values = json_list(archive_groups)
@@ -117,14 +123,15 @@ def archive_failure_payload(
     phase, detail = _first_archive_failure(result)
     timed_out = detail == "archive run timed out"
     payload = archive_result_payload("error", result, settings, log_file)
+    cleanup_known_keys = payload_cleanup_known_keys(phase, payload)
     payload.update(
         {
             "phase": f"archive.{phase}",
             "field": "ARCHIVER_RUN_TIMEOUT" if timed_out else None,
             "message": detail if timed_out else "archive run failed",
             "details": detail,
-            "key": _failure_key(detail),
-            "mismatch": _mismatch_payload(phase, detail),
+            "key": failure_key(detail, cleanup_known_keys),
+            "mismatch": mismatch_payload(phase, detail, cleanup_known_keys),
             "reason": "archive_run_timeout" if timed_out else None,
             "timed_out": timed_out,
         }
@@ -165,61 +172,11 @@ def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
     }
 
 
-def _apply_group_cleanup_statuses(
-    result: ArchiveRunResult, groups: list[dict[str, JsonValue]]
-) -> None:
-    if not result.cleanup.ok or result.cleanup.skipped:
-        return
-    verified = set(result.verified_archive_keys)
-    skipped = set(result.skipped_archive_keys)
-    for group in groups:
-        key = group["destination_archive_key"]
-        if key in skipped:
-            group["cleanup_status"] = "skipped"
-        elif key in verified:
-            group["cleanup_status"] = "ok"
-
-
 def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:
     for phase in (result.list, result.copy, result.verify, result.cleanup):
         if phase.failures:
             return phase.phase, phase.failures[0]
     return "unknown", "archive run failed"
-
-
-def _failure_key(detail: str) -> str | None:
-    key, separator, _ = detail.partition(":")
-    return key if separator else None
-
-
-def _mismatch_payload(phase: str, detail: str) -> dict[str, JsonValue] | None:
-    if detail == "archive run timed out":
-        return None
-    key, separator, remainder = detail.partition(":")
-    return {
-        "phase": phase,
-        "key": key if separator else None,
-        "category": _mismatch_category(remainder.strip() if separator else detail),
-        "detail": remainder.strip() if separator else detail,
-    }
-
-
-def _mismatch_category(detail: str) -> str:
-    normalized = detail.lower()
-    for category in (
-        "source fingerprint",
-        "size",
-        "object property",
-        "metadata",
-        "tag",
-        "content",
-        "source changed",
-        "destination missing",
-        "source missing",
-    ):
-        if category in normalized:
-            return category.replace(" ", "_")
-    return "archive_failure"
 
 
 def _error_field(error: S3ArchiverError) -> str | None:
