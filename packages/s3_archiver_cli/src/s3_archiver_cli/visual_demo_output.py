@@ -21,10 +21,17 @@ type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type Emitter = Callable[[str], None]
 
 
-def emit_intro(emit: Emitter, settings: AppSettings, log_file: Path, started: datetime) -> None:
+def emit_intro(
+    emit: Emitter,
+    settings: AppSettings,
+    log_file: Path,
+    started: datetime,
+    *,
+    title: str = "== S3 Archiver Visual Demo ==",
+) -> None:
     """Emit the visual demo heading and runtime context."""
 
-    emit("== S3 Archiver Visual Demo ==")
+    emit(title)
     emit(f"source bucket: {settings.source.bucket}")
     emit(f"destination bucket: {settings.destination.bucket}")
     emit(f"cleanup enabled in settings: {settings.cleanup_enabled}")

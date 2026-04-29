@@ -13,6 +13,8 @@ from typing import cast
 import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.visual_demo as demo_module
+import s3_archiver_cli.visual_demo_command as demo_command_module
+import typer
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
@@ -32,10 +34,7 @@ def _fake_build_client(_location: S3LocationSettings) -> object:
 def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
     settings = AppSettings.from_env(base_env)
     return replace(
-        settings,
-        retention_days=60,
-        cleanup_enabled=False,
-        temp_dir=tmp_path / "runtime-temp",
+        settings, retention_days=60, cleanup_enabled=False, temp_dir=tmp_path / "runtime-temp"
     )
 
 
@@ -63,26 +62,25 @@ def test_demo_command_relays_visual_output_and_summary_json(
 ) -> None:
     monkeypatch.setattr(os, "environ", base_env)
 
-    def run_demo(
-        _settings: AppSettings,
-        _log_file: Path,
+    def run_command(
         *,
+        perform_cleanup: bool,
+        run_payload_command: object,
         archive_runner: object,
         cleanup_preview_runner: object,
         emit: Callable[[str], None],
-    ) -> dict[str, demo_module.JsonValue]:
-        _ = archive_runner
-        _ = cleanup_preview_runner
+    ) -> None:
+        _ = run_payload_command, archive_runner, cleanup_preview_runner
+        assert perform_cleanup is False
         emit("== S3 Archiver Visual Demo ==")
         payload: dict[str, demo_module.JsonValue] = {
             "status": "ok",
             "cleanup_preview_left_bucket_state_unchanged": True,
         }
         emit(json.dumps(payload, sort_keys=True))
-        return payload
 
     monkeypatch.setattr(cli_module, "configure_logging", _configure_logging)
-    monkeypatch.setattr(cli_module, "_run_visual_demo", run_demo)
+    monkeypatch.setattr(demo_command_module, "run", run_command)
 
     result = RUNNER.invoke(cli_module.app, ["demo"])
 
@@ -100,20 +98,19 @@ def test_demo_command_exits_non_zero_when_summary_reports_error(
     monkeypatch.setattr(os, "environ", base_env)
     monkeypatch.setattr(cli_module, "configure_logging", _configure_logging)
 
-    def run_demo(
-        _settings: AppSettings,
-        _log_file: Path,
+    def run_command(
         *,
+        perform_cleanup: bool,
+        run_payload_command: object,
         archive_runner: object,
         cleanup_preview_runner: object,
         emit: Callable[[str], None],
-    ) -> dict[str, demo_module.JsonValue]:
-        _ = archive_runner
-        _ = cleanup_preview_runner
+    ) -> None:
+        _ = run_payload_command, archive_runner, cleanup_preview_runner, emit, perform_cleanup
         emit(json.dumps({"status": "error"}, sort_keys=True))
-        return {"status": "error"}
+        raise typer.Exit(code=1)
 
-    monkeypatch.setattr(cli_module, "_run_visual_demo", run_demo)
+    monkeypatch.setattr(demo_command_module, "run", run_command)
 
     result = RUNNER.invoke(cli_module.app, ["demo"])
 

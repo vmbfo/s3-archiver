@@ -14,7 +14,7 @@ from s3_archiver_core.archive_tar import ORIGINAL_KEY_PAX_HEADER
 from s3_archiver_core.s3 import S3Client
 
 from tests.e2e.compose_helpers import run_compose
-from tests.e2e.visual_demo_terminal import print_verified_summary
+from tests.e2e.visual_demo_summary import print_verified_summary
 from tests.e2e.visual_demo_terminal import run_visual_demo as render_visual_demo
 from tests.integration.localstack_harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
@@ -34,7 +34,7 @@ from tests.integration.localstack_object_helpers import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEMO_RETENTION_DAYS = 60
 DEMO_SEEDED_OBJECT_COUNT = 16
-_COMPOSE_RETRYABLE_MESSAGES = (
+COMPOSE_RETRYABLE_MESSAGES = (
     "HeadBucket operation: Not Found",
     "Connection was closed before we received a valid response",
     'optional dependency "localstack" failed to start',
@@ -44,9 +44,9 @@ _COMPOSE_RETRYABLE_MESSAGES = (
     "network s3-archiver_default not found",
     'container name "/s3-archiver-localstack-1" is already in use',
 )
-_COMPOSE_RETRYABLE_RETURNCODES = (4, 137)
-_VISUAL_DEMO_RETRIES = 4
-_VISUAL_DEMO_RETRY_DELAY_SECONDS = 2.0
+COMPOSE_RETRYABLE_RETURNCODES = (4, 137)
+VISUAL_DEMO_RETRIES = 4
+VISUAL_DEMO_RETRY_DELAY_SECONDS = 2.0
 
 
 @pytest.mark.e2e()
@@ -56,29 +56,29 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     bucket_pair = localstack_bucket_pair
-    source_client = _client(tmp_path, bucket_pair, "source")
-    destination_client = _client(tmp_path, bucket_pair, "destination")
+    source_client = demo_client(tmp_path, bucket_pair, "source")
+    destination_client = demo_client(tmp_path, bucket_pair, "destination")
     source_prefix = "compose-demo"
     seed_now = datetime.now(tz=UTC)
     target_day = (seed_now.astimezone(UTC) - timedelta(days=DEMO_RETENTION_DAYS)).date()
-    archived_keys = {key for _, key in _target_day_demo_cases(source_prefix, target_day)}
-    retained_keys = set(_retained_demo_keys(source_prefix, target_day))
-    invalid_keys = set(_invalid_demo_keys(source_prefix, target_day))
+    archived_keys = {key for _, key in target_day_demo_cases(source_prefix, target_day)}
+    retained_keys = set(retained_demo_keys(source_prefix, target_day))
+    invalid_keys = set(invalid_demo_keys(source_prefix, target_day))
     source_keys = archived_keys | retained_keys | invalid_keys
-    archive_members = _expected_archive_members(source_prefix, target_day)
+    archive_members = expected_archive_members(source_prefix, target_day)
     archive_keys = set(archive_members)
-    _seed_daily_demo_objects(
+    seed_daily_demo_objects(
         source_client,
         bucket_pair.source,
         prefix=source_prefix,
         seed_now=seed_now,
     )
-    env_file = _write_demo_env_file(tmp_path, bucket_pair)
+    env_file = write_demo_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
 
     result = _run_visual_demo(run_env)
-    payload = _demo_payload(result.stdout)
+    payload = demo_payload(result.stdout)
 
     assert "== S3 Archiver Visual Demo ==" in result.stdout
     assert "== Before archive ==" in result.stdout
@@ -107,12 +107,12 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert archive_manifest["skipped_object_count"] == len(retained_keys | invalid_keys)
     assert cleanup_preview["object_count"] == len(archived_keys)
     assert cleanup_preview["destination_archive_keys"] == sorted(archive_keys)
-    assert _cleanup_statuses(archive_result) == ["skipped"] * len(archive_keys)
-    assert _cleanup_statuses(cleanup_preview) == ["skipped"] * len(archive_keys)
+    assert cleanup_statuses(archive_result) == ["skipped"] * len(archive_keys)
+    assert cleanup_statuses(cleanup_preview) == ["skipped"] * len(archive_keys)
     assert payload["cleanup_preview_left_bucket_state_unchanged"] is True
     assert listed_keys(destination_client, bucket_pair.destination) == archive_keys
     for archive_key, source_key in archive_members.items():
-        member_name = _archive_member_name(source_key)
+        member_name = archive_member_name(source_key)
         assert read_tar_gz_members_text(
             destination_client, bucket_pair.destination, archive_key
         ) == {member_name: f"payload for {source_key}\n"}
@@ -125,11 +125,11 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
         payload,
         total_count=len(source_keys),
         copied_count=len(archived_keys),
-        retained_count=len(retained_keys),
+        remaining_source_count=len(retained_keys | invalid_keys),
     )
 
 
-def _seed_daily_demo_objects(
+def seed_daily_demo_objects(
     client: S3Client,
     bucket: str,
     *,
@@ -139,9 +139,9 @@ def _seed_daily_demo_objects(
     seeded_now = seed_now.astimezone(UTC).replace(microsecond=0)
     target_day = (seeded_now - timedelta(days=DEMO_RETENTION_DAYS)).date()
     keys_by_age = {
-        DEMO_RETENTION_DAYS: tuple(key for _, key in _target_day_demo_cases(prefix, target_day)),
-        DEMO_RETENTION_DAYS - 1: _retained_demo_keys(prefix, target_day),
-        0: _invalid_demo_keys(prefix, target_day),
+        DEMO_RETENTION_DAYS: tuple(key for _, key in target_day_demo_cases(prefix, target_day)),
+        DEMO_RETENTION_DAYS - 1: retained_demo_keys(prefix, target_day),
+        0: invalid_demo_keys(prefix, target_day),
     }
     for age_days, keys in keys_by_age.items():
         target = seeded_now - timedelta(days=age_days)
@@ -157,7 +157,7 @@ def _seed_daily_demo_objects(
             )
 
 
-def _target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, str], ...]:
+def target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, str], ...]:
     day = target_day.isoformat()
     compact = target_day.strftime("%Y%m%d")
     path_day = target_day.strftime("%Y/%m/%d")
@@ -184,7 +184,7 @@ def _target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, st
     )
 
 
-def _retained_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
+def retained_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
     previous_day = target_day - timedelta(days=1)
     next_day = target_day + timedelta(days=1)
     return (
@@ -193,34 +193,39 @@ def _retained_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
     )
 
 
-def _invalid_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
+def invalid_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
     return (
         f"{prefix}/invalid/no-timestamp-latest.txt",
         f"{prefix}/invalid/{target_day.isoformat()}T99-00-00Z.txt",
     )
 
 
-def _expected_archive_members(prefix: str, target_day: date) -> dict[str, str]:
+def expected_archive_members(prefix: str, target_day: date) -> dict[str, str]:
     return {
         f"{root}/{target_day.isoformat()}.tar.gz": key
-        for root, key in _target_day_demo_cases(prefix, target_day)
+        for root, key in target_day_demo_cases(prefix, target_day)
     }
 
 
-def _archive_member_name(key: str) -> str:
+def archive_member_name(key: str) -> str:
     if key.startswith(("C:", "s3-archiver-safe/")):
         return f"s3-archiver-safe/{hashlib.sha256(key.encode()).hexdigest()}"
     return key
 
 
-def _write_demo_env_file(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> Path:
+def write_demo_env_file(
+    tmp_path: Path,
+    bucket_pair: LocalstackBucketPair,
+    *,
+    cleanup_enabled: bool = False,
+) -> Path:
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
     )
     env["ARCHIVER_RETENTION_DAYS"] = str(DEMO_RETENTION_DAYS)
-    env["ARCHIVER_ENABLE_CLEANUP"] = "false"
+    env["ARCHIVER_ENABLE_CLEANUP"] = "true" if cleanup_enabled else "false"
     env["ARCHIVER_MAX_WORKERS"] = "1"
     env["LOG_LEVEL"] = "WARNING"
     env_file = tmp_path / "compose-demo.env"
@@ -231,7 +236,7 @@ def _write_demo_env_file(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> P
     return env_file
 
 
-def _client(
+def demo_client(
     tmp_path: Path,
     bucket_pair: LocalstackBucketPair,
     side: Literal["source", "destination"],
@@ -244,7 +249,7 @@ def _client(
     return localstack_s3_client(env, side)
 
 
-def _run_compose(
+def run_demo_compose(
     env: dict[str, str],
     *args: str,
     check: bool = True,
@@ -253,8 +258,8 @@ def _run_compose(
         env,
         *args,
         check=check,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
+        retryable_messages=COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=COMPOSE_RETRYABLE_RETURNCODES,
     )
 
 
@@ -262,21 +267,21 @@ def _run_visual_demo(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return render_visual_demo(
         env,
         repo_root=REPO_ROOT,
-        compose_runner=_run_compose,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
-        retries=_VISUAL_DEMO_RETRIES,
-        retry_delay_seconds=_VISUAL_DEMO_RETRY_DELAY_SECONDS,
+        compose_runner=run_demo_compose,
+        retryable_messages=COMPOSE_RETRYABLE_MESSAGES,
+        retryable_returncodes=COMPOSE_RETRYABLE_RETURNCODES,
+        retries=VISUAL_DEMO_RETRIES,
+        retry_delay_seconds=VISUAL_DEMO_RETRY_DELAY_SECONDS,
         retention_days=DEMO_RETENTION_DAYS,
         seeded_count=DEMO_SEEDED_OBJECT_COUNT,
     )
 
 
-def _demo_payload(output: str) -> dict[str, object]:
+def demo_payload(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
 
 
-def _cleanup_statuses(payload: dict[str, object]) -> list[str]:
+def cleanup_statuses(payload: dict[str, object]) -> list[str]:
     groups = cast(list[dict[str, object]], payload["archive_groups"])
     return [str(group["cleanup_status"]) for group in groups]

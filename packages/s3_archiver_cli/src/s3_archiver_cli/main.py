@@ -34,10 +34,10 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
+from s3_archiver_cli import visual_demo_command as _visual_demo_command
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.cleanup_preview import run_cleanup_preview as _run_cleanup_preview
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
-from s3_archiver_cli.visual_demo import run_visual_demo as _run_visual_demo
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -113,18 +113,23 @@ def cleanup_preview() -> None:
 @app.command()
 def demo() -> None:
     """Run a human-readable archive walkthrough backed by real S3 state."""
+    _run_visual_demo_command(perform_cleanup=False)
 
-    payload = _run_payload_command(
-        lambda settings, log_file: _run_visual_demo(
-            settings,
-            log_file,
-            archive_runner=_run_archive,
-            cleanup_preview_runner=_run_cleanup_preview,
-            emit=typer.echo,
-        )
+
+@app.command("demo-cleanup")
+def demo_cleanup() -> None:
+    """Run a human-readable archive walkthrough that deletes verified source objects."""
+    _run_visual_demo_command(perform_cleanup=True)
+
+
+def _run_visual_demo_command(*, perform_cleanup: bool) -> None:
+    _visual_demo_command.run(
+        perform_cleanup=perform_cleanup,
+        run_payload_command=_run_payload_command,
+        archive_runner=_run_archive,
+        cleanup_preview_runner=_run_cleanup_preview,
+        emit=typer.echo,
     )
-    if payload.get("status") != "ok":
-        raise typer.Exit(code=1)
 
 
 @app.command()

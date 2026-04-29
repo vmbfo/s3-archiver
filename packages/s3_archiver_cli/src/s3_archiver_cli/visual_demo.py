@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -45,11 +46,13 @@ def run_visual_demo(
     cleanup_preview_runner: CleanupPreviewRunner,
     emit: Emitter,
     now: Callable[[], datetime] | None = None,
+    perform_cleanup: bool = False,
 ) -> dict[str, JsonValue]:
     """Run a human-readable archive walkthrough against the configured buckets."""
 
     clock = _utc_now if now is None else now
     started = clock()
+    settings = replace(settings, cleanup_enabled=perform_cleanup)
     prepare_runtime_temp_dir(settings.temp_dir)
     health = cast(dict[str, JsonValue], run_health_check(settings, log_file).as_dict())
     source = S3ArchiveBucket(
@@ -73,23 +76,44 @@ def run_visual_demo(
     eligible_keys = _manifest_key_set(manifest)
     before_snapshot = _snapshot_payload(source, destination, eligible_keys=eligible_keys)
 
-    _emit_intro(emit, settings, log_file, started)
+    if perform_cleanup:
+        _emit_intro(
+            emit, settings, log_file, started, title="== S3 Archiver Cleanup Visual Demo =="
+        )
+    else:
+        _emit_intro(emit, settings, log_file, started)
     _emit_health(emit, health)
     _emit_snapshot(emit, "Before archive", before_snapshot)
     _emit_manifest(emit, manifest)
-    emit("Running archive workflow against the configured buckets...")
+    if perform_cleanup:
+        emit("Running archive workflow with cleanup enabled against the configured buckets...")
+    else:
+        emit("Running archive workflow against the configured buckets...")
     archive_payload = archive_runner(settings, log_file)
     _emit_archive_result(emit, archive_payload)
     after_archive_snapshot = _snapshot_payload(source, destination, eligible_keys=set())
-    _emit_snapshot(emit, "After archive", after_archive_snapshot)
+    cleanup_deleted_count = (
+        _snapshot_source_object_count(before_snapshot)
+        - _snapshot_source_object_count(after_archive_snapshot)
+        if perform_cleanup
+        else 0
+    )
+    if perform_cleanup:
+        _emit_snapshot(emit, "After cleanup", after_archive_snapshot)
+        emit(f"cleanup deleted source object count: {cleanup_deleted_count}")
+    else:
+        _emit_snapshot(emit, "After archive", after_archive_snapshot)
 
-    emit("Running cleanup preview without deleting source objects...")
-    cleanup_payload = cleanup_preview_runner(settings, log_file)
-    cleanup_preview = cast(dict[str, JsonValue], cleanup_payload["cleanup_preview"])
-    cleanup_keys = _payload_key_set(cleanup_preview)
-    _emit_cleanup_preview(emit, cleanup_preview)
-    after_preview_snapshot = _snapshot_payload(source, destination, eligible_keys=cleanup_keys)
-    _emit_snapshot(emit, "After cleanup preview", after_preview_snapshot)
+    cleanup_preview: dict[str, JsonValue] | None = None
+    after_preview_snapshot: dict[str, JsonValue] | None = None
+    if not perform_cleanup:
+        emit("Running cleanup preview without deleting source objects...")
+        cleanup_payload = cleanup_preview_runner(settings, log_file)
+        cleanup_preview = cast(dict[str, JsonValue], cleanup_payload["cleanup_preview"])
+        cleanup_keys = _payload_key_set(cleanup_preview)
+        _emit_cleanup_preview(emit, cleanup_preview)
+        after_preview_snapshot = _snapshot_payload(source, destination, eligible_keys=cleanup_keys)
+        _emit_snapshot(emit, "After cleanup preview", after_preview_snapshot)
     archive_groups = archive_group_payloads(manifest)
     skipped_objects = skipped_object_payloads(manifest)
     archive_manifest: dict[str, JsonValue] = {
@@ -105,8 +129,21 @@ def run_visual_demo(
         "entries": json_list([_manifest_entry_payload(entry) for entry in manifest.entries]),
     }
 
+    snapshots: dict[str, JsonValue] = {
+        "before_archive": before_snapshot,
+        "after_archive": after_archive_snapshot,
+    }
+    if after_preview_snapshot is not None:
+        snapshots["after_cleanup_preview"] = after_preview_snapshot
+    else:
+        snapshots["after_cleanup"] = after_archive_snapshot
+    cleanup_preview_unchanged = after_preview_snapshot is not None and _snapshot_bucket_state(
+        after_archive_snapshot
+    ) == _snapshot_bucket_state(after_preview_snapshot)
     summary: dict[str, JsonValue] = {
         "status": "ok" if archive_payload.get("status") == "ok" else "error",
+        "cleanup_mode": "cleanup" if perform_cleanup else "preview",
+        "cleanup_performed": perform_cleanup,
         "source_bucket": settings.source.bucket,
         "destination_bucket": settings.destination.bucket,
         "log_file": str(log_file),
@@ -116,15 +153,9 @@ def run_visual_demo(
         "archive_manifest": archive_manifest,
         "archive_result": archive_payload,
         "cleanup_preview": cleanup_preview,
-        "snapshots": {
-            "before_archive": before_snapshot,
-            "after_archive": after_archive_snapshot,
-            "after_cleanup_preview": after_preview_snapshot,
-        },
-        "cleanup_preview_left_bucket_state_unchanged": (
-            _snapshot_bucket_state(after_archive_snapshot)
-            == _snapshot_bucket_state(after_preview_snapshot)
-        ),
+        "snapshots": snapshots,
+        "cleanup_preview_left_bucket_state_unchanged": cleanup_preview_unchanged,
+        "cleanup_deleted_source_object_count": cleanup_deleted_count,
     }
     emit("Demo summary JSON follows on the next line.")
     emit(json.dumps(summary, sort_keys=True))
@@ -233,6 +264,11 @@ def _snapshot_bucket_state(snapshot: dict[str, JsonValue]) -> dict[str, JsonValu
         ],
         "destination_objects": snapshot["destination_objects"],
     }
+
+
+def _snapshot_source_object_count(snapshot: dict[str, JsonValue]) -> int:
+    count = snapshot["source_object_count"]
+    return count if isinstance(count, int) else 0
 
 
 def _utc_now() -> datetime:

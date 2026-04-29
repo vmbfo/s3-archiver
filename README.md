@@ -116,6 +116,23 @@ ENV_FILE=".local/e2e-${suffix}.env" \
   uv run s3-archiver archive
 ```
 
+Run the visual demos directly:
+
+```bash
+ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo
+ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo-cleanup
+```
+
+`demo` forces cleanup off and ends with a cleanup preview. `demo-cleanup` forces cleanup on
+for that invocation and shows the post-cleanup bucket state.
+
+Run the compose-backed visual demo scripts:
+
+```bash
+./scripts/run_visual_demo.sh
+./scripts/run_visual_cleanup_demo.sh
+```
+
 Run the production-style local wrapper:
 
 ```bash

@@ -7,7 +7,7 @@ import time
 from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
 
 class ComposeRunner(Protocol):
@@ -25,6 +25,7 @@ def run_visual_demo(
     env: dict[str, str],
     *,
     repo_root: Path,
+    cli_command: str = "demo",
     compose_runner: ComposeRunner,
     retryable_messages: Collection[str],
     retryable_returncodes: Collection[int],
@@ -55,11 +56,19 @@ def run_visual_demo(
         + "valid, invalid, and unsafe-key timestamp examples."
     )
     print(f"  Retention policy: archive objects older than {retention_days} days.")
-    print("  The next lines are live output from `s3-archiver demo`, with JSON logs hidden.")
+    print(
+        f"  The next lines are live output from `s3-archiver {cli_command}`, "
+        + "with JSON logs hidden."
+    )
     print()
 
     for attempt in range(retries + 1):
-        result = _run_visual_demo_once(env, repo_root=repo_root, retention_days=retention_days)
+        result = _run_visual_demo_once(
+            env,
+            repo_root=repo_root,
+            retention_days=retention_days,
+            cli_command=cli_command,
+        )
         if result.returncode == 0:
             return result
         if attempt == retries or _is_non_retryable_visual_demo_error(
@@ -83,38 +92,14 @@ def run_visual_demo(
     raise AssertionError("visual demo retry loop exhausted without returning")
 
 
-def print_verified_summary(
-    payload: dict[str, object],
-    *,
-    total_count: int,
-    copied_count: int,
-    retained_count: int,
-) -> None:
-    cleanup_preview = cast(dict[str, object], payload["cleanup_preview"])
-    print()
-    print("=" * 78)
-    print("VERIFIED RESULT")
-    print("=" * 78)
-    print(f"  status: {payload['status']}")
-    print(f"  source objects seeded: {total_count}")
-    print(f"  retained in source only by retention policy: {retained_count}")
-    print(f"  archived to destination: {copied_count}")
-    print(f"  cleanup preview objects: {cleanup_preview['object_count']}")
-    print(f"  source objects after real cleanup would be: {retained_count}")
-    print(f"  destination objects after real cleanup would be: {copied_count}")
-    print(
-        "  cleanup preview left buckets unchanged: "
-        + str(payload["cleanup_preview_left_bucket_state_unchanged"])
-    )
-
-
 def _run_visual_demo_once(
     env: dict[str, str],
     *,
     repo_root: Path,
     retention_days: int,
+    cli_command: str,
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", "run", "--rm", "app", "demo"]
+    command = ["docker", "compose", "--profile", "test", "run", "--rm", "app", cli_command]
     process = subprocess.Popen(
         command,
         cwd=repo_root,
@@ -183,6 +168,9 @@ def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
         case "== S3 Archiver Visual Demo ==":
             _print_demo_header("S3 Archiver visual e2e demo")
             print("  This is a real Docker Compose run against LocalStack S3.")
+        case "== S3 Archiver Cleanup Visual Demo ==":
+            _print_demo_header("S3 Archiver cleanup visual e2e demo")
+            print("  This is a real Docker Compose run against LocalStack S3.")
         case "== Preflight ==":
             _print_step("1/5", "Preflight checks")
             print("  Confirming configuration, logging, and bucket access before archiving.")
@@ -202,12 +190,21 @@ def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
         case "Running archive workflow against the configured buckets...":
             _print_step("4/5", "Archive execution")
             print("  The app is listing, copying, verifying, and applying the cleanup policy.")
+        case "Running archive workflow with cleanup enabled against the configured buckets...":
+            _print_step("4/4", "Archive execution and cleanup")
+            print("  The app is listing, copying, verifying, and deleting verified source objects.")
         case "== Archive Result ==":
             print()
             print("  Archive phase results")
         case "== After archive ==":
             print()
             print("  s3 ls-style view after archive")
+        case "== After cleanup ==":
+            print()
+            print("  s3 ls-style view after verified cleanup")
+            print(
+                "  Archived source objects have been deleted; retained and skipped objects remain."
+            )
         case "Running cleanup preview without deleting source objects...":
             _print_step("5/5", "Cleanup preview")
             print("  Cleanup is disabled, so this shows what would be deleted without deleting it.")
