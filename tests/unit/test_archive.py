@@ -52,7 +52,8 @@ def test_manifest_uses_frozen_cutoff_filters_and_preserves_versions() -> None:
 
     assert manifest.retention_cutoff_utc == datetime(2024, 2, 20, tzinfo=UTC)
     assert [(entry.key, entry.version_id) for entry in manifest.entries] == [
-        (_target_key("2024-02-20T00-00-00.txt"), "v-target")
+        (_target_key("2024-02-20T00-00-00.txt"), "v-target"),
+        ("keep/2024/02/19/2024-02-19T23-59-59.txt", "v-previous"),
     ]
 
 

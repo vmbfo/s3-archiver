@@ -180,17 +180,21 @@ class S3ArchiveBucket:
         _ = self.client.delete_object(**versioned_kwargs(self.bucket, key, version_id))
 
     def _list_unversioned(self) -> Iterator[S3ListedObject]:
-        continuation_token: str | None = None
+        start_after: str | None = None
         while True:
             kwargs: dict[str, object] = {"Bucket": self.bucket, "MaxKeys": 1000}
-            if continuation_token is not None:
-                kwargs["ContinuationToken"] = continuation_token
+            if start_after is not None:
+                kwargs["StartAfter"] = start_after
             page = self.client.list_objects_v2(**kwargs)
+            last_key: str | None = None
             for item in object_list(page.get("Contents")):
+                last_key = str(item["Key"])
                 yield self._listed_from_item(item, None)
             if page.get("IsTruncated") is not True:
                 return
-            continuation_token = optional_string(page.get("NextContinuationToken"))
+            if last_key is None:
+                raise RuntimeError("S3 list_objects_v2 returned a truncated empty page")
+            start_after = last_key
 
     def _list_versioned(self) -> Iterator[S3ListedObject]:
         key_marker: str | None = None

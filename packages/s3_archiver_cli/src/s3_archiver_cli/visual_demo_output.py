@@ -88,6 +88,7 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     emit(f"retention cutoff utc: {manifest.retention_cutoff_utc.isoformat()}")
     groups = archive_group_payloads(manifest)
     skipped = skipped_object_payloads(manifest)
+    _emit_archive_coverage(emit, groups)
     emit(f"archive group count: {len(groups)}")
     emit(f"source object count: {len(manifest.entries)}")
     emit(f"skipped object count: {len(skipped)}")
@@ -125,8 +126,10 @@ def emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
     emit("== Archive Result ==")
     emit(f"status: {payload['status']}")
     emit(f"target day: {payload.get('target_day')}")
+    groups = cast(list[dict[str, JsonValue]], payload.get("archive_groups", []))
+    _emit_archive_coverage(emit, groups, days=_archive_days_from_payload(payload))
     emit(f"archive count: {payload.get('archive_count')}")
-    for group in cast(list[dict[str, JsonValue]], payload.get("archive_groups", [])):
+    for group in groups:
         emit(
             "GROUP  "
             + f"destination_archive_key={group['destination_archive_key']} "
@@ -148,9 +151,11 @@ def emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) -
     emit(f"cleanup enabled in settings: {cleanup_preview['cleanup_enabled_in_settings']}")
     emit(f"preview manifest file: {cleanup_preview['manifest_file']}")
     emit(f"target day: {cleanup_preview.get('target_day')}")
+    groups = cast(list[dict[str, JsonValue]], cleanup_preview.get("archive_groups", []))
+    _emit_archive_coverage(emit, groups, days=_archive_days_from_payload(cleanup_preview))
     emit(f"archive count: {cleanup_preview.get('archive_count')}")
     emit(f"would delete object count: {cleanup_preview['object_count']}")
-    for group in cast(list[dict[str, JsonValue]], cleanup_preview.get("archive_groups", [])):
+    for group in groups:
         emit(
             "GROUP  "
             + f"destination_archive_key={group['destination_archive_key']} "
@@ -168,3 +173,49 @@ def emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) -
             + f"last_modified={row['last_modified_utc']} "
             + f"version_id={row['version_id']}"
         )
+
+
+def _emit_archive_coverage(
+    emit: Emitter,
+    groups: list[dict[str, JsonValue]],
+    *,
+    days: list[str] | None = None,
+) -> None:
+    archive_days = _archive_days(groups) if days is None else days
+    root_count = len({str(group["archive_root"]) for group in groups if group.get("archive_root")})
+    files_per_archive = [
+        int(count) for group in groups if isinstance(count := group.get("source_object_count"), int)
+    ]
+    archives_per_day = [
+        sum(1 for group in groups if str(group.get("target_day")) == day) for day in archive_days
+    ]
+    emit(f"archive day count: {len(archive_days)}")
+    if archive_days:
+        emit(f"archive day range: {archive_days[0]} through {archive_days[-1]}")
+        emit(f"archive days sample: {', '.join(_sample_text(archive_days))}")
+    emit(f"archive root count: {root_count}")
+    if archives_per_day:
+        emit("archives per day: " + f"min={min(archives_per_day)} max={max(archives_per_day)}")
+    if files_per_archive:
+        emit(
+            "source objects per archive: "
+            + f"min={min(files_per_archive)} max={max(files_per_archive)}"
+        )
+
+
+def _archive_days(groups: list[dict[str, JsonValue]]) -> list[str]:
+    return sorted({str(group["target_day"]) for group in groups if group.get("target_day")})
+
+
+def _archive_days_from_payload(payload: dict[str, JsonValue]) -> list[str]:
+    days = payload.get("archive_days")
+    if isinstance(days, list):
+        return [str(day) for day in days]
+    groups = cast(list[dict[str, JsonValue]], payload.get("archive_groups", []))
+    return _archive_days(groups)
+
+
+def _sample_text(values: list[str]) -> list[str]:
+    if len(values) <= 6:
+        return values
+    return [*values[:3], "...", *values[-3:]]

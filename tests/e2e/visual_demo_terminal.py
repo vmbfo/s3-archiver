@@ -130,7 +130,7 @@ class _SampledDemoPrinter:
         self.tail: list[str] = []
 
     def print_line(self, line: str) -> None:
-        if line.startswith(("SOURCE ", "DEST   ", "COPY   ", "DELETE ")):
+        if line.startswith(("SOURCE ", "DEST   ", "COPY   ", "DELETE ", "GROUP  ")):
             formatted = _friendly_demo_line(line)
             self.object_count += 1
             if self.object_count <= 3:
@@ -180,12 +180,12 @@ def _print_visual_demo_line(line: str, *, retention_days: int) -> None:
         case "== Archive Candidates ==":
             _print_step("3/5", "Archive selection")
             print(
-                "  Applying strict target-day selection from filenames and path folders "
-                + f"using {retention_days} retention days."
+                "  Applying retention-window selection from filenames and path folders "
+                + f"using {retention_days} retention days, grouped by each data day."
             )
             print(
                 "  The seed includes flat filenames, YYYY/MM/DD folders, compact dates, "
-                + "offsets, Z suffixes, and retained outside-day objects."
+                + "offsets, Z suffixes, and newer retained objects."
             )
         case "Running archive workflow against the configured buckets...":
             _print_step("4/5", "Archive execution")

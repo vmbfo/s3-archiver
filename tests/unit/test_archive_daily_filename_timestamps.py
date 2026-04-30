@@ -115,12 +115,13 @@ def test_filename_timestamp_offset_must_be_valid() -> None:
 
 
 @pytest.mark.unit()
-def test_manifest_selects_exact_utc_target_day_and_records_skips() -> None:
+def test_manifest_selects_retained_utc_days_and_records_skips() -> None:
     source = FakeBucket(
         "source",
         (
             _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1),
             _listed("data/fae/2026/04/12/23/2026-04-12T23-59-59.xml", 1),
+            _listed("data/fae/2026/04/14/00/2026-04-14T00-00-00.xml", 1),
             _listed("data/fae/no-stamp.xml", 1),
         ),
     )
@@ -135,10 +136,11 @@ def test_manifest_selects_exact_utc_target_day_and_records_skips() -> None:
 
     assert manifest.target_day == TARGET_DAY
     assert [entry.key for entry in manifest.entries] == [
-        "data/fae/2026/04/13/07/2026-04-13T07-00-00.xml"
+        "data/fae/2026/04/13/07/2026-04-13T07-00-00.xml",
+        "data/fae/2026/04/12/23/2026-04-12T23-59-59.xml",
     ]
     assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
-        ("data/fae/2026/04/12/23/2026-04-12T23-59-59.xml", "outside target day"),
+        ("data/fae/2026/04/14/00/2026-04-14T00-00-00.xml", "outside retention window"),
         ("data/fae/no-stamp.xml", "no reliable key timestamp"),
     ]
 

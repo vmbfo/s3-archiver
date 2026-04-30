@@ -37,7 +37,7 @@ def _canonical_source(prefix: str) -> FakeBucket:
     ("retention_days", "cleanup_enabled"),
     [(60, False), (60, True), (30, False)],
 )
-def test_canonical_retention_dataset_has_exact_archive_split(
+def test_canonical_retention_dataset_archives_each_eligible_day(
     retention_days: int,
     cleanup_enabled: bool,
 ) -> None:
@@ -53,15 +53,21 @@ def test_canonical_retention_dataset_has_exact_archive_split(
         clock=_clock,
     )
 
-    target_day = STARTED.date() - timedelta(days=retention_days)
-    expected_key = f"{prefix}/{target_day.isoformat()}T00-00-00.txt"
-    expected_archive_key = f"{prefix}/{target_day.isoformat()}.tar.gz"
+    expected_days = tuple(range(retention_days, max(CANONICAL_DAYS) + 1))
+    expected_keys = [
+        f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt"
+        for day in expected_days
+    ]
+    expected_archive_keys = [
+        f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}.tar.gz"
+        for day in reversed(expected_days)
+    ]
 
     assert result.ok is True
-    assert [entry.key for entry in result.manifest.entries] == [expected_key]
-    assert destination.uploaded == [expected_archive_key]
+    assert [entry.key for entry in result.manifest.entries] == expected_keys
+    assert destination.uploaded == expected_archive_keys
     assert destination.copied == []
     if cleanup_enabled:
-        assert source.deleted == [(expected_key, "v1")]
+        assert source.deleted == [(key, "v1") for key in reversed(expected_keys)]
     else:
         assert source.deleted == []

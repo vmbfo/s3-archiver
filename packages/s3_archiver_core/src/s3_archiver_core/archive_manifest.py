@@ -116,7 +116,7 @@ def build_archive_manifest(
     versioning_state: VersioningState,
     source_filter: SourcePathFilter,
 ) -> ArchiveManifest:
-    """Build a target-day archive manifest from source object keys."""
+    """Build a daily archive manifest from source object keys in the retention window."""
 
     run_started = _as_utc(run_started_at_utc)
     target_day = run_started.date() - timedelta(days=retention_days)
@@ -131,11 +131,12 @@ def build_archive_manifest(
             skipped.append(SkippedObject(listed.key, "no reliable key timestamp"))
             continue
         timestamp, timestamp_source = selected
-        if timestamp.date() != target_day:
-            skipped.append(SkippedObject(listed.key, "outside target day"))
+        object_day = timestamp.date()
+        if object_day > target_day:
+            skipped.append(SkippedObject(listed.key, "outside retention window"))
             continue
-        entries.append(_entry(source.bucket, listed, timestamp, timestamp_source, target_day))
-    grouped = _archive_groups(tuple(entries), target_day)
+        entries.append(_entry(source.bucket, listed, timestamp, timestamp_source, object_day))
+    grouped = _archive_groups(tuple(entries))
     return ArchiveManifest(run_started, cutoff, tuple(entries), target_day, grouped, tuple(skipped))
 
 
@@ -164,21 +165,31 @@ def _entry(
     )
 
 
-def _archive_groups(
-    entries: tuple[ManifestEntry, ...], target_day: date
-) -> tuple[ArchiveGroup, ...]:
-    roots = sorted({entry.archive_root for entry in entries})
+def _archive_groups(entries: tuple[ManifestEntry, ...]) -> tuple[ArchiveGroup, ...]:
+    group_keys = sorted(
+        {
+            (entry.archive_root, entry.target_day)
+            for entry in entries
+            if entry.target_day is not None
+        }
+    )
     groups: list[ArchiveGroup] = []
-    for root in roots:
-        grouped = tuple(sorted(_root_entries(entries, root), key=lambda item: item.key))
+    for root, target_day in group_keys:
+        grouped = tuple(
+            sorted(_group_entries(entries, root, target_day), key=lambda item: item.key)
+        )
         groups.append(
             ArchiveGroup(target_day, root, destination_archive_key(root, target_day), grouped)
         )
     return tuple(groups)
 
 
-def _root_entries(entries: tuple[ManifestEntry, ...], root: str) -> Iterable[ManifestEntry]:
-    return (entry for entry in entries if entry.archive_root == root)
+def _group_entries(
+    entries: tuple[ManifestEntry, ...], root: str, target_day: date
+) -> Iterable[ManifestEntry]:
+    return (
+        entry for entry in entries if entry.archive_root == root and entry.target_day == target_day
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

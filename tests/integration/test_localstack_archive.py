@@ -162,15 +162,15 @@ def test_archive_command_blacklist_filter_controls_copy_and_cleanup_scope(
 
 @pytest.mark.integration()
 @pytest.mark.parametrize(
-    ("retention_days", "expected_day"),
-    [(1, "2099-12-31"), (60, "2099-11-02")],
+    ("retention_days", "expected_days"),
+    [(1, ("2099-12-31", "2099-11-02", "2099-11-01")), (60, ("2099-11-02", "2099-11-01"))],
 )
-def test_archive_command_retention_matrix_selects_exact_target_day(
+def test_archive_command_retention_matrix_selects_each_eligible_day(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
     retention_days: int,
-    expected_day: str,
+    expected_days: tuple[str, ...],
 ) -> None:
     prefix = "retention-boundary"
     env = _archive_env(tmp_path, localstack_bucket_pair)
@@ -188,16 +188,14 @@ def test_archive_command_retention_matrix_selects_exact_target_day(
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 1
-    archive_key = f"{prefix}/{expected_day}.tar.gz"
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {archive_key}
-    assert read_tar_gz_members_text(
-        destination_client, localstack_bucket_pair.destination, archive_key
-    ) == {
-        f"{prefix}/{expected_day}T00-00-00.txt": (
-            f"payload for {prefix}/{expected_day}T00-00-00.txt\n"
-        )
-    }
+    assert payload["manifest"]["object_count"] == len(expected_days)
+    archive_keys = {f"{prefix}/{day}.tar.gz" for day in expected_days}
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == archive_keys
+    for day in expected_days:
+        source_key = f"{prefix}/{day}T00-00-00.txt"
+        assert read_tar_gz_members_text(
+            destination_client, localstack_bucket_pair.destination, f"{prefix}/{day}.tar.gz"
+        ) == {source_key: f"payload for {source_key}\n"}
     assert listed_keys(source_client, localstack_bucket_pair.source) == seed_keys
 
 

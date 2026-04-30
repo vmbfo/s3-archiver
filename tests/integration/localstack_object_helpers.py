@@ -70,12 +70,23 @@ def put_test_object(
 
 
 def listed_keys(client: S3Client, bucket: str) -> set[str]:
-    response = _retry_localstack_call(lambda: client.list_objects_v2(Bucket=bucket))
-    return {
-        str(entry["Key"])
-        for entry in _object_entries(response.get("Contents"))
-        if entry.get("Key") is not None
-    }
+    keys: set[str] = set()
+    start_after: str | None = None
+    while True:
+        kwargs: dict[str, object] = {"Bucket": bucket}
+        if start_after is not None:
+            kwargs["StartAfter"] = start_after
+        response = _retry_localstack_call(lambda kwargs=kwargs: client.list_objects_v2(**kwargs))
+        last_key: str | None = None
+        for entry in _object_entries(response.get("Contents")):
+            if entry.get("Key") is not None:
+                last_key = str(entry["Key"])
+                keys.add(last_key)
+        if response.get("IsTruncated") is not True:
+            return keys
+        if last_key is None:
+            raise AssertionError("LocalStack returned a truncated empty object page")
+        start_after = last_key
 
 
 def listed_key_versions(client: S3Client, bucket: str, key: str) -> list[tuple[str, str, bool]]:

@@ -40,7 +40,7 @@ def test_s3_archive_bucket_lists_unversioned_pages() -> None:
 
     assert [item.key for item in listed] == ["a.txt", "b.txt"]
     assert client.list_v2_calls[0] == {"Bucket": "source", "MaxKeys": 1000}
-    assert client.list_v2_calls[1]["ContinuationToken"] == "page-2"
+    assert client.list_v2_calls[1]["StartAfter"] == "a.txt"
 
 
 @pytest.mark.unit()

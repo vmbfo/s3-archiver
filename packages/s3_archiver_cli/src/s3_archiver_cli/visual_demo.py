@@ -116,9 +116,12 @@ def run_visual_demo(
         _emit_snapshot(emit, "After cleanup preview", after_preview_snapshot)
     archive_groups = archive_group_payloads(manifest)
     skipped_objects = skipped_object_payloads(manifest)
+    archive_days = sorted({str(group["target_day"]) for group in archive_groups})
+    archive_days_payload = [cast(JsonValue, day) for day in archive_days]
     archive_manifest: dict[str, JsonValue] = {
         "object_count": len(manifest.entries),
         "target_day": manifest_target_day(manifest),
+        "archive_days": archive_days_payload,
         "archive_count": len(archive_groups),
         "source_object_count": len(manifest.entries),
         "skipped_object_count": len(skipped_objects),

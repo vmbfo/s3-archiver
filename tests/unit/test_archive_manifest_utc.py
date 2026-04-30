@@ -33,7 +33,7 @@ def test_manifest_normalizes_non_utc_run_start_before_target_day_selection() -> 
     assert manifest.target_day == datetime(2026, 4, 13, tzinfo=UTC).date()
     assert [entry.key for entry in manifest.entries] == ["data/fae/2026-04-13T00-00-00Z.xml"]
     assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
-        ("data/fae/2026-04-14T00-00-00Z.xml", "outside target day")
+        ("data/fae/2026-04-14T00-00-00Z.xml", "outside retention window")
     ]
 
 
