@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
+from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties
 
@@ -19,6 +20,7 @@ class SourceFingerprint:
     """Portable source identity persisted in destination metadata."""
 
     source_bucket: str
+    source_identity: object | None
     source_key: str
     source_size: int
     source_last_modified: str
@@ -33,6 +35,7 @@ class SourceFingerprint:
         return json.dumps(
             {
                 "source_bucket": self.source_bucket,
+                "source_identity": self.source_identity,
                 "source_key": self.source_key,
                 "source_size": self.source_size,
                 "source_last_modified": self.source_last_modified,
@@ -51,6 +54,7 @@ def source_fingerprint(entry: ManifestEntry) -> SourceFingerprint:
 
     return SourceFingerprint(
         source_bucket=entry.source_bucket,
+        source_identity=stable_identity_value(entry.source_identity),
         source_key=entry.key,
         source_size=entry.size,
         source_last_modified=iso_timestamp(entry.last_modified),
@@ -114,7 +118,11 @@ def recover_fingerprinted_entry(
     fingerprint = fingerprint_from_metadata(destination.metadata)
     if fingerprint is None:
         return None
-    if fingerprint.source_bucket != entry.source_bucket or fingerprint.source_key != entry.key:
+    if (
+        fingerprint.source_bucket != entry.source_bucket
+        or fingerprint.source_identity != stable_identity_value(entry.source_identity)
+        or fingerprint.source_key != entry.key
+    ):
         return None
     try:
         last_modified = datetime.fromisoformat(fingerprint.source_last_modified)
@@ -153,6 +161,7 @@ def fingerprint_matches_entry(fingerprint: SourceFingerprint, entry: ManifestEnt
 
     if (
         fingerprint.source_bucket != entry.source_bucket
+        or fingerprint.source_identity != stable_identity_value(entry.source_identity)
         or fingerprint.source_key != entry.key
         or fingerprint.source_size != entry.size
         or fingerprint.source_last_modified != iso_timestamp(entry.last_modified)
@@ -234,6 +243,7 @@ def _fingerprint_from_mapping(value: Mapping[str, object]) -> SourceFingerprint 
         return None
     return SourceFingerprint(
         source_bucket=bucket,
+        source_identity=value.get("source_identity"),
         source_key=key,
         source_size=size,
         source_last_modified=last_modified,

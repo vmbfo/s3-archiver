@@ -44,9 +44,7 @@ def test_from_env_rejects_removed_archive_env_vars(tmp_path: Path, key: str) -> 
     ],
 )
 @pytest.mark.unit()
-def test_from_env_allows_blank_removed_source_filter_env_vars(
-    tmp_path: Path, key: str
-) -> None:
+def test_from_env_allows_blank_removed_source_filter_env_vars(tmp_path: Path, key: str) -> None:
     env = _dual_env(tmp_path)
     env[key] = " "
 

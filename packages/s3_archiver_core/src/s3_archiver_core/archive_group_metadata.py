@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 
+from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core.archive_manifest import ArchiveGroup
 
@@ -66,8 +67,15 @@ def metadata_matches(existing: Mapping[str, str], expected: Mapping[str, str]) -
 def _group_manifest_sha256(group: ArchiveGroup) -> str:
     rows = [
         {
+            "copy_mode": entry.copy_mode,
+            "destination_archive_key": entry.destination_archive_key,
             "key": entry.key,
+            "parser_kind": entry.parser_kind,
+            "route_name": entry.route_name,
             "size": entry.size,
+            "source_bucket": entry.source_bucket,
+            "source_identity": stable_identity_value(entry.source_identity),
+            "source_path": entry.source_path,
             "etag": entry.etag,
             "version_id": entry.version_id,
             "selected_timestamp": (

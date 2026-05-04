@@ -44,6 +44,34 @@ def test_verify_destination_reports_each_mismatch_detail() -> None:
 
 
 @pytest.mark.unit()
+def test_verify_destination_rejects_mismatched_source_identity() -> None:
+    listed = _listed("old.txt", 90, None)
+    current = ManifestEntry(
+        "source",
+        listed.key,
+        10,
+        listed.last_modified,
+        '"etag"',
+        None,
+        listed,
+        source_identity=("localstack", "current"),
+    )
+    archived = ManifestEntry(
+        "source",
+        listed.key,
+        10,
+        listed.last_modified,
+        '"etag"',
+        None,
+        listed,
+        source_identity=("localstack", "other"),
+    )
+    destination = replace(current.object.properties, metadata=archive_metadata(archived))
+
+    assert verify_destination(current, destination).detail == "source fingerprint mismatch"
+
+
+@pytest.mark.unit()
 def test_fingerprint_metadata_rejects_invalid_shapes() -> None:
     metadata_key = FINGERPRINT_METADATA_KEY
     assert fingerprint_from_metadata({metadata_key: "not-json"}) is None

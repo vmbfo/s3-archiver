@@ -52,6 +52,43 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
 
 
 @pytest.mark.unit()
+def test_existing_archive_rejects_mismatched_source_identity() -> None:
+    listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
+    source = FakeBucket("source", (listed,))
+    destination_bucket = FakeBucket("destination")
+    other_manifest = build_archive_manifest(
+        source,
+        run_started_at_utc=STARTED,
+        retention_days=14,
+        versioning_state="Enabled",
+        source_filter=SourcePathFilter(),
+        destination=destination_bucket,
+        source_identity=("other", "source"),
+    )
+    archive_key = other_manifest.archive_groups[0].destination_archive_key
+    payload = b"archive"
+    existing_metadata = dict(group_metadata(other_manifest.archive_groups[0])) | {
+        ARCHIVE_SHA256_METADATA_KEY: hashlib.sha256(payload).hexdigest()
+    }
+    destination = FakeBucket(
+        "destination",
+        destination={archive_key: _properties(metadata=existing_metadata)},
+        payloads={archive_key: payload},
+    )
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
+
+
+@pytest.mark.unit()
 def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     good = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v-good")
     skipped = _listed("data/harmonie/2026-04-13T07-00-00.xml", 1, "v-skip")
