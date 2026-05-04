@@ -58,7 +58,7 @@ def build_archive_manifest(
         if selected is None:
             skipped.append(SkippedObject(listed.key, "no reliable key timestamp", route_name))
             continue
-        if isinstance(selected, SkippedObject):
+        if isinstance(selected, SkippedObject | ParserSkippedObject):
             skipped.append(SkippedObject(listed.key, selected.reason, route_name))
             continue
         timestamp = as_utc(selected.timestamp)
@@ -229,7 +229,7 @@ def _select_object(
     parser: ParserSelector | None,
     listed: S3ListedObject,
     source_path: str,
-) -> SelectedObject | SkippedObject | None:
+) -> SelectedObject | SkippedObject | ParserSkippedObject | None:
     if parser is not None:
         return parser(listed)
     result = parser_for_kind(RegisteredParserKind(str(parser_kind))).parse(listed)

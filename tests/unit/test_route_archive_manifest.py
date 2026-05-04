@@ -11,6 +11,7 @@ from s3_archiver_core.archive_manifest import (
     SkippedObject,
     build_route_archive_manifest,
 )
+from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -104,6 +105,27 @@ def test_route_manifest_preserves_parser_skip_reasons() -> None:
 
     assert [(item.key, item.reason, item.route_name) for item in manifest.skipped_objects] == [
         ("data/file.txt", "parser said no", "custom")
+    ]
+
+
+@pytest.mark.unit()
+def test_route_manifest_accepts_parser_protocol_skip_result() -> None:
+    source = FakeBucket("source", (_listed("data/file.txt", 1, None),))
+
+    manifest = build_route_archive_manifest(
+        (
+            ArchiveManifestRoute(
+                "custom",
+                source,
+                FakeBucket("archive"),
+                parser=lambda _listed: ParserSkippedObject("parser protocol skip"),
+            ),
+        ),
+        run_started_at_utc=STARTED,
+    )
+
+    assert [(item.key, item.reason, item.route_name) for item in manifest.skipped_objects] == [
+        ("data/file.txt", "parser protocol skip", "custom")
     ]
 
 

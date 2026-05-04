@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Literal, Protocol
 
 from s3_archiver_core.archive_timestamp import TimestampSource
+from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 CopyMode = Literal["direct", "daily_tar_gz"]
@@ -107,7 +108,9 @@ class ArchiveManifest:
     skipped_objects: tuple[SkippedObject, ...] = ()
 
 
-ParserSelector = Callable[[S3ListedObject], SelectedObject | SkippedObject | None]
+ParserSelector = Callable[
+    [S3ListedObject], SelectedObject | SkippedObject | ParserSkippedObject | None
+]
 
 
 @dataclass(frozen=True, slots=True)
