@@ -33,6 +33,8 @@ def archive_routes_from_settings(
             route.destination.path,
             route.parser.value,
             route.copy_mode.value,
+            route.source.storage_identity(),
+            route.destination.storage_identity(),
         )
         for route in settings.routes
     )

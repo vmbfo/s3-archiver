@@ -54,8 +54,6 @@ def test_options_enable_native_copy_when_credentials_differ_on_same_endpoint(
     env["S3_SOURCE_PROVIDER"] = "localstack"
     env["S3_SOURCE_ENDPOINT_URL"] = "http://localhost:4566"
     env["S3_DESTINATION_ENDPOINT_URL"] = "http://localhost:4566"
-    _ = env.pop("S3_SOURCE_NAMESPACE")
-    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
 
     options = ArchiveOptions.from_settings(AppSettings.from_env(env))
 
@@ -71,8 +69,6 @@ def test_options_enable_native_copy_for_same_credentials_on_same_endpoint(tmp_pa
     env["S3_DESTINATION_ENDPOINT_URL"] = "http://localhost:4566"
     env["S3_DESTINATION_ACCESS_KEY_ID"] = env["S3_SOURCE_ACCESS_KEY_ID"]
     env["S3_DESTINATION_SECRET_ACCESS_KEY"] = env["S3_SOURCE_SECRET_ACCESS_KEY"]
-    _ = env.pop("S3_SOURCE_NAMESPACE")
-    _ = env.pop("S3_SOURCE_IAM_USER_OCID")
 
     options = ArchiveOptions.from_settings(AppSettings.from_env(env))
 
@@ -91,21 +87,8 @@ def test_options_disable_native_copy_for_cross_provider_pair(tmp_path: Path) -> 
 
 
 @pytest.mark.unit()
-def test_options_preserve_path_filter_mode_from_settings(tmp_path: Path) -> None:
-    whitelist_env = dual_env(tmp_path)
-    whitelist_env["S3_SOURCE_PATH_WHITELIST_ENABLED"] = "true"
-    whitelist_env["S3_SOURCE_PATH_WHITELIST"] = '["daily/"]'
+def test_options_use_route_paths_from_settings(tmp_path: Path) -> None:
+    options = ArchiveOptions.from_settings(AppSettings.from_env(dual_env(tmp_path)))
 
-    whitelist_options = ArchiveOptions.from_settings(AppSettings.from_env(whitelist_env))
-
-    assert whitelist_options.source_filter.includes("daily/report.json") is True
-    assert whitelist_options.source_filter.includes("tmp/report.json") is False
-
-    blacklist_env = dual_env(tmp_path)
-    blacklist_env["S3_SOURCE_PATH_BLACKLIST_ENABLED"] = "true"
-    blacklist_env["S3_SOURCE_PATH_BLACKLIST"] = '["tmp/"]'
-
-    blacklist_options = ArchiveOptions.from_settings(AppSettings.from_env(blacklist_env))
-
-    assert blacklist_options.source_filter.includes("tmp/report.json") is False
-    assert blacklist_options.source_filter.includes("daily/report.json") is True
+    assert options.routes[0].source_path == ""
+    assert options.routes[0].destination_path == ""

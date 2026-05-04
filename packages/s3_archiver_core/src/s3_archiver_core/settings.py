@@ -15,6 +15,7 @@ from s3_archiver_core._settings_models import (
     StorageLocationIdentity,
 )
 from s3_archiver_core._settings_parse import EnvDecoder
+from s3_archiver_core.errors import ConfigError
 
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
@@ -61,9 +62,7 @@ class AppSettings:
             from s3_archiver_core._route_config import load_app_settings_from_config_json
 
             return load_app_settings_from_config_json(cls, decoder, config_json, log_level)
-        from s3_archiver_core._legacy_config import load_legacy_app_settings
-
-        return load_legacy_app_settings(cls, decoder, env, log_level)
+        raise ConfigError("ARCHIVER_CONFIG_JSON is required")
 
     @property
     def provider(self) -> S3Provider:
@@ -93,12 +92,3 @@ class AppSettings:
         """Return the source endpoint URL for legacy callers."""
 
         return self.source.resolved_endpoint_url()
-
-
-def _load_s3_location(decoder: EnvDecoder, side: str) -> S3LocationSettings | None:
-    from s3_archiver_core._legacy_config import load_s3_location
-
-    return load_s3_location(decoder, side)
-
-
-_PRIVATE_TEST_HOOKS = (_load_s3_location,)

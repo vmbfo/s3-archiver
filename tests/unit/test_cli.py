@@ -106,8 +106,8 @@ def test_check_command_uses_config_exit_code_for_invalid_provider(
     assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
-    assert "S3_SOURCE_PROVIDER" in payload["message"]
-    assert payload.get("field") == "S3_SOURCE_PROVIDER"
+    assert "ARCHIVER_CONFIG_JSON[0].source.provider" in payload["message"]
+    assert payload.get("field") == "ARCHIVER_CONFIG_JSON[0].source.provider"
 
 
 @pytest.mark.unit()

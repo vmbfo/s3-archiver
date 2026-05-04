@@ -20,3 +20,5 @@ class ArchiveRoute:
     destination_path: str = ""
     parser_kind: ParserKind = "filename_timestamp"
     copy_mode: CopyMode = "daily_tar_gz"
+    source_identity: object | None = None
+    destination_identity: object | None = None

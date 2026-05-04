@@ -246,6 +246,8 @@ def _build_manifest(
                 route.destination_path,
                 route.parser_kind,
                 route.copy_mode,
+                source_identity=route.source_identity,
+                destination_identity=route.destination_identity,
             )
             for route in routes
         ),

@@ -96,16 +96,20 @@ def compose_runtime_log_dir(bucket_pair: LocalstackBucketPair) -> str:
 
 
 def _localstack_config_json(bucket_pair: LocalstackBucketPair, *, endpoint: str) -> str:
+    _ = (bucket_pair, endpoint)
     return (
         '[{"name":"localstack-daily","parser":"filename_timestamp",'
         '"copy_mode":"daily_tar_gz",'
-        f'"source":{{"provider":"localstack","endpoint_url":"{endpoint}",'
-        f'"region":"us-east-1","bucket":"{bucket_pair.source}","path":"",'
-        '"access_key_id":"source-test","secret_access_key":"source-test",'
+        '"source":{"provider":"${S3_SOURCE_PROVIDER}","endpoint_url":"${S3_SOURCE_ENDPOINT_URL}",'
+        '"region":"${S3_SOURCE_REGION}","bucket":"${S3_SOURCE_BUCKET}","path":"",'
+        '"access_key_id":"${S3_SOURCE_ACCESS_KEY_ID}",'
+        '"secret_access_key":"${S3_SOURCE_SECRET_ACCESS_KEY}",'
         '"addressing_style":"path"},"destination":{'
-        f'"provider":"localstack","endpoint_url":"{endpoint}",'
-        f'"region":"us-east-1","bucket":"{bucket_pair.destination}","path":"",'
-        '"access_key_id":"destination-test","secret_access_key":"destination-test",'
+        '"provider":"${S3_DESTINATION_PROVIDER}",'
+        '"endpoint_url":"${S3_DESTINATION_ENDPOINT_URL}",'
+        '"region":"${S3_DESTINATION_REGION}","bucket":"${S3_DESTINATION_BUCKET}",'
+        '"path":"","access_key_id":"${S3_DESTINATION_ACCESS_KEY_ID}",'
+        '"secret_access_key":"${S3_DESTINATION_SECRET_ACCESS_KEY}",'
         '"addressing_style":"path"}}]'
     )
 
