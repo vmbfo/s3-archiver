@@ -19,24 +19,24 @@ services:
             "parser": "filename_timestamp",
             "copy_mode": "daily_tar_gz",
             "source": {
-              "provider": "${S3_SOURCE_PROVIDER:-localstack}",
-              "endpoint_url": "${S3_SOURCE_ENDPOINT_URL:-http://localstack:4566}",
-              "region": "${S3_SOURCE_REGION:-us-east-1}",
-              "bucket": "${S3_SOURCE_BUCKET:-source-bucket}",
-              "path": "${S3_SOURCE_PATH:-}",
-              "access_key_id": "${S3_SOURCE_ACCESS_KEY_ID:-source-test}",
-              "secret_access_key": "${S3_SOURCE_SECRET_ACCESS_KEY:-source-test}",
-              "addressing_style": "${S3_SOURCE_ADDRESSING_STYLE:-path}"
+              "provider": "$${S3_SOURCE_PROVIDER:-localstack}",
+              "endpoint_url": "$${S3_SOURCE_ENDPOINT_URL:-http://localstack:4566}",
+              "region": "$${S3_SOURCE_REGION:-us-east-1}",
+              "bucket": "$${S3_SOURCE_BUCKET:-source-bucket}",
+              "path": "$${S3_SOURCE_PATH:-}",
+              "access_key_id": "$${S3_SOURCE_ACCESS_KEY_ID:-source-test}",
+              "secret_access_key": "$${S3_SOURCE_SECRET_ACCESS_KEY:-source-test}",
+              "addressing_style": "$${S3_SOURCE_ADDRESSING_STYLE:-path}"
             },
             "destination": {
-              "provider": "${S3_DESTINATION_PROVIDER:-localstack}",
-              "endpoint_url": "${S3_DESTINATION_ENDPOINT_URL:-http://localstack:4566}",
-              "region": "${S3_DESTINATION_REGION:-us-east-1}",
-              "bucket": "${S3_DESTINATION_BUCKET:-destination-bucket}",
-              "path": "${S3_DESTINATION_PATH:-}",
-              "access_key_id": "${S3_DESTINATION_ACCESS_KEY_ID:-destination-test}",
-              "secret_access_key": "${S3_DESTINATION_SECRET_ACCESS_KEY:-destination-test}",
-              "addressing_style": "${S3_DESTINATION_ADDRESSING_STYLE:-path}"
+              "provider": "$${S3_DESTINATION_PROVIDER:-localstack}",
+              "endpoint_url": "$${S3_DESTINATION_ENDPOINT_URL:-http://localstack:4566}",
+              "region": "$${S3_DESTINATION_REGION:-us-east-1}",
+              "bucket": "$${S3_DESTINATION_BUCKET:-destination-bucket}",
+              "path": "$${S3_DESTINATION_PATH:-}",
+              "access_key_id": "$${S3_DESTINATION_ACCESS_KEY_ID:-destination-test}",
+              "secret_access_key": "$${S3_DESTINATION_SECRET_ACCESS_KEY:-destination-test}",
+              "addressing_style": "$${S3_DESTINATION_ADDRESSING_STYLE:-path}"
             }
           }
         ]
@@ -65,24 +65,24 @@ services:
             "parser": "filename_timestamp",
             "copy_mode": "daily_tar_gz",
             "source": {
-              "provider": "${S3_SOURCE_PROVIDER:-localstack}",
-              "endpoint_url": "${S3_SOURCE_ENDPOINT_URL:-http://localstack:4566}",
-              "region": "${S3_SOURCE_REGION:-us-east-1}",
-              "bucket": "${S3_SOURCE_BUCKET:-source-bucket}",
-              "path": "${S3_SOURCE_PATH:-}",
-              "access_key_id": "${S3_SOURCE_ACCESS_KEY_ID:-source-test}",
-              "secret_access_key": "${S3_SOURCE_SECRET_ACCESS_KEY:-source-test}",
-              "addressing_style": "${S3_SOURCE_ADDRESSING_STYLE:-path}"
+              "provider": "$${S3_SOURCE_PROVIDER:-localstack}",
+              "endpoint_url": "$${S3_SOURCE_ENDPOINT_URL:-http://localstack:4566}",
+              "region": "$${S3_SOURCE_REGION:-us-east-1}",
+              "bucket": "$${S3_SOURCE_BUCKET:-source-bucket}",
+              "path": "$${S3_SOURCE_PATH:-}",
+              "access_key_id": "$${S3_SOURCE_ACCESS_KEY_ID:-source-test}",
+              "secret_access_key": "$${S3_SOURCE_SECRET_ACCESS_KEY:-source-test}",
+              "addressing_style": "$${S3_SOURCE_ADDRESSING_STYLE:-path}"
             },
             "destination": {
-              "provider": "${S3_DESTINATION_PROVIDER:-localstack}",
-              "endpoint_url": "${S3_DESTINATION_ENDPOINT_URL:-http://localstack:4566}",
-              "region": "${S3_DESTINATION_REGION:-us-east-1}",
-              "bucket": "${S3_DESTINATION_BUCKET:-destination-bucket}",
-              "path": "${S3_DESTINATION_PATH:-}",
-              "access_key_id": "${S3_DESTINATION_ACCESS_KEY_ID:-destination-test}",
-              "secret_access_key": "${S3_DESTINATION_SECRET_ACCESS_KEY:-destination-test}",
-              "addressing_style": "${S3_DESTINATION_ADDRESSING_STYLE:-path}"
+              "provider": "$${S3_DESTINATION_PROVIDER:-localstack}",
+              "endpoint_url": "$${S3_DESTINATION_ENDPOINT_URL:-http://localstack:4566}",
+              "region": "$${S3_DESTINATION_REGION:-us-east-1}",
+              "bucket": "$${S3_DESTINATION_BUCKET:-destination-bucket}",
+              "path": "$${S3_DESTINATION_PATH:-}",
+              "access_key_id": "$${S3_DESTINATION_ACCESS_KEY_ID:-destination-test}",
+              "secret_access_key": "$${S3_DESTINATION_SECRET_ACCESS_KEY:-destination-test}",
+              "addressing_style": "$${S3_DESTINATION_ADDRESSING_STYLE:-path}"
             }
           }
         ]

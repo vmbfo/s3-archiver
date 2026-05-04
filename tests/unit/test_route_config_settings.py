@@ -74,6 +74,22 @@ def test_from_env_decodes_route_config_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_from_env_expands_route_env_refs_with_defaults(tmp_path: Path) -> None:
+    route = _route()
+    source = route["source"]
+    assert isinstance(source, dict)
+    source["provider"] = "${S3_SOURCE_PROVIDER:-localstack}"
+    source["bucket"] = "${S3_SOURCE_BUCKET:-source-default}"
+    source["path"] = "${S3_SOURCE_PATH:-}"
+
+    settings = AppSettings.from_env(_env(tmp_path, [route]))
+
+    assert settings.source.provider is S3Provider.LOCALSTACK
+    assert settings.source.bucket == "source-default"
+    assert settings.source.path == ""
+
+
+@pytest.mark.unit()
 @pytest.mark.parametrize(
     ("route_update", "message"),
     [

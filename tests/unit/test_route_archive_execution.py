@@ -10,6 +10,7 @@ from s3_archiver_core.archive import ArchiveRoute, run_archive, run_archive_rout
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
 from s3_archiver_core.archive_transfer import archive_metadata
+from s3_archiver_core.s3 import S3TransferCapabilities
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -47,6 +48,38 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
     assert destination.head_object("mirror/data/raw.txt") is not None
     assert source.deleted == []
     assert result.cleanup.skipped is True
+
+
+@pytest.mark.unit()
+def test_direct_copy_uses_route_transfer_capabilities() -> None:
+    listed = _listed("data/raw.txt", 1, "v1")
+    source = FakeBucket("source", (listed,))
+    destination = FakeBucket("archive")
+
+    result = run_archive_routes(
+        (
+            ArchiveRoute(
+                "direct",
+                source,
+                destination,
+                parser_kind="direct",
+                copy_mode="direct",
+                transfer_capabilities=S3TransferCapabilities(
+                    native_copy=False,
+                    multipart_copy=False,
+                    streaming_upload=True,
+                    temp_file_backed=True,
+                ),
+            ),
+        ),
+        ArchiveOptions(retention_days=14),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.ok is True
+    assert destination.copied == ["data/raw.txt"]
+    assert destination.copy_strategies == ["multipart_streaming"]
 
 
 @pytest.mark.unit()

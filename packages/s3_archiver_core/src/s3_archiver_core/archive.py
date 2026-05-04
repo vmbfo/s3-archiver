@@ -60,6 +60,7 @@ def run_archive(
         destination_path="" if route_option is None else route_option.destination_path,
         parser_kind="filename_timestamp" if route_option is None else route_option.parser_kind,
         copy_mode="daily_tar_gz" if route_option is None else route_option.copy_mode,
+        transfer_capabilities=options.transfer_capabilities,
     )
     return run_archive_routes(
         (route,),
@@ -121,7 +122,6 @@ def run_archive_routes(
         copy_result, verified_groups, verified_entries = _copy_phase_impl(
             manifest,
             routes_by_name,
-            options,
             debug_logger,
             timed_out,
             time_remaining,

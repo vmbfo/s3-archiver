@@ -13,7 +13,7 @@ from s3_archiver_core._settings_parse import normalize_endpoint_url_result as _e
 
 type JsonObject = dict[str, object]
 
-_ENV_REF_RE = re.compile(r"\$\{(?P<key>[A-Z0-9_]+)\}")
+_ENV_REF_RE = re.compile(r"\$\{(?P<key>[A-Z0-9_]+)(?::-(?P<default>[^}]*))?\}")
 
 
 def provider(decoder: EnvDecoder, value: str, field: str) -> S3Provider | None:
@@ -98,8 +98,14 @@ def expand_env_refs(decoder: EnvDecoder, value: str, field: str) -> str:
     expanded = value
     for match in _ENV_REF_RE.finditer(value):
         env_key = match["key"]
-        replacement = decoder.env.get(env_key)
-        if replacement is None:
+        default: str | None = None
+        if ":-" in match.group(0):
+            default = match.group(0).split(":-", maxsplit=1)[1][:-1]
+        if env_key in decoder.env:
+            replacement = decoder.env[env_key]
+        elif default is not None:
+            replacement = default
+        else:
             decoder.fail(field, f"{field} references missing environment variable {env_key}")
             return value
         expanded = expanded.replace(match.group(0), replacement)

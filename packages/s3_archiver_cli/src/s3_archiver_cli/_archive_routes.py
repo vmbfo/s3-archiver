@@ -6,6 +6,7 @@ from typing import cast
 from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive import ArchiveRoute
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
+from s3_archiver_core.s3 import transfer_capabilities_for_locations
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
 BuildS3Client = Callable[[S3LocationSettings], object]
@@ -35,6 +36,7 @@ def archive_routes_from_settings(
             route.copy_mode.value,
             route.source.storage_identity(),
             route.destination.storage_identity(),
+            transfer_capabilities_for_locations(route.source, route.destination),
         )
         for route in settings.routes
     )

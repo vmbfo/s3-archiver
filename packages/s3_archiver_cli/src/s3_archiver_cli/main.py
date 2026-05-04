@@ -13,7 +13,7 @@ from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive, run_archive_routes
+from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive_routes
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -232,15 +232,6 @@ def _run_configured_archive(
 ) -> ArchiveRunResult:
     options = ArchiveOptions.from_settings(settings)
     debug_logger = _log_transfer_decision if settings.log_level == "DEBUG" else None
-    if len(routes) == 1:
-        route = routes[0]
-        return run_archive(
-            route.source,
-            route.destination,
-            options,
-            run_started_at_utc=started,
-            debug_logger=debug_logger,
-        )
     return run_archive_routes(
         routes,
         options,

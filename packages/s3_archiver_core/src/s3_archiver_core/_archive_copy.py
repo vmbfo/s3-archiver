@@ -15,7 +15,6 @@ from s3_archiver_core.archive_group_metadata import (
     group_metadata,
     uploaded_archive_verified,
 )
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_result import ArchivePhaseResult
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
@@ -29,7 +28,6 @@ from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 def copy_phase(
     manifest: ArchiveManifest,
     routes_by_name: dict[str, ArchiveRoute],
-    options: ArchiveOptions,
     debug_logger: DebugLogger | None,
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
@@ -45,7 +43,7 @@ def copy_phase(
         route = routes_by_name[route_name]
         failures: list[str] = []
         for entry in _route_direct_entries(manifest, route_name):
-            failure, copied = copy_direct_entry(route, entry, options, debug_logger)
+            failure, copied = copy_direct_entry(route, entry, debug_logger)
             if failure is not None:
                 failures.append(failure)
                 continue
@@ -82,7 +80,6 @@ def copy_phase(
 def copy_direct_entry(
     route: ArchiveRoute,
     entry: ManifestEntry,
-    options: ArchiveOptions,
     debug_logger: DebugLogger | None,
 ) -> tuple[str | None, bool]:
     destination_key = entry.destination_key
@@ -94,7 +91,7 @@ def copy_direct_entry(
             if verified.ok:
                 return None, True
             return f"{destination_key}: {verified.detail}", False
-        strategy = select_transfer_strategy(entry.size, options.transfer_capabilities)
+        strategy = select_transfer_strategy(entry.size, route.transfer_capabilities)
         if debug_logger is not None:
             debug_logger(entry, strategy)
         route.destination.copy_from(

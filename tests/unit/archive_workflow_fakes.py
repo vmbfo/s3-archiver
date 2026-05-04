@@ -79,6 +79,7 @@ class FakeBucket:
     bucket: str
     temp_dir: Path
     copied: list[str]
+    copy_strategies: list[TransferStrategy]
     uploaded: list[str]
     deleted: list[tuple[str, str | None]]
     fail_copy: bool
@@ -105,6 +106,7 @@ class FakeBucket:
         self.bucket = bucket
         self.temp_dir = temp_dir or default_temp_dir()
         self.copied = []
+        self.copy_strategies = []
         self.uploaded = []
         self.deleted = []
         self.fail_copy = False
@@ -192,10 +194,11 @@ class FakeBucket:
     ) -> None:
         assert isinstance(source, FakeBucket)
         assert source.bucket == source_bucket
-        _ = (source_version_id, strategy)
+        _ = source_version_id
         if self.fail_copy:
             raise RuntimeError("copy failed")
         self.copied.append(source_key)
+        self.copy_strategies.append(strategy)
         self._destination[destination_key] = replace(properties, metadata=destination_metadata)
         payload = (
             source._version_payloads.get((source_key, source_version_id))
