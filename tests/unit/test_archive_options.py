@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from s3_archiver_core.archive_options import ArchiveOptions, cleanup_enabled_from_env
+from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings
 
@@ -14,34 +14,27 @@ from tests.unit.settings_fakes import dual_env
 
 
 @pytest.mark.unit()
-def test_options_cleanup_defaults() -> None:
-    assert cleanup_enabled_from_env({}) is False
-    assert cleanup_enabled_from_env({"ARCHIVER_ENABLE_CLEANUP": "true"}) is True
-    assert cleanup_enabled_from_env({"ARCHIVER_ENABLE_CLEANUP": " false "}) is False
+def test_options_env_defaults_to_route_runtime_baseline() -> None:
     assert ArchiveOptions.from_env({}).run_timeout == timedelta(days=7)
-    options = ArchiveOptions.from_env(
-        {
-            "ARCHIVER_RETENTION_DAYS": "30",
-            "ARCHIVER_MAX_WORKERS": "2",
-            "ARCHIVER_RUN_TIMEOUT": "1h",
-        }
-    )
-    assert options.retention_days == 30
-    assert options.max_workers == 2
+    options = ArchiveOptions.from_env({"ARCHIVER_RUN_TIMEOUT": "1h"})
+    assert options.retention_days == 60
+    assert options.cleanup_enabled is False
+    assert options.max_workers == 1
     assert options.run_timeout == timedelta(hours=1)
 
 
 @pytest.mark.unit()
+@pytest.mark.parametrize(
+    "key",
+    ["ARCHIVER_RETENTION_DAYS", "ARCHIVER_ENABLE_CLEANUP", "ARCHIVER_MAX_WORKERS"],
+)
+def test_options_reject_removed_env_values(key: str) -> None:
+    with pytest.raises(ConfigError, match=key):
+        _ = ArchiveOptions.from_env({key: "1"})
+
+
+@pytest.mark.unit()
 def test_options_reject_invalid_env_values() -> None:
-    with pytest.raises(ConfigError, match="ARCHIVER_ENABLE_CLEANUP"):
-        _ = cleanup_enabled_from_env({"ARCHIVER_ENABLE_CLEANUP": "yes"})
-
-    with pytest.raises(ConfigError, match="ARCHIVER_MAX_WORKERS"):
-        _ = ArchiveOptions.from_env({"ARCHIVER_MAX_WORKERS": "0"})
-
-    with pytest.raises(ConfigError, match="ARCHIVER_MAX_WORKERS"):
-        _ = ArchiveOptions.from_env({"ARCHIVER_MAX_WORKERS": "many"})
-
     with pytest.raises(ConfigError, match="ARCHIVER_RUN_TIMEOUT"):
         _ = ArchiveOptions.from_env({"ARCHIVER_RUN_TIMEOUT": "soon"})
 

@@ -21,9 +21,12 @@ def phase_status(result: ArchivePhaseResult) -> str:
 def manifest_target_day(manifest: object) -> str:
     """Return the manifest target day as an ISO date string."""
 
+    has_explicit_target = hasattr(manifest, "target_day") or hasattr(manifest, "target_date")
     value = attr(manifest, "target_day", "target_date")
     if value is not None:
         return date_text(value)
+    if has_explicit_target:
+        return ""
     cutoff = attr(manifest, "retention_cutoff_utc")
     if isinstance(cutoff, datetime):
         return cutoff.date().isoformat()

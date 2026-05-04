@@ -121,7 +121,6 @@ def test_schedule_retries_after_timeout_on_next_tick(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _integration_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_MAX_WORKERS"] = "1"
     env["ARCHIVER_RUN_TIMEOUT"] = "1s"
     settings = AppSettings.from_env(env)
     source_client = localstack_s3_client(env, "source")

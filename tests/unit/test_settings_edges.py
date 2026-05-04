@@ -39,14 +39,12 @@ def test_oci_endpoint_resolution_requires_namespace() -> None:
 
 @pytest.mark.unit()
 def test_parse_result_boundary_captures_issue_without_raising() -> None:
-    result = parse_bool_result(
-        {"ARCHIVER_ENABLE_CLEANUP": "maybe"}, "ARCHIVER_ENABLE_CLEANUP", default=False
-    )
+    result = parse_bool_result({"BOOL": "maybe"}, "BOOL", default=False)
 
     assert result.ok is False
     assert result.value is None
     assert result.issue is not None
-    assert result.issue.field == "ARCHIVER_ENABLE_CLEANUP"
+    assert result.issue.field == "BOOL"
 
 
 @pytest.mark.unit()

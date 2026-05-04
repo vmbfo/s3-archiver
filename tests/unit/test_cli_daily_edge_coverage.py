@@ -99,6 +99,43 @@ def test_archive_result_payload_omits_cleanup_group_status(
     assert all("cleanup_status" not in group for group in payload_groups)
 
 
+@pytest.mark.unit()
+def test_archive_result_payload_omits_retention_cutoff_for_route_manifest(
+    base_env: dict[str, str],
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    manifest = SimpleNamespace(
+        run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
+        retention_cutoff_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
+        target_day=None,
+        entries=(),
+        archive_groups=(),
+        skipped_objects=(),
+    )
+    result = cast(
+        ArchiveRunResult,
+        cast(
+            object,
+            SimpleNamespace(
+                run_id="run-id",
+                manifest=manifest,
+                list=ArchivePhaseResult("list"),
+                copy=ArchivePhaseResult("copy"),
+                verify=ArchivePhaseResult("verify"),
+                cleanup=ArchivePhaseResult("cleanup"),
+                skipped_archive_keys=(),
+                verified_archive_keys=(),
+            ),
+        ),
+    )
+
+    payload = error_logging.archive_result_payload("ok", result, settings, Path("/tmp/log"))
+    manifest_payload = cast(dict[str, object], payload["manifest"])
+
+    assert payload["target_day"] == ""
+    assert "retention_cutoff_utc" not in manifest_payload
+
+
 def _group(destination_archive_key: str) -> SimpleNamespace:
     return SimpleNamespace(
         target_day=date(2026, 4, 13),

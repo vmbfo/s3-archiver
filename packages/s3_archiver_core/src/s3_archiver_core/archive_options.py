@@ -40,10 +40,11 @@ class ArchiveOptions:
     def from_env(cls, env: Mapping[str, str]) -> ArchiveOptions:
         """Build archive options from archive-specific environment variables."""
 
+        _reject_removed_env(env)
         return cls(
-            retention_days=_positive_int(env, "ARCHIVER_RETENTION_DAYS", 60),
-            cleanup_enabled=cleanup_enabled_from_env(env),
-            max_workers=_positive_int(env, "ARCHIVER_MAX_WORKERS", 16),
+            retention_days=60,
+            cleanup_enabled=False,
+            max_workers=1,
             run_timeout=_duration(env, "ARCHIVER_RUN_TIMEOUT", "7d"),
         )
 
@@ -61,20 +62,6 @@ class ArchiveOptions:
             transfer_capabilities=_transfer_capabilities(settings),
             routes=routes,
         )
-
-
-def cleanup_enabled_from_env(env: Mapping[str, str]) -> bool:
-    """Return whether cleanup is globally enabled by ``ARCHIVER_ENABLE_CLEANUP``."""
-
-    raw = env.get("ARCHIVER_ENABLE_CLEANUP")
-    if raw is None or raw.strip() == "":
-        return False
-    value = raw.strip().lower()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise ConfigError("ARCHIVER_ENABLE_CLEANUP must be true or false")
 
 
 def _source_filter(settings: AppSettings) -> SourcePathFilter:
@@ -104,17 +91,15 @@ def _route_options(route: RouteSettings) -> ArchiveRouteOptions:
     )
 
 
-def _positive_int(env: Mapping[str, str], key: str, default: int) -> int:
-    raw = env.get(key)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ConfigError(f"{key} must be an integer") from exc
-    if value <= 0:
-        raise ConfigError(f"{key} must be positive")
-    return value
+def _reject_removed_env(env: Mapping[str, str]) -> None:
+    removed = (
+        "ARCHIVER_RETENTION_DAYS",
+        "ARCHIVER_ENABLE_CLEANUP",
+        "ARCHIVER_MAX_WORKERS",
+    )
+    for key in removed:
+        if env.get(key, "").strip() != "":
+            raise ConfigError(f"{key} has been removed; configure ARCHIVER_CONFIG_JSON routes")
 
 
 def _duration(env: Mapping[str, str], key: str, default: str) -> timedelta:
