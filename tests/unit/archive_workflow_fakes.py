@@ -81,7 +81,6 @@ class FakeBucket:
     copied: list[str]
     copy_strategies: list[TransferStrategy]
     uploaded: list[str]
-    deleted: list[tuple[str, str | None]]
     fail_copy: bool
     _objects: dict[str, S3ListedObject]
     _versions: dict[tuple[str, str | None], S3ListedObject]
@@ -108,7 +107,6 @@ class FakeBucket:
         self.copied = []
         self.copy_strategies = []
         self.uploaded = []
-        self.deleted = []
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
         self._versions = {(item.key, item.version_id): item for item in chain(objects, versions)}
@@ -207,6 +205,3 @@ class FakeBucket:
         )
         assert payload is not None
         self._destination_payloads[destination_key] = payload
-
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        self.deleted.append((key, version_id))

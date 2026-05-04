@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
@@ -101,7 +101,7 @@ def run_archive_routes(
         except Exception as exc:
             return ArchiveRunResult(
                 run_id,
-                _empty_manifest(started, options),
+                _empty_manifest(started),
                 _skipped("copy"),
                 _skipped("verify"),
                 _skipped("cleanup"),
@@ -267,10 +267,8 @@ def _timeout(phase: str) -> ArchivePhaseResult:
     return ArchivePhaseResult(phase, ("archive run timed out",))
 
 
-def _empty_manifest(started: datetime, options: ArchiveOptions) -> ArchiveManifest:
-    target_day = started.date() - timedelta(days=options.retention_days)
-    cutoff = datetime.combine(target_day, datetime.min.time(), UTC)
-    return ArchiveManifest(started, cutoff, (), target_day, (), ())
+def _empty_manifest(started: datetime) -> ArchiveManifest:
+    return ArchiveManifest(started, started, (), None, (), ())
 
 
 def _as_utc(value: datetime) -> datetime:

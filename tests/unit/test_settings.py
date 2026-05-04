@@ -13,6 +13,19 @@ from s3_archiver_core.temp_files import default_temp_dir
 from tests.unit.settings_fakes import dual_env as _dual_env
 
 
+@pytest.mark.parametrize(
+    "key",
+    ["ARCHIVER_RETENTION_DAYS", "ARCHIVER_ENABLE_CLEANUP", "ARCHIVER_MAX_WORKERS"],
+)
+@pytest.mark.unit()
+def test_from_env_rejects_removed_archive_env_vars(tmp_path: Path, key: str) -> None:
+    env = _dual_env(tmp_path)
+    env[key] = "1"
+
+    with pytest.raises(ConfigError, match=key):
+        _ = AppSettings.from_env(env)
+
+
 @pytest.mark.unit()
 def test_from_env_requires_config_json(tmp_path: Path) -> None:
     env = _dual_env(tmp_path)

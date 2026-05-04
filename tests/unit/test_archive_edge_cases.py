@@ -173,7 +173,6 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     )
     assert result.manifest.entries[0].version_id == "v2"
     assert result.ok is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -210,7 +209,6 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     assert result.copy.failures == (f"{archive_key}: archive verification failed",)
     assert result.skipped_archive_keys == ()
     assert result.cleanup.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()

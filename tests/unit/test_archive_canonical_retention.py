@@ -67,4 +67,3 @@ def test_canonical_retention_dataset_archives_each_eligible_day(
     assert [entry.key for entry in result.manifest.entries] == expected_keys
     assert destination.uploaded == expected_archive_keys
     assert destination.copied == []
-    assert source.deleted == []

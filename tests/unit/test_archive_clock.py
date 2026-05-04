@@ -48,9 +48,6 @@ class EmptyBucket:
     def copy_from(self, *_args: object, **_kwargs: object) -> None:
         raise AssertionError("empty manifest must not copy")
 
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        raise AssertionError(f"empty manifest must not delete {key!r} {version_id!r}")
-
 
 @pytest.mark.unit()
 def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:

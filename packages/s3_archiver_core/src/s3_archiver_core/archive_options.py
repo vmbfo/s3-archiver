@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from s3_archiver_core._removed_env import reject_removed_archiver_env
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.archive_manifest import CopyMode, ParserKind, SourcePathFilter
 from s3_archiver_core.errors import ConfigError
@@ -40,7 +41,7 @@ class ArchiveOptions:
     def from_env(cls, env: Mapping[str, str]) -> ArchiveOptions:
         """Build archive options from archive-specific environment variables."""
 
-        _reject_removed_env(env)
+        reject_removed_archiver_env(env)
         return cls(
             retention_days=60,
             cleanup_enabled=False,
@@ -89,17 +90,6 @@ def _route_options(route: RouteSettings) -> ArchiveRouteOptions:
         parser_kind=route.parser.value,
         copy_mode=route.copy_mode.value,
     )
-
-
-def _reject_removed_env(env: Mapping[str, str]) -> None:
-    removed = (
-        "ARCHIVER_RETENTION_DAYS",
-        "ARCHIVER_ENABLE_CLEANUP",
-        "ARCHIVER_MAX_WORKERS",
-    )
-    for key in removed:
-        if env.get(key, "").strip() != "":
-            raise ConfigError(f"{key} has been removed; configure ARCHIVER_CONFIG_JSON routes")
 
 
 def _duration(env: Mapping[str, str], key: str, default: str) -> timedelta:

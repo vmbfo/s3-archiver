@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+from s3_archiver_core._removed_env import reject_removed_archiver_env
 from s3_archiver_core._settings_models import (
     CopyMode,
     PathFilterSettings,
@@ -51,6 +52,7 @@ class AppSettings:
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
         """Parse and validate application settings from environment values."""
 
+        reject_removed_archiver_env(env)
         decoder = EnvDecoder(env)
         log_level = env.get("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in _VALID_LOG_LEVELS:

@@ -80,7 +80,6 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     assert result.ok is True
     assert destination.uploaded == [archive_key]
     assert destination.copied == []
-    assert source.deleted == []
     assert decisions == [(key, "deterministic_tar_gzip")]
     assert result.cleanup.skipped is True
     cleanup_result = run_archive(
@@ -92,7 +91,6 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     )
 
     assert cleanup_result.ok is True
-    assert source.deleted == []
     assert cleanup_result.cleanup.skipped is True
 
 
@@ -114,7 +112,6 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert copy_failed.copy.failures == (f"{archive_key}: copy failed",)
     assert copy_failed.verify.skipped is True
-    assert source.deleted == []
 
     bad_destination = FakeBucket("destination", destination={archive_key: _properties(size=10)})
     verify_failed = run_archive(
@@ -127,7 +124,6 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert verify_failed.copy.failures == (f"{archive_key}: archive verification failed",)
     assert verify_failed.verify.skipped is True
-    assert source.deleted == []
 
     class MissingDuringVerify(FakeBucket):
         head_calls: int
@@ -153,7 +149,6 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     assert verify_missing.copy.ok is True
     assert verify_missing.verify.failures == (f"{archive_key}: destination missing",)
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -173,7 +168,6 @@ def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
 
     assert result.copy.failures == ("data/fae/2024-02-20.tar.gz: copy failed",)
     assert result.verify.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -192,7 +186,6 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
 
     assert timed_out.copy.failures == ("archive run timed out",)
     assert timed_out.verify.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -233,7 +226,6 @@ def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -251,4 +243,3 @@ def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == []

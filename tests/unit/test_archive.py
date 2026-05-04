@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from s3_archiver_core.archive_manifest import (
@@ -17,7 +17,6 @@ from s3_archiver_core.archive_transfer import (
     verify_destination,
     verify_destination_checksum,
     verify_destination_content,
-    verify_source_unchanged,
 )
 
 from tests.unit.archive_workflow_fakes import FakeBucket
@@ -76,37 +75,6 @@ def test_transfer_fingerprint_helpers_reject_stale_destination_metadata() -> Non
     )
     with pytest.raises(ValueError, match="reserved key"):
         _ = archive_metadata(reserved_entry)
-
-
-@pytest.mark.unit()
-def test_key_only_cleanup_verification_rejects_etag_changes() -> None:
-    listed = _listed(_target_key("2024-02-20T00-00-00.txt"), 70, None)
-    entry = ManifestEntry("source", listed.key, 10, listed.last_modified, '"etag"', None, listed)
-
-    result = verify_source_unchanged(
-        entry,
-        replace(entry.object.properties, etag='"changed"'),
-    )
-
-    assert result.ok is False
-    assert result.detail == "source changed before cleanup"
-
-
-@pytest.mark.unit()
-def test_key_only_cleanup_verification_rejects_last_modified_changes() -> None:
-    listed = _listed(_target_key("2024-02-20T00-00-00.txt"), 70, None)
-    entry = ManifestEntry("source", listed.key, 10, listed.last_modified, '"etag"', None, listed)
-
-    result = verify_source_unchanged(
-        entry,
-        replace(
-            entry.object.properties,
-            last_modified=entry.last_modified + timedelta(seconds=1),
-        ),
-    )
-
-    assert result.ok is False
-    assert result.detail == "source changed before cleanup"
 
 
 @pytest.mark.unit()

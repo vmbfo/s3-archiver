@@ -256,9 +256,6 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
 
     assert result.ok is True
     assert matching.uploaded == []
-    assert source.deleted == []
-
-    source.deleted.clear()
     mismatched = FakeBucket(
         "destination",
         destination={
@@ -276,7 +273,6 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
     assert failed.ok is False
     assert failed.copy.failures == (f"{archive_key}: archive verification failed",)
     assert failed.cleanup.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -297,4 +293,3 @@ def test_archive_does_not_delete_manifest_versions() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == []

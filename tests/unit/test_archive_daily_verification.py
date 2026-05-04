@@ -49,7 +49,6 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
 
     assert result.copy.failures == (f"{archive_key}: archive verification failed",)
     assert result.verify.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -98,4 +97,3 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     assert result.copy.failures == (
         f"{skipped_group.destination_archive_key}: archive verification failed",
     )
-    assert source.deleted == []

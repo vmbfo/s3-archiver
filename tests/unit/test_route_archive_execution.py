@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import override
 
 import pytest
 from s3_archiver_core.archive import ArchiveRoute, run_archive, run_archive_routes
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
 from s3_archiver_core.archive_transfer import archive_metadata
-from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.s3 import S3ListedObject, S3TransferCapabilities, VersioningState
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
+
+
+class FailingListBucket(FakeBucket):
+    @override
+    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
+        _ = versioning_state
+        raise RuntimeError("list failed")
 
 
 @pytest.mark.unit()
@@ -46,7 +55,6 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
     assert result.ok is True
     assert destination.copied == ["data/raw.txt"]
     assert destination.head_object("mirror/data/raw.txt") is not None
-    assert source.deleted == []
     assert result.cleanup.skipped is True
 
 
@@ -80,6 +88,24 @@ def test_direct_copy_uses_route_transfer_capabilities() -> None:
     assert result.ok is True
     assert destination.copied == ["data/raw.txt"]
     assert destination.copy_strategies == ["multipart_streaming"]
+
+
+@pytest.mark.unit()
+def test_route_list_failure_uses_route_manifest_defaults() -> None:
+    source = FailingListBucket("source")
+    destination = FakeBucket("archive")
+
+    result = run_archive_routes(
+        (ArchiveRoute("broken", source, destination),),
+        ArchiveOptions(retention_days=14),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.list.failures == ("list failed",)
+    assert result.copy.skipped is True
+    assert result.manifest.target_day is None
+    assert result.manifest.retention_cutoff_utc == STARTED
 
 
 @pytest.mark.unit()
@@ -120,8 +146,6 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
     ]
     assert destination.uploaded == ["archives/2026-04-13.tar.gz"]
     assert destination.copied == ["right.txt"]
-    assert left.deleted == []
-    assert right.deleted == []
 
 
 @pytest.mark.unit()
