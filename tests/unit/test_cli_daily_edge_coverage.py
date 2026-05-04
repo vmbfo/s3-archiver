@@ -23,7 +23,6 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
         ),
     )
     manifest = SimpleNamespace(
-        retention_cutoff_utc=None,
         entries=entries,
     )
     group = SimpleNamespace(
@@ -71,7 +70,6 @@ def test_archive_result_payload_omits_cleanup_group_status(
     )
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
-        retention_cutoff_utc=datetime(2026, 4, 13, 2, tzinfo=UTC),
         target_day=date(2026, 4, 13),
         entries=(),
         archive_groups=groups,
@@ -103,7 +101,6 @@ def test_archive_result_payload_omits_retention_cutoff_for_route_manifest(
     settings = AppSettings.from_env(base_env)
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
-        retention_cutoff_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
         target_day=None,
         entries=(),
         archive_groups=(),

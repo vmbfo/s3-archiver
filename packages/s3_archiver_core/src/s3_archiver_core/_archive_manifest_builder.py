@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime
 
 from s3_archiver_core._archive_manifest_models import (
-    DEFAULT_SOURCE_FILTER,
     ArchiveGroup,
     ArchiveManifest,
     CopyMode,
@@ -15,7 +14,6 @@ from s3_archiver_core._archive_manifest_models import (
     SelectedObject,
     SkippedObject,
     SourceLister,
-    SourcePathFilter,
 )
 from s3_archiver_core.archive_timestamp import (
     TimestampSource,
@@ -32,9 +30,7 @@ def build_archive_manifest(
     source: SourceLister,
     *,
     run_started_at_utc: datetime,
-    retention_days: int | None = None,
     versioning_state: VersioningState,
-    source_filter: SourcePathFilter = DEFAULT_SOURCE_FILTER,
     route_name: str = "default",
     parser_kind: ParserKind = "filename_timestamp",
     copy_mode: CopyMode = "daily_tar_gz",
@@ -48,10 +44,6 @@ def build_archive_manifest(
     """Build an archive manifest from source object keys."""
 
     run_started = as_utc(run_started_at_utc)
-    target_day = (
-        None if retention_days is None else run_started.date() - timedelta(days=retention_days)
-    )
-    cutoff = run_started if target_day is None else datetime.combine(target_day, time.min, UTC)
     entries: list[ManifestEntry] = []
     skipped: list[SkippedObject] = []
     source_identity = source_identity or storage_identity(source)
@@ -62,8 +54,6 @@ def build_archive_manifest(
     for listed in source.list_source_objects(versioning_state):
         if source_path and not listed.key.startswith(source_path):
             continue
-        if not source_filter.includes(listed.key):
-            continue
         selected = _select_object(parser_kind, parser, listed, source_path)
         if selected is None:
             skipped.append(SkippedObject(listed.key, "no reliable key timestamp", route_name))
@@ -72,9 +62,9 @@ def build_archive_manifest(
             skipped.append(SkippedObject(listed.key, selected.reason, route_name))
             continue
         timestamp = as_utc(selected.timestamp)
-        if _outside_eligibility(timestamp, run_started, target_day):
+        if timestamp > run_started:
             skipped.append(
-                SkippedObject(listed.key, _eligibility_skip_reason(target_day), route_name)
+                SkippedObject(listed.key, "parser timestamp after run start", route_name)
             )
             continue
         entries.append(
@@ -98,9 +88,8 @@ def build_archive_manifest(
     entry_tuple = tuple(entries)
     return ArchiveManifest(
         run_started,
-        cutoff,
         entry_tuple,
-        target_day,
+        None,
         archive_groups(entry_tuple),
         tuple(skipped),
     )
@@ -251,20 +240,6 @@ def _select_object(
         result.timestamp_source,
         _relative_archive_root(result.archive_root, source_path),
     )
-
-
-def _outside_eligibility(
-    selected_timestamp: datetime, run_started: datetime, target_day: date | None
-) -> bool:
-    if selected_timestamp > run_started:
-        return True
-    return target_day is not None and selected_timestamp.date() > target_day
-
-
-def _eligibility_skip_reason(target_day: date | None) -> str:
-    if target_day is None:
-        return "parser timestamp after run start"
-    return "outside retention window"
 
 
 def _relative_key(key: str, source_path: str) -> str:

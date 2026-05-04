@@ -72,7 +72,6 @@ def _archive_result() -> ArchiveRunResult:
         run_id="run-id",
         manifest=ArchiveManifest(
             run_started_at_utc=datetime.fromisoformat("2026-04-09T17:00:43+00:00"),
-            retention_cutoff_utc=datetime.fromisoformat("2026-02-08T17:00:43+00:00"),
             entries=(),
         ),
         copy=ArchivePhaseResult("copy"),

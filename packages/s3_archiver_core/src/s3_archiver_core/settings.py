@@ -8,7 +8,6 @@ from pathlib import Path
 from s3_archiver_core._removed_env import reject_removed_archiver_env
 from s3_archiver_core._settings_models import (
     CopyMode,
-    PathFilterSettings,
     RouteSettings,
     S3AddressingStyle,
     S3LocationSettings,
@@ -23,7 +22,6 @@ _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 __all__ = (
     "AppSettings",
     "CopyMode",
-    "PathFilterSettings",
     "RouteSettings",
     "S3AddressingStyle",
     "S3LocationSettings",
@@ -38,9 +36,6 @@ class AppSettings:
 
     source: S3LocationSettings
     destination: S3LocationSettings
-    path_filters: PathFilterSettings
-    retention_days: int
-    max_workers: int
     run_timeout: timedelta
     temp_dir: Path
     log_level: str

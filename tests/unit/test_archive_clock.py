@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -53,7 +53,7 @@ class EmptyBucket:
 def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     first_started = datetime(2024, 4, 20, tzinfo=UTC)
     second_started = datetime(2024, 4, 21, tzinfo=UTC)
-    options = ArchiveOptions(retention_days=60, max_workers=1)
+    options = ArchiveOptions()
 
     first = run_archive(
         EmptyBucket(),
@@ -69,6 +69,4 @@ def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     )
 
     assert first.manifest.run_started_at_utc == first_started
-    assert first.manifest.retention_cutoff_utc == first_started - timedelta(days=60)
     assert second.manifest.run_started_at_utc == second_started
-    assert second.manifest.retention_cutoff_utc == second_started - timedelta(days=60)

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Protocol
 
 from s3_archiver_core._settings_models import (
-    PathFilterSettings,
     RouteSettings,
     S3LocationSettings,
 )
@@ -19,9 +18,6 @@ class AppSettingsFactory[T](Protocol):
         *,
         source: S3LocationSettings,
         destination: S3LocationSettings,
-        path_filters: PathFilterSettings,
-        retention_days: int,
-        max_workers: int,
         run_timeout: timedelta,
         temp_dir: Path,
         log_level: str,

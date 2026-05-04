@@ -8,7 +8,7 @@ from typing import override
 
 import pytest
 from s3_archiver_core.archive import group_metadata, run_archive
-from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
+from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
@@ -34,9 +34,7 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=60,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -53,7 +51,7 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -71,7 +69,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
@@ -84,7 +82,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     cleanup_result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -103,7 +101,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     copy_failed = run_archive(
         source,
         failing_destination,
-        ArchiveOptions(retention_days=60, max_workers=2),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -115,7 +113,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     verify_failed = run_archive(
         source,
         bad_destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -140,7 +138,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     verify_missing = run_archive(
         source,
         MissingDuringVerify(),
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -159,7 +157,7 @@ def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=2),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -177,7 +175,7 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     timed_out = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=started,
         clock=lambda: started + timedelta(days=8),
     )
@@ -196,7 +194,7 @@ def test_list_failure_blocks_archive_phases() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -217,7 +215,7 @@ def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -234,7 +232,7 @@ def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )

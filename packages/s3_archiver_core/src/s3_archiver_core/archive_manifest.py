@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from s3_archiver_core._archive_manifest_models import (
-    DEFAULT_SOURCE_FILTER,
     ArchiveGroup,
     ArchiveManifest,
     ArchiveManifestRoute,
@@ -16,7 +15,6 @@ from s3_archiver_core._archive_manifest_models import (
     SelectedObject,
     SkippedObject,
     SourceLister,
-    SourcePathFilter,
 )
 from s3_archiver_core.archive_timestamp import (
     TimestampSource,
@@ -36,7 +34,6 @@ __all__ = (
     "SelectedObject",
     "SkippedObject",
     "SourceLister",
-    "SourcePathFilter",
     "TimestampSource",
     "archive_root_for_key",
     "build_archive_manifest",
@@ -50,9 +47,7 @@ def build_archive_manifest(
     source: SourceLister,
     *,
     run_started_at_utc: datetime,
-    retention_days: int | None = None,
     versioning_state: VersioningState,
-    source_filter: SourcePathFilter = DEFAULT_SOURCE_FILTER,
     route_name: str = "default",
     parser_kind: ParserKind = "filename_timestamp",
     copy_mode: CopyMode = "daily_tar_gz",
@@ -70,9 +65,7 @@ def build_archive_manifest(
     return _build(
         source,
         run_started_at_utc=run_started_at_utc,
-        retention_days=retention_days,
         versioning_state=versioning_state,
-        source_filter=source_filter,
         route_name=route_name,
         parser_kind=parser_kind,
         copy_mode=copy_mode,

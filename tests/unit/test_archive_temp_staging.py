@@ -11,7 +11,6 @@ import pytest
 from s3_archiver_core import archive as archive_module
 from s3_archiver_core.archive_manifest import (
     ArchiveGroup,
-    SourcePathFilter,
     build_archive_manifest,
 )
 
@@ -57,9 +56,7 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     return source, manifest.archive_groups[0]
 

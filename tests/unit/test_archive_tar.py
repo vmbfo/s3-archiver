@@ -62,7 +62,7 @@ def test_run_archive_rewrites_unsafe_daily_tar_member_name_and_preserves_origina
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=started,
         clock=lambda: started,
     )

@@ -16,7 +16,6 @@ from s3_archiver_core._archive_manifest_models import (
     ArchiveManifestRoute,
     ManifestEntry,
     SkippedObject,
-    SourcePathFilter,
 )
 
 
@@ -36,13 +35,11 @@ def build_route_archive_manifest(
         manifest = build_archive_manifest(
             route.source,
             run_started_at_utc=run_started,
-            retention_days=None,
             versioning_state=(
                 route.versioning_state
                 if route.versioning_state is not None
                 else route.source.versioning_state()
             ),
-            source_filter=SourcePathFilter(),
             route_name=route.name,
             parser_kind=route.parser_kind,
             copy_mode=route.copy_mode,
@@ -59,7 +56,7 @@ def build_route_archive_manifest(
     _reject_duplicate_sources(entry_tuple)
     grouped = archive_groups(entry_tuple)
     _reject_duplicate_destinations(entry_tuple, grouped)
-    return ArchiveManifest(run_started, run_started, entry_tuple, None, grouped, tuple(skipped))
+    return ArchiveManifest(run_started, entry_tuple, None, grouped, tuple(skipped))
 
 
 def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRoute, ...]) -> None:

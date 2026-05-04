@@ -37,7 +37,6 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
         source,
         destination,
         ArchiveOptions(
-            retention_days=14,
             routes=(
                 ArchiveRouteOptions(
                     "default",
@@ -78,7 +77,7 @@ def test_direct_copy_uses_route_transfer_capabilities() -> None:
                 ),
             ),
         ),
-        ArchiveOptions(retention_days=14),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -95,7 +94,7 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
 
     result = run_archive_routes(
         (ArchiveRoute("broken", source, destination),),
-        ArchiveOptions(retention_days=14),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -103,7 +102,6 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
     assert result.list.failures == ("list failed",)
     assert result.copy.skipped is True
     assert result.manifest.target_day is None
-    assert result.manifest.retention_cutoff_utc == STARTED
 
 
 @pytest.mark.unit()
@@ -131,7 +129,7 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
                 copy_mode="direct",
             ),
         ),
-        ArchiveOptions(retention_days=14),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
         debug_logger=lambda entry, strategy: decisions.append((entry.route_name, strategy)),
@@ -171,7 +169,7 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
                 destination_identity=("destination", "verified"),
             ),
         ),
-        ArchiveOptions(retention_days=14),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -207,7 +205,6 @@ def test_direct_copy_existing_conflicting_destination_fails() -> None:
         source,
         destination,
         ArchiveOptions(
-            retention_days=14,
             routes=(
                 ArchiveRouteOptions(
                     "default",

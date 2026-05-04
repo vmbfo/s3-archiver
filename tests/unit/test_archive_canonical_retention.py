@@ -1,4 +1,4 @@
-"""Unit coverage for canonical retention dataset splits."""
+"""Unit coverage for canonical timestamp archive dataset splits."""
 
 from __future__ import annotations
 
@@ -33,26 +33,20 @@ def _canonical_source(prefix: str) -> FakeBucket:
 
 
 @pytest.mark.unit()
-@pytest.mark.parametrize(
-    "retention_days",
-    [60, 30],
-)
-def test_canonical_retention_dataset_archives_each_eligible_day(
-    retention_days: int,
-) -> None:
-    prefix = f"retention-canonical/{retention_days}"
+def test_canonical_timestamp_dataset_archives_each_selected_day() -> None:
+    prefix = "timestamp-canonical"
     source = _canonical_source(prefix)
     destination = FakeBucket("destination")
 
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=retention_days),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    expected_days = tuple(range(retention_days, max(CANONICAL_DAYS) + 1))
+    expected_days = CANONICAL_DAYS
     expected_keys = [
         f"{prefix}/{(STARTED.date() - timedelta(days=day)).isoformat()}T00-00-00.txt"
         for day in expected_days

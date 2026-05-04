@@ -9,7 +9,6 @@ from s3_archiver_core.archive_timestamp import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 CopyMode = Literal["direct", "daily_tar_gz"]
-FilterMode = Literal["none", "whitelist", "blacklist"]
 ParserKind = Literal["direct", "filename_timestamp", "folder_timestamp"]
 
 
@@ -37,26 +36,6 @@ class DestinationLocator(Protocol):
     def bucket(self) -> str:
         """Return the destination bucket name."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class SourcePathFilter:
-    """Prefix filter applied while selecting archive candidates."""
-
-    mode: FilterMode = "none"
-    prefixes: tuple[str, ...] = ()
-
-    def includes(self, key: str) -> bool:
-        """Return whether a key is included by this filter."""
-        if self.mode == "none":
-            return True
-        matched = any(key.startswith(prefix) for prefix in self.prefixes)
-        if self.mode == "whitelist":
-            return matched
-        return not matched
-
-
-DEFAULT_SOURCE_FILTER = SourcePathFilter()
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +101,6 @@ class ArchiveManifest:
     """Complete archive plan for one run."""
 
     run_started_at_utc: datetime
-    retention_cutoff_utc: datetime
     entries: tuple[ManifestEntry, ...]
     target_day: date | None = None
     archive_groups: tuple[ArchiveGroup, ...] = ()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
@@ -29,7 +30,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     built_locations: list[str] = []
     call_order: list[str] = []
     lock_paths: list[Path] = []
-    option_retention_days: list[int] = []
+    option_timeouts: list[object] = []
     health_checked: list[Path] = []
     expected_temp_dir = AppSettings.from_env(base_env).temp_dir
 
@@ -71,7 +72,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     ) -> ArchiveRunResult:
         _ = (routes, run_started_at_utc, _kwargs)
         call_order.append("run_archive")
-        option_retention_days.append(options.retention_days)
+        option_timeouts.append(options.run_timeout)
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -91,7 +92,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     assert built_locations == ["archive-bucket", "destination-bucket"]
     assert health_checked == [Path("/tmp/s3-archiver.log")]
     assert lock_paths == [Path(base_env["LOG_DIR"]) / "archive.lock"]
-    assert option_retention_days == [60]
+    assert option_timeouts == [timedelta(days=7)]
     assert call_order == ["lock.acquire", "temp.prepare", "health", "run_archive", "lock.release"]
 
 

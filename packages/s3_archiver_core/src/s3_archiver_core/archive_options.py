@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from s3_archiver_core._removed_env import reject_removed_archiver_env
 from s3_archiver_core.archive_lock import parse_duration
-from s3_archiver_core.archive_manifest import CopyMode, ParserKind, SourcePathFilter
+from s3_archiver_core.archive_manifest import CopyMode, ParserKind
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.s3 import S3TransferCapabilities, transfer_capabilities_for_locations
 from s3_archiver_core.settings import AppSettings, RouteSettings
@@ -29,10 +29,7 @@ class ArchiveRouteOptions:
 class ArchiveOptions:
     """Archive workflow settings with conservative defaults."""
 
-    retention_days: int
-    max_workers: int = 1
     run_timeout: timedelta = timedelta(days=7)
-    source_filter: SourcePathFilter = field(default_factory=SourcePathFilter)
     transfer_capabilities: S3TransferCapabilities = field(default_factory=S3TransferCapabilities)
     routes: tuple[ArchiveRouteOptions, ...] = ()
 
@@ -42,8 +39,6 @@ class ArchiveOptions:
 
         reject_removed_archiver_env(env)
         return cls(
-            retention_days=60,
-            max_workers=1,
             run_timeout=_duration(env, "ARCHIVER_RUN_TIMEOUT", "7d"),
         )
 
@@ -53,22 +48,10 @@ class ArchiveOptions:
 
         routes = _routes(settings)
         return cls(
-            retention_days=settings.retention_days,
-            max_workers=settings.max_workers,
             run_timeout=settings.run_timeout,
-            source_filter=_source_filter(settings),
             transfer_capabilities=_transfer_capabilities(settings),
             routes=routes,
         )
-
-
-def _source_filter(settings: AppSettings) -> SourcePathFilter:
-    filters = settings.path_filters
-    if filters.whitelist_enabled:
-        return SourcePathFilter("whitelist", filters.whitelist)
-    if filters.blacklist_enabled:
-        return SourcePathFilter("blacklist", filters.blacklist)
-    return SourcePathFilter()
 
 
 def _transfer_capabilities(settings: AppSettings) -> S3TransferCapabilities:

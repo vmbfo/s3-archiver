@@ -79,25 +79,6 @@ class S3LocationSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class PathFilterSettings:
-    """Validated source path filter configuration."""
-
-    whitelist_enabled: bool
-    blacklist_enabled: bool
-    whitelist: tuple[str, ...]
-    blacklist: tuple[str, ...]
-
-    def includes(self, key: str) -> bool:
-        """Return whether a source key is allowed by the configured filters."""
-
-        if self.whitelist_enabled:
-            return any(key.startswith(prefix) for prefix in self.whitelist)
-        if self.blacklist_enabled:
-            return not any(key.startswith(prefix) for prefix in self.blacklist)
-        return True
-
-
-@dataclass(frozen=True, slots=True)
 class RouteSettings:
     """Validated archive route configuration."""
 

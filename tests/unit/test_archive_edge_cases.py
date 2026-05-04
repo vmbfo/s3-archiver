@@ -9,7 +9,6 @@ from typing import override
 import pytest
 from s3_archiver_core.archive import MANIFEST_SHA256_METADATA_KEY, group_metadata, run_archive
 from s3_archiver_core.archive_manifest import (
-    SourcePathFilter,
     build_archive_manifest,
 )
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -60,7 +59,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
         _ = run_archive(
             FakeBucket("source"),
             FakeBucket("destination"),
-            ArchiveOptions(retention_days=60),
+            ArchiveOptions(),
             run_started_at_utc=STARTED,
             run_lock=FakeRunLock(acquired=False),
             clock=lambda: STARTED,
@@ -69,7 +68,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
     result = run_archive(
         FakeBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         run_lock=lock,
         clock=lambda: STARTED,
@@ -84,7 +83,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     batch_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=1),
     )
@@ -93,7 +92,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     copy_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=2),
     )
@@ -102,7 +101,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     verify_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=4),
     )
@@ -116,7 +115,7 @@ def test_run_archive_omits_cleanup_phase_after_verify() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=7),
     )
@@ -144,7 +143,7 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
     result = run_archive(
         source,
         VanishingDestination("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -164,7 +163,7 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -179,9 +178,7 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=60,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -198,7 +195,7 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -217,7 +214,7 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         run_lock=lock,
     )

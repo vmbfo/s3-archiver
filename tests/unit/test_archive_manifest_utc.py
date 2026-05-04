@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
+from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.archive_options import ArchiveOptions
 
 from tests.unit.archive_workflow_fakes import FakeBucket
@@ -24,17 +24,16 @@ def test_manifest_normalizes_non_utc_run_start_before_target_day_selection() -> 
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=datetime(2026, 4, 28, 1, tzinfo=timezone(timedelta(hours=2))),
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
 
     assert manifest.run_started_at_utc == datetime(2026, 4, 27, 23, tzinfo=UTC)
-    assert manifest.target_day == datetime(2026, 4, 13, tzinfo=UTC).date()
-    assert [entry.key for entry in manifest.entries] == ["data/fae/2026-04-13T00-00-00Z.xml"]
-    assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
-        ("data/fae/2026-04-14T00-00-00Z.xml", "outside retention window")
+    assert manifest.target_day is None
+    assert [entry.key for entry in manifest.entries] == [
+        "data/fae/2026-04-13T00-00-00Z.xml",
+        "data/fae/2026-04-14T00-00-00Z.xml",
     ]
+    assert manifest.skipped_objects == ()
 
 
 @pytest.mark.unit()
@@ -45,7 +44,7 @@ def test_run_archive_manifest_normalizes_naive_run_start_as_utc() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=datetime(2026, 4, 27, 23),
         clock=lambda: datetime(2026, 4, 27, 23, tzinfo=UTC),
     )
@@ -60,9 +59,7 @@ def test_build_archive_manifest_keeps_utc_run_start() -> None:
     manifest = build_archive_manifest(
         FakeBucket("source"),
         run_started_at_utc=started,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
 
     assert manifest.run_started_at_utc is started
@@ -73,9 +70,7 @@ def test_build_archive_manifest_treats_naive_run_start_as_utc() -> None:
     manifest = build_archive_manifest(
         FakeBucket("source"),
         run_started_at_utc=datetime(2026, 4, 27, 23),
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
 
     assert manifest.run_started_at_utc == datetime(2026, 4, 27, 23, tzinfo=UTC)

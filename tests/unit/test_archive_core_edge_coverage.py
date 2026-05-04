@@ -19,7 +19,6 @@ from s3_archiver_core.archive_fingerprint import (
 from s3_archiver_core.archive_manifest import (
     ArchiveGroup,
     ManifestEntry,
-    SourcePathFilter,
     archive_root_for_key,
     build_archive_manifest,
     select_key_timestamp,
@@ -241,9 +240,7 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     return source, manifest.archive_groups[0]
 

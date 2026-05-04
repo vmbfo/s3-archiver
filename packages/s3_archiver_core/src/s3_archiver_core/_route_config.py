@@ -20,7 +20,6 @@ from s3_archiver_core._route_config_fields import (
 from s3_archiver_core._settings_factory import AppSettingsFactory
 from s3_archiver_core._settings_models import (
     CopyMode,
-    PathFilterSettings,
     RouteSettings,
     S3LocationSettings,
     S3Provider,
@@ -50,9 +49,6 @@ def load_app_settings_from_config_json[T](
     return settings_type(
         source=routes[0].source,
         destination=routes[0].destination,
-        path_filters=PathFilterSettings(False, False, (), ()),
-        retention_days=60,
-        max_workers=len(routes),
         run_timeout=run_timeout,
         temp_dir=Path(decoder.env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),
         log_level=log_level,

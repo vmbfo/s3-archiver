@@ -36,7 +36,6 @@ def test_run_archive_returns_quickly_after_copy_and_verify() -> None:
         source,
         destination,
         ArchiveOptions(
-            retention_days=60,
             run_timeout=timedelta(milliseconds=50),
         ),
         run_started_at_utc=started,
@@ -68,7 +67,6 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
         source,
         destination,
         ArchiveOptions(
-            retention_days=60,
             run_timeout=timedelta(milliseconds=50),
         ),
         run_started_at_utc=started,
@@ -97,7 +95,6 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
             FakeBucket("source", (listed_object(source_key, 90),)),
             FakeBucket("destination"),
             ArchiveOptions(
-                retention_days=60,
                 run_timeout=timedelta(milliseconds=50),
             ),
             run_started_at_utc=started,

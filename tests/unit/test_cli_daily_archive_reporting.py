@@ -42,7 +42,6 @@ def test_archive_result_payload_reports_daily_archive_groups(
     )
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
-        retention_cutoff_utc=datetime(2026, 4, 13, 2, tzinfo=UTC),
         target_day=date(2026, 4, 13),
         entries=(entry,),
         archive_groups=(group,),
@@ -88,7 +87,6 @@ def test_visual_demo_describes_daily_candidates_and_result_groups() -> None:
     )
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
-        retention_cutoff_utc=datetime(2026, 4, 13, 2, tzinfo=UTC),
         target_day="2026-04-13",
         entries=(entry,),
         skipped_objects=(SimpleNamespace(key="bad.txt", reason="no timestamp"),),

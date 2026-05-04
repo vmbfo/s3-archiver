@@ -69,7 +69,6 @@ def test_from_env_decodes_route_config_json(tmp_path: Path) -> None:
     assert route.source.access_key_id == "source-access"
     assert settings.source is route.source
     assert settings.destination is route.destination
-    assert settings.max_workers == 1
 
 
 @pytest.mark.unit()

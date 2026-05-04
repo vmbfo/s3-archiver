@@ -20,8 +20,6 @@ from s3_archiver_core.archive_manifest import (
     ArchiveManifest,
     ArchiveManifestRoute,
     ManifestEntry,
-    SourcePathFilter,
-    build_archive_manifest,
     build_route_archive_manifest,
 )
 from s3_archiver_core.archive_options import ArchiveOptions
@@ -69,8 +67,6 @@ def run_archive(
         run_lock=run_lock,
         debug_logger=debug_logger,
         clock=clock,
-        legacy_retention_days=options.retention_days if route_option is None else None,
-        legacy_source_filter=options.source_filter,
     )
 
 
@@ -82,8 +78,6 @@ def run_archive_routes(
     run_lock: ArchiveRunLock | None = None,
     debug_logger: DebugLogger | None = None,
     clock: Callable[[], datetime] | None = None,
-    legacy_retention_days: int | None = None,
-    legacy_source_filter: object | None = None,
 ) -> ArchiveRunResult:
     """Run one archive pass with one execution worker per route."""
 
@@ -97,7 +91,7 @@ def run_archive_routes(
         raise RuntimeError("archive run lock is already held")
     try:
         try:
-            manifest = _build_manifest(routes, started, legacy_retention_days, legacy_source_filter)
+            manifest = _build_manifest(routes, started)
         except Exception as exc:
             return ArchiveRunResult(
                 run_id,
@@ -170,16 +164,16 @@ def _copy_group(
 def _verify_phase(
     groups_or_destination: tuple[ArchiveGroup, ...] | ArchiveBucket,
     entries_or_groups: tuple[ManifestEntry, ...] | tuple[ArchiveGroup, ...],
-    routes_or_max_workers: dict[str, ArchiveRoute] | int,
+    routes_or_worker_limit: dict[str, ArchiveRoute] | int,
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
-    if isinstance(routes_or_max_workers, dict):
+    if isinstance(routes_or_worker_limit, dict):
         assert isinstance(groups_or_destination, tuple)
         return _verify_phase_impl(
             groups_or_destination,
             cast(tuple[ManifestEntry, ...], entries_or_groups),
-            routes_or_max_workers,
+            routes_or_worker_limit,
             timed_out,
             time_remaining,
         )
@@ -201,29 +195,7 @@ _PRIVATE_TEST_HOOKS = (_copy_group, _verify_phase)
 def _build_manifest(
     routes: tuple[ArchiveRoute, ...],
     started: datetime,
-    legacy_retention_days: int | None,
-    legacy_source_filter: object | None,
 ) -> ArchiveManifest:
-    if len(routes) == 1 and legacy_retention_days is not None:
-        route = routes[0]
-        source_filter = (
-            legacy_source_filter
-            if isinstance(legacy_source_filter, SourcePathFilter)
-            else SourcePathFilter()
-        )
-        return build_archive_manifest(
-            route.source,
-            run_started_at_utc=started,
-            retention_days=legacy_retention_days,
-            versioning_state=route.source.versioning_state(),
-            source_filter=source_filter,
-            route_name=route.name,
-            parser_kind=route.parser_kind,
-            copy_mode=route.copy_mode,
-            source_path=route.source_path,
-            destination=route.destination,
-            destination_path=route.destination_path,
-        )
     return build_route_archive_manifest(
         tuple(
             ArchiveManifestRoute(
@@ -256,7 +228,7 @@ def _timeout(phase: str) -> ArchivePhaseResult:
 
 
 def _empty_manifest(started: datetime) -> ArchiveManifest:
-    return ArchiveManifest(started, started, (), None, (), ())
+    return ArchiveManifest(started, (), None, (), ())
 
 
 def _as_utc(value: datetime) -> datetime:

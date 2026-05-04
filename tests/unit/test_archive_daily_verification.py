@@ -12,7 +12,7 @@ from s3_archiver_core.archive import (
     group_metadata,
     run_archive,
 )
-from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
+from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.archive_options import ArchiveOptions
 
 from tests.unit.archive_workflow_fakes import FakeBucket
@@ -29,9 +29,7 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     missing_hash = FakeBucket(
@@ -42,7 +40,7 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
     result = run_archive(
         source,
         missing_hash,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -59,9 +57,7 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
     other_manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
         destination=destination_bucket,
         source_identity=("other", "source"),
     )
@@ -79,7 +75,7 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -96,9 +92,7 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
     )
     good_group = next(
         group for group in manifest.archive_groups if group.archive_root == "data/fae"
@@ -124,7 +118,7 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
