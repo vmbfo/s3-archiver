@@ -58,7 +58,6 @@ def test_archive_result_payload_reports_daily_archive_groups(
                 list=ArchivePhaseResult("list"),
                 copy=ArchivePhaseResult("copy"),
                 verify=ArchivePhaseResult("verify"),
-                cleanup=ArchivePhaseResult("cleanup"),
             ),
         ),
     )

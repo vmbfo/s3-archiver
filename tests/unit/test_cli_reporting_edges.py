@@ -272,5 +272,4 @@ def archive_result(copy: ArchivePhaseResult | None = None) -> ArchiveRunResult:
         ),
         copy=copy or ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

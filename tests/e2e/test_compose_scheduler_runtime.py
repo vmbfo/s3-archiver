@@ -124,7 +124,6 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
                 ),
                 copy=ArchivePhaseResult("copy"),
                 verify=ArchivePhaseResult("verify"),
-                cleanup=ArchivePhaseResult("cleanup"),
                 list=ArchivePhaseResult("list"),
             )
 

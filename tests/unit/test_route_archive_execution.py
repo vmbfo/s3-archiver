@@ -38,7 +38,6 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
         destination,
         ArchiveOptions(
             retention_days=14,
-            cleanup_enabled=True,
             routes=(
                 ArchiveRouteOptions(
                     "default",
@@ -55,7 +54,6 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
     assert result.ok is True
     assert destination.copied == ["data/raw.txt"]
     assert destination.head_object("mirror/data/raw.txt") is not None
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -133,7 +131,7 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
                 copy_mode="direct",
             ),
         ),
-        ArchiveOptions(retention_days=14, cleanup_enabled=True),
+        ArchiveOptions(retention_days=14),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
         debug_logger=lambda entry, strategy: decisions.append((entry.route_name, strategy)),
@@ -146,6 +144,40 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
     ]
     assert destination.uploaded == ["archives/2026-04-13.tar.gz"]
     assert destination.copied == ["right.txt"]
+
+
+@pytest.mark.unit()
+def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
+    listed = _listed("data/2026-04-13T00-00-00Z.txt", 1, None)
+    failed_destination = FakeBucket("archive")
+    failed_destination.fail_copy = True
+    verified_destination = FakeBucket("archive")
+    archive_key = "data/2026-04-13.tar.gz"
+
+    result = run_archive_routes(
+        (
+            ArchiveRoute(
+                "failed",
+                FakeBucket("source", (listed,)),
+                failed_destination,
+                source_identity=("source", "failed"),
+                destination_identity=("destination", "failed"),
+            ),
+            ArchiveRoute(
+                "verified",
+                FakeBucket("source", (listed,)),
+                verified_destination,
+                source_identity=("source", "verified"),
+                destination_identity=("destination", "verified"),
+            ),
+        ),
+        ArchiveOptions(retention_days=14),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.copy.failures == (f"{archive_key}: copy failed",)
+    assert result.verified_archive_keys == (archive_key,)
 
 
 @pytest.mark.unit()

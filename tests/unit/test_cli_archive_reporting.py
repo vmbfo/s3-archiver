@@ -85,7 +85,6 @@ def test_archive_command_reports_timeout_and_omits_cleanup_phase(
         return _archive_result(
             copy=ArchivePhaseResult("copy", ("archive run timed out",)),
             verify=ArchivePhaseResult("verify", skipped=True),
-            cleanup=ArchivePhaseResult("cleanup", skipped=True),
         )
 
     monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
@@ -278,7 +277,6 @@ def _archive_result(
     *,
     copy: ArchivePhaseResult | None = None,
     verify: ArchivePhaseResult | None = None,
-    cleanup: ArchivePhaseResult | None = None,
 ) -> ArchiveRunResult:
     return ArchiveRunResult(
         run_id="run-id",
@@ -289,5 +287,4 @@ def _archive_result(
         ),
         copy=copy or ArchivePhaseResult("copy"),
         verify=verify or ArchivePhaseResult("verify"),
-        cleanup=cleanup or ArchivePhaseResult("cleanup"),
     )

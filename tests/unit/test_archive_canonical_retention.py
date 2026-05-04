@@ -34,21 +34,20 @@ def _canonical_source(prefix: str) -> FakeBucket:
 
 @pytest.mark.unit()
 @pytest.mark.parametrize(
-    ("retention_days", "cleanup_enabled"),
-    [(60, False), (60, True), (30, False)],
+    "retention_days",
+    [60, 30],
 )
 def test_canonical_retention_dataset_archives_each_eligible_day(
     retention_days: int,
-    cleanup_enabled: bool,
 ) -> None:
-    prefix = f"retention-canonical/{retention_days}-{'cleanup' if cleanup_enabled else 'keep'}"
+    prefix = f"retention-canonical/{retention_days}"
     source = _canonical_source(prefix)
     destination = FakeBucket("destination")
 
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=retention_days, cleanup_enabled=cleanup_enabled),
+        ArchiveOptions(retention_days=retention_days),
         run_started_at_utc=STARTED,
         clock=_clock,
     )

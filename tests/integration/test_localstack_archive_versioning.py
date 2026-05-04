@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 import pytest
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
@@ -22,6 +22,12 @@ from tests.integration.localstack_object_helpers import (
 )
 
 TARGET_DAY = "2099-12-31"
+
+
+class DeleteObjectClient(Protocol):
+    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
+        """Delete one test setup object."""
+        ...
 
 
 @pytest.mark.integration()
@@ -111,6 +117,7 @@ def test_versioned_listing_paginates_across_pages_and_filters_delete_markers(
 ) -> None:
     env = _archive_env(tmp_path, localstack_bucket_pair)
     source_client = _client(env, "source")
+    delete_client = cast(DeleteObjectClient, cast(object, source_client))
     _ = source_client.put_bucket_versioning(
         Bucket=localstack_bucket_pair.source,
         VersioningConfiguration={"Status": "Enabled"},
@@ -120,12 +127,12 @@ def test_versioned_listing_paginates_across_pages_and_filters_delete_markers(
     late_deleted_keys = {f"zzz-deleted-{index:04d}.txt" for index in range(2)}
     for key in sorted(early_deleted_keys):
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
-        _ = source_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
+        _ = delete_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
     for key in sorted(live_keys):
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
     for key in sorted(late_deleted_keys):
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
-        _ = source_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
+        _ = delete_client.delete_object(Bucket=localstack_bucket_pair.source, Key=key)
 
     first_page = source_client.list_object_versions(
         Bucket=localstack_bucket_pair.source,

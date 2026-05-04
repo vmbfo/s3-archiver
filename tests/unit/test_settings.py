@@ -76,7 +76,6 @@ def test_from_env_builds_route_settings(tmp_path: Path) -> None:
     assert settings.destination.resolved_endpoint_url() == "http://localstack:4566"
     assert settings.run_timeout.days == 7
     assert settings.temp_dir == default_temp_dir()
-    assert settings.cleanup_enabled is False
 
 
 @pytest.mark.unit()

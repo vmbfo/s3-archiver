@@ -42,7 +42,7 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
     result = run_archive(
         source,
         missing_hash,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -79,7 +79,7 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -124,7 +124,7 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

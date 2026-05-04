@@ -52,7 +52,6 @@ def load_app_settings_from_config_json[T](
         destination=routes[0].destination,
         path_filters=PathFilterSettings(False, False, (), ()),
         retention_days=60,
-        cleanup_enabled=False,
         max_workers=len(routes),
         run_timeout=run_timeout,
         temp_dir=Path(decoder.env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),

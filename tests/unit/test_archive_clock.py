@@ -53,7 +53,7 @@ class EmptyBucket:
 def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     first_started = datetime(2024, 4, 20, tzinfo=UTC)
     second_started = datetime(2024, 4, 21, tzinfo=UTC)
-    options = ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1)
+    options = ArchiveOptions(retention_days=60, max_workers=1)
 
     first = run_archive(
         EmptyBucket(),

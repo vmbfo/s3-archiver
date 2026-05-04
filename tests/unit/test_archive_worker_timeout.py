@@ -20,7 +20,7 @@ from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
 @pytest.mark.unit()
-def test_run_archive_skips_cleanup_even_when_enabled() -> None:
+def test_run_archive_returns_quickly_after_copy_and_verify() -> None:
     started = datetime.now(tz=UTC)
     target_day = started.date() - timedelta(days=60)
     source_key = f"data/fae/{target_day.isoformat()}T00-00-00.txt"
@@ -37,14 +37,12 @@ def test_run_archive_skips_cleanup_even_when_enabled() -> None:
         destination,
         ArchiveOptions(
             retention_days=60,
-            cleanup_enabled=True,
             run_timeout=timedelta(milliseconds=50),
         ),
         run_started_at_utc=started,
         clock=clock,
     )
-
-    assert result.cleanup.skipped is True
+    assert result.ok is True
     assert time.monotonic() - began < 0.1
 
 
@@ -71,7 +69,6 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
         destination,
         ArchiveOptions(
             retention_days=60,
-            cleanup_enabled=False,
             run_timeout=timedelta(milliseconds=50),
         ),
         run_started_at_utc=started,
@@ -101,7 +98,6 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
             FakeBucket("destination"),
             ArchiveOptions(
                 retention_days=60,
-                cleanup_enabled=True,
                 run_timeout=timedelta(milliseconds=50),
             ),
             run_started_at_utc=started,

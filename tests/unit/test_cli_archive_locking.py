@@ -77,5 +77,4 @@ def _archive_result() -> ArchiveRunResult:
         ),
         copy=ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

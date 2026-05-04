@@ -41,7 +41,6 @@ def archive_result(
     *,
     copy: ArchivePhaseResult | None = None,
     verify: ArchivePhaseResult | None = None,
-    cleanup: ArchivePhaseResult | None = None,
 ) -> ArchiveRunResult:
     return ArchiveRunResult(
         run_id="run-id",
@@ -52,5 +51,4 @@ def archive_result(
         ),
         copy=copy or ArchivePhaseResult("copy"),
         verify=verify or ArchivePhaseResult("verify"),
-        cleanup=cleanup or ArchivePhaseResult("cleanup"),
     )

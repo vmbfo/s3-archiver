@@ -30,7 +30,6 @@ class ArchiveOptions:
     """Archive workflow settings with conservative defaults."""
 
     retention_days: int
-    cleanup_enabled: bool = False
     max_workers: int = 1
     run_timeout: timedelta = timedelta(days=7)
     source_filter: SourcePathFilter = field(default_factory=SourcePathFilter)
@@ -44,7 +43,6 @@ class ArchiveOptions:
         reject_removed_archiver_env(env)
         return cls(
             retention_days=60,
-            cleanup_enabled=False,
             max_workers=1,
             run_timeout=_duration(env, "ARCHIVER_RUN_TIMEOUT", "7d"),
         )
@@ -56,7 +54,6 @@ class ArchiveOptions:
         routes = _routes(settings)
         return cls(
             retention_days=settings.retention_days,
-            cleanup_enabled=settings.cleanup_enabled,
             max_workers=settings.max_workers,
             run_timeout=settings.run_timeout,
             source_filter=_source_filter(settings),

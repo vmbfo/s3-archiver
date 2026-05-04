@@ -104,13 +104,10 @@ def run_archive_routes(
                 _empty_manifest(started),
                 _skipped("copy"),
                 _skipped("verify"),
-                _skipped("cleanup"),
                 ArchivePhaseResult("list", (str(exc),)),
             )
         if _timed_out(now, deadline):
-            return _run_result(
-                run_id, manifest, _timeout("copy"), _skipped("verify"), _skipped("cleanup")
-            )
+            return _run_result(run_id, manifest, _timeout("copy"), _skipped("verify"))
 
         def timed_out() -> bool:
             return _timed_out(now, deadline)
@@ -127,9 +124,7 @@ def run_archive_routes(
             time_remaining,
         )
         if _timed_out(now, deadline):
-            return _run_result(
-                run_id, manifest, _timeout("copy"), _skipped("verify"), _skipped("cleanup")
-            )
+            return _run_result(run_id, manifest, _timeout("copy"), _skipped("verify"))
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
@@ -142,16 +137,12 @@ def run_archive_routes(
             )
         )
         if copy_result.ok and _timed_out(now, deadline):
-            return _run_result(
-                run_id, manifest, copy_result, _timeout("verify"), _skipped("cleanup")
-            )
-        cleanup_result = _skipped("cleanup")
+            return _run_result(run_id, manifest, copy_result, _timeout("verify"))
         return ArchiveRunResult(
             run_id,
             manifest,
             copy_result,
             verify_result,
-            cleanup_result,
             verified_archive_keys=tuple(group.destination_archive_key for group in verified_groups),
             skipped_archive_keys=(),
         )
@@ -165,9 +156,8 @@ def _run_result(
     manifest: ArchiveManifest,
     copy: ArchivePhaseResult,
     verify: ArchivePhaseResult,
-    cleanup: ArchivePhaseResult,
 ) -> ArchiveRunResult:
-    return ArchiveRunResult(run_id, manifest, copy, verify, cleanup)
+    return ArchiveRunResult(run_id, manifest, copy, verify)
 
 
 def _copy_group(

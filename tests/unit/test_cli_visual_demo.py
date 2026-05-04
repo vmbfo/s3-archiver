@@ -32,9 +32,7 @@ def _configure_logging(_: AppSettings) -> Path:
 
 def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
     settings = AppSettings.from_env(base_env)
-    return replace(
-        settings, retention_days=60, cleanup_enabled=False, temp_dir=tmp_path / "runtime-temp"
-    )
+    return replace(settings, retention_days=60, temp_dir=tmp_path / "runtime-temp")
 
 
 def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:

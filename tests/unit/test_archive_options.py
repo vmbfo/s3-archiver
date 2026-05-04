@@ -18,7 +18,6 @@ def test_options_env_defaults_to_route_runtime_baseline() -> None:
     assert ArchiveOptions.from_env({}).run_timeout == timedelta(days=7)
     options = ArchiveOptions.from_env({"ARCHIVER_RUN_TIMEOUT": "1h"})
     assert options.retention_days == 60
-    assert options.cleanup_enabled is False
     assert options.max_workers == 1
     assert options.run_timeout == timedelta(hours=1)
 

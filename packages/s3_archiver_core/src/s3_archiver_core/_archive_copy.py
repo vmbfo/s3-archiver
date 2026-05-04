@@ -24,6 +24,9 @@ from s3_archiver_core.archive_transfer import (
 )
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
+type GroupIdentity = tuple[object | None, str, str]
+type EntryIdentity = tuple[object | None, str, str, str | None]
+
 
 def copy_phase(
     manifest: ArchiveManifest,
@@ -34,8 +37,8 @@ def copy_phase(
 ) -> tuple[ArchivePhaseResult, tuple[ArchiveGroup, ...], tuple[ManifestEntry, ...]]:
     """Copy direct entries and daily archive groups with one worker per route."""
 
-    verified: dict[str, ArchiveGroup] = {}
-    verified_entries: dict[tuple[str, str | None], ManifestEntry] = {}
+    verified: dict[GroupIdentity, ArchiveGroup] = {}
+    verified_entries: dict[EntryIdentity, ManifestEntry] = {}
     result_lock = Lock()
     route_names = tuple(route.name for route in routes_by_name.values())
 
@@ -49,7 +52,7 @@ def copy_phase(
                 continue
             if copied:
                 with result_lock:
-                    verified_entries[(entry.destination_key, entry.version_id)] = entry
+                    verified_entries[_entry_identity(entry)] = entry
         for group in _route_archive_groups(manifest, route_name):
             failure, copied = copy_group(route.source, route.destination, group, debug_logger)
             if failure is not None:
@@ -57,7 +60,7 @@ def copy_phase(
                 continue
             if copied:
                 with result_lock:
-                    verified[group.destination_archive_key] = group
+                    verified[_group_identity(group)] = group
         return tuple(failures)
 
     phase = ArchivePhaseResult(
@@ -67,13 +70,9 @@ def copy_phase(
         verified_keys = frozenset(verified)
         entry_keys = frozenset(verified_entries)
     verified_groups = (
-        group for group in manifest.archive_groups if group.destination_archive_key in verified_keys
+        group for group in manifest.archive_groups if _group_identity(group) in verified_keys
     )
-    direct_entries = (
-        entry
-        for entry in manifest.entries
-        if (entry.destination_key, entry.version_id) in entry_keys
-    )
+    direct_entries = (entry for entry in manifest.entries if _entry_identity(entry) in entry_keys)
     return phase, tuple(verified_groups), tuple(direct_entries)
 
 
@@ -220,6 +219,19 @@ def _route_direct_entries(manifest: ArchiveManifest, route_name: str) -> tuple[M
         entry
         for entry in manifest.entries
         if entry.route_name == route_name and entry.copy_mode == "direct"
+    )
+
+
+def _group_identity(group: ArchiveGroup) -> GroupIdentity:
+    return (group.destination_identity, group.destination_bucket, group.destination_archive_key)
+
+
+def _entry_identity(entry: ManifestEntry) -> EntryIdentity:
+    return (
+        entry.destination_identity,
+        entry.destination_bucket,
+        entry.destination_key,
+        entry.version_id,
     )
 
 

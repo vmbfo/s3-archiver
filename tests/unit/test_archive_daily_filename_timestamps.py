@@ -249,7 +249,7 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
     result = run_archive(
         source,
         matching,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -265,14 +265,13 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
     failed = run_archive(
         source,
         mismatched,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
     assert failed.ok is False
     assert failed.copy.failures == (f"{archive_key}: archive verification failed",)
-    assert failed.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -287,7 +286,7 @@ def test_archive_does_not_delete_manifest_versions() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        ArchiveOptions(retention_days=14, max_workers=1),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

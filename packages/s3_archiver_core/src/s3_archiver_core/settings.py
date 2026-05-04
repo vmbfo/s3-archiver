@@ -40,7 +40,6 @@ class AppSettings:
     destination: S3LocationSettings
     path_filters: PathFilterSettings
     retention_days: int
-    cleanup_enabled: bool
     max_workers: int
     run_timeout: timedelta
     temp_dir: Path

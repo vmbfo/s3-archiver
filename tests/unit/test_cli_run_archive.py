@@ -121,7 +121,6 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
             result.manifest,
             result.copy,
             result.verify,
-            result.cleanup,
             result.list,
             ("verified.tar.gz",),
             ("skipped.tar.gz",),
@@ -267,5 +266,4 @@ def _archive_result(*, run_id: str = "run-id") -> ArchiveRunResult:
         ),
         copy=ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

@@ -108,7 +108,6 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     )
     assert verify_timeout.copy.ok is True
     assert verify_timeout.verify.failures == ("archive run timed out",)
-    assert verify_timeout.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -117,13 +116,12 @@ def test_run_archive_omits_cleanup_phase_after_verify() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=7),
     )
     assert result.copy.ok is True
     assert result.verify.ok is True
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -146,13 +144,12 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
     result = run_archive(
         source,
         VanishingDestination("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
     assert result.copy.ok is True
     assert result.verify.failures == ("data/fae/2024-02-20.tar.gz: destination missing",)
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -167,7 +164,7 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -201,14 +198,13 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        ArchiveOptions(retention_days=60),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
     assert result.copy.failures == (f"{archive_key}: archive verification failed",)
     assert result.skipped_archive_keys == ()
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
