@@ -100,8 +100,8 @@ def target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, str
 
 
 def retained_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
-    next_day = target_day + timedelta(days=1)
-    later_day = target_day + timedelta(days=2)
+    next_day = target_day + timedelta(days=61)
+    later_day = target_day + timedelta(days=62)
     return (
         f"{prefix}/fae/{next_day:%Y/%m/%d}/00/{next_day.isoformat()}T00-00-00Z.xml",
         f"{prefix}/harmonie/HARMONIE_DINI_SF_{later_day.isoformat()}T230000Z.bz2",

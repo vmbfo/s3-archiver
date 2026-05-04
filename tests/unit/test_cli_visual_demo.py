@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.visual_demo as demo_module
 import s3_archiver_cli.visual_demo_command as demo_command_module
 import typer
+from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core.s3 import S3ListedObject
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
+from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 RUNNER = CliRunner()
@@ -25,10 +28,6 @@ RUNNER = CliRunner()
 
 def _configure_logging(_: AppSettings) -> Path:
     return Path("/tmp/s3-archiver.log")
-
-
-def _fake_build_client(_location: S3LocationSettings) -> object:
-    return object()
 
 
 def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
@@ -115,25 +114,14 @@ def test_run_visual_demo_reports_bucket_story(
     tmp_path: Path,
 ) -> None:
     settings = _demo_settings(base_env, tmp_path)
-    state: dict[str, list[object]] = {
-        settings.source.bucket: [
+    source = FakeBucket(
+        settings.source.bucket,
+        (
             _listed("demo/2024-02-20T00-00-00.txt", 61),
-            _listed("demo/2024-02-21T00-00-00.txt", 59),
-        ],
-        settings.destination.bucket: [],
-    }
-
-    class FakeArchiveBucket:
-        bucket: str
-
-        def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
-            self.bucket = bucket
-
-        def versioning_state(self) -> str:
-            return "Enabled"
-
-        def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
-            return tuple(state[self.bucket])
+            _listed("demo/2024-04-21T00-00-00.txt", 1),
+        ),
+    )
+    destination = SnapshotBucket(settings.destination.bucket)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         archived = _listed("demo/2024-02-20T00-00-00.txt", 61)
@@ -143,18 +131,23 @@ def test_run_visual_demo_reports_bucket_story(
                 '"source_last_modified":"2024-02-19T00:00:00+00:00","source_size":10}'
             )
         }
-        state[settings.destination.bucket] = [
-            replace(archived, properties=replace(archived.properties, metadata=metadata))
-        ]
+        destination.objects = (
+            replace(archived, properties=replace(archived.properties, metadata=metadata)),
+        )
         return _ok_archive_payload()
 
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
         return FakeReport()
 
+    def archive_routes(
+        _settings: AppSettings,
+        _build_client: Callable[[S3LocationSettings], object],
+    ) -> tuple[ArchiveRoute, ...]:
+        return (ArchiveRoute("default", source, destination),)
+
     lines: list[str] = []
     monkeypatch.setattr(demo_module, "run_health_check", fake_health_check)
-    monkeypatch.setattr(demo_module, "build_s3_client", _fake_build_client)
-    monkeypatch.setattr(demo_module, "S3ArchiveBucket", FakeArchiveBucket)
+    monkeypatch.setattr(demo_module, "archive_routes_from_settings", archive_routes)
 
     summary = demo_module.run_visual_demo(
         settings,
@@ -192,17 +185,8 @@ def test_run_visual_demo_uses_default_utc_clock(
             _ = tz
             return datetime(2024, 4, 20, tzinfo=UTC)
 
-    class FakeArchiveBucket:
-        bucket: str
-
-        def __init__(self, _client: object, bucket: str, _temp_dir: Path) -> None:
-            self.bucket = bucket
-
-        def versioning_state(self) -> str:
-            return "Enabled"
-
-        def list_source_objects(self, _versioning_state: str) -> Iterable[object]:
-            return (_listed("demo/old.txt", 61),)
+    source = FakeBucket(settings.source.bucket, (_listed("demo/old.txt", 61),))
+    destination = SnapshotBucket(settings.destination.bucket)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return _ok_archive_payload()
@@ -210,10 +194,15 @@ def test_run_visual_demo_uses_default_utc_clock(
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
         return FakeReport()
 
+    def archive_routes(
+        _settings: AppSettings,
+        _build_client: Callable[[S3LocationSettings], object],
+    ) -> tuple[ArchiveRoute, ...]:
+        return (ArchiveRoute("default", source, destination),)
+
     monkeypatch.setattr(demo_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(demo_module, "run_health_check", fake_health_check)
-    monkeypatch.setattr(demo_module, "build_s3_client", _fake_build_client)
-    monkeypatch.setattr(demo_module, "S3ArchiveBucket", FakeArchiveBucket)
+    monkeypatch.setattr(demo_module, "archive_routes_from_settings", archive_routes)
 
     summary = demo_module.run_visual_demo(
         settings,
@@ -223,3 +212,18 @@ def test_run_visual_demo_uses_default_utc_clock(
     )
 
     assert summary["run_started_at_utc"] == "2024-04-20T00:00:00+00:00"
+
+
+class SnapshotBucket(FakeBucket):
+    """Archive bucket with mutable list output for visual demo snapshots."""
+
+    objects: tuple[S3ListedObject, ...]
+
+    def __init__(self, bucket: str, objects: tuple[S3ListedObject, ...] = ()) -> None:
+        super().__init__(bucket)
+        self.objects = objects
+
+    @override
+    def list_source_objects(self, versioning_state: str) -> tuple[S3ListedObject, ...]:
+        assert versioning_state == self.versioning_state()
+        return self.objects

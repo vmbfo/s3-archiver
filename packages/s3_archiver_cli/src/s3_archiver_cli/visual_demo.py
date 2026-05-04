@@ -3,31 +3,32 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from s3_archiver_core.archive import ArchiveRoute
 from s3_archiver_core.archive_fingerprint import fingerprint_from_metadata
-from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry, build_archive_manifest
-from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.archive_s3 import S3ArchiveBucket
+from s3_archiver_core.archive_manifest import (
+    ArchiveManifest,
+    ArchiveManifestRoute,
+    ManifestEntry,
+    build_route_archive_manifest,
+)
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.s3 import S3ListedObject, build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
+from s3_archiver_cli import visual_demo_output as _output
+from s3_archiver_cli._archive_routes import archive_routes_from_settings
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
     json_list,
     manifest_target_day,
     skipped_object_payloads,
 )
-from s3_archiver_cli.visual_demo_output import emit_archive_result as _emit_archive_result
-from s3_archiver_cli.visual_demo_output import emit_health as _emit_health
-from s3_archiver_cli.visual_demo_output import emit_intro as _emit_intro
-from s3_archiver_cli.visual_demo_output import emit_manifest as _emit_manifest
-from s3_archiver_cli.visual_demo_output import emit_snapshot as _emit_snapshot
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
@@ -49,36 +50,45 @@ def run_visual_demo(
     started = clock()
     prepare_runtime_temp_dir(settings.temp_dir)
     health = cast(dict[str, JsonValue], run_health_check(settings, log_file).as_dict())
-    source = S3ArchiveBucket(
-        build_s3_client(settings.source),
-        settings.source.bucket,
-        settings.temp_dir,
-    )
-    destination = S3ArchiveBucket(
-        build_s3_client(settings.destination),
-        settings.destination.bucket,
-        settings.temp_dir,
-    )
-    options = ArchiveOptions.from_settings(settings)
-    manifest = build_archive_manifest(
-        source,
+    routes = archive_routes_from_settings(settings, build_s3_client)
+    manifest = build_route_archive_manifest(
+        tuple(
+            ArchiveManifestRoute(
+                route.name,
+                route.source,
+                route.destination,
+                route.source_path,
+                route.destination_path,
+                route.parser_kind,
+                route.copy_mode,
+                source_identity=route.source_identity,
+                destination_identity=route.destination_identity,
+            )
+            for route in routes
+        ),
         run_started_at_utc=started,
-        retention_days=options.retention_days,
-        versioning_state=source.versioning_state(),
-        source_filter=options.source_filter,
     )
     eligible_keys = _manifest_key_set(manifest)
-    before_snapshot = _snapshot_payload(source, destination, eligible_keys=eligible_keys)
+    planned_destinations = _manifest_destination_key_map(manifest)
+    before_snapshot = _snapshot_payload(
+        routes,
+        eligible_keys=eligible_keys,
+        planned_destinations=planned_destinations,
+    )
 
-    _emit_intro(emit, settings, log_file, started)
-    _emit_health(emit, health)
-    _emit_snapshot(emit, "Before archive", before_snapshot)
-    _emit_manifest(emit, manifest)
+    _output.emit_intro(emit, settings, log_file, started)
+    _output.emit_health(emit, health)
+    _output.emit_snapshot(emit, "Before archive", before_snapshot)
+    _output.emit_manifest(emit, manifest)
     emit("Running archive workflow against the configured buckets...")
     archive_payload = archive_runner(settings, log_file)
-    _emit_archive_result(emit, archive_payload)
-    after_archive_snapshot = _snapshot_payload(source, destination, eligible_keys=set())
-    _emit_snapshot(emit, "After archive", after_archive_snapshot)
+    _output.emit_archive_result(emit, archive_payload)
+    after_archive_snapshot = _snapshot_payload(
+        routes,
+        eligible_keys=set(),
+        planned_destinations=planned_destinations,
+    )
+    _output.emit_snapshot(emit, "After archive", after_archive_snapshot)
     archive_groups = archive_group_payloads(manifest)
     skipped_objects = skipped_object_payloads(manifest)
     archive_days = sorted({str(group["target_day"]) for group in archive_groups})
@@ -93,7 +103,6 @@ def run_visual_demo(
         "destination_archive_keys": [group["destination_archive_key"] for group in archive_groups],
         "archive_groups": json_list(archive_groups),
         "skipped_objects": json_list(skipped_objects),
-        "retention_cutoff_utc": manifest.retention_cutoff_utc.isoformat(),
         "entries": json_list([_manifest_entry_payload(entry) for entry in manifest.entries]),
     }
 
@@ -118,52 +127,109 @@ def run_visual_demo(
 
 
 def _snapshot_payload(
-    source: S3ArchiveBucket,
-    destination: S3ArchiveBucket,
+    routes: tuple[ArchiveRoute, ...],
     *,
-    eligible_keys: set[tuple[str, str | None]],
+    eligible_keys: set[tuple[str, str, str | None]],
+    planned_destinations: dict[tuple[str, str, str | None], str],
 ) -> dict[str, JsonValue]:
-    source_state = source.versioning_state()
-    destination_state = destination.versioning_state()
-    source_objects = sorted(source.list_source_objects(source_state), key=_object_sort_key)
-    destination_objects = sorted(
-        destination.list_source_objects(destination_state),
+    route_snapshots = [
+        _route_snapshot(route, eligible_keys, planned_destinations) for route in routes
+    ]
+    source_states = {str(snapshot["source_versioning_state"]) for snapshot in route_snapshots}
+    destination_states = {
+        str(snapshot["destination_versioning_state"]) for snapshot in route_snapshots
+    }
+    source_objects = [
+        item
+        for snapshot in route_snapshots
+        for item in cast(list[dict[str, JsonValue]], snapshot["source_objects"])
+    ]
+    destination_objects = [
+        item
+        for snapshot in route_snapshots
+        for item in cast(list[dict[str, JsonValue]], snapshot["destination_objects"])
+    ]
+    return {
+        "source_versioning_state": (
+            next(iter(source_states)) if len(source_states) == 1 else "mixed"
+        ),
+        "destination_versioning_state": (
+            next(iter(destination_states)) if len(destination_states) == 1 else "mixed"
+        ),
+        "source_object_count": len(source_objects),
+        "destination_object_count": len(destination_objects),
+        "source_objects": json_list(source_objects),
+        "destination_objects": json_list(destination_objects),
+    }
+
+
+def _route_snapshot(
+    route: ArchiveRoute,
+    eligible_keys: set[tuple[str, str, str | None]],
+    planned_destinations: dict[tuple[str, str, str | None], str],
+) -> dict[str, JsonValue]:
+    source_state = route.source.versioning_state()
+    destination_state = route.destination.versioning_state()
+    source_objects = sorted(
+        _objects_under_prefix(route.source.list_source_objects(source_state), route.source_path),
         key=_object_sort_key,
     )
-    destination_keys = {(item.key, item.version_id) for item in destination_objects}
+    destination_objects = sorted(
+        _objects_under_prefix(
+            route.destination.list_source_objects(destination_state), route.destination_path
+        ),
+        key=_object_sort_key,
+    )
+    destination_keys = {item.key for item in destination_objects}
     return {
         "source_versioning_state": source_state,
         "destination_versioning_state": destination_state,
         "source_object_count": len(source_objects),
         "destination_object_count": len(destination_objects),
-        "source_objects": [
-            _listed_object_payload(
-                item,
-                eligible_for_follow_up=(item.key, item.version_id) in eligible_keys,
-                present_in_destination=(item.key, item.version_id) in destination_keys
-                or (item.key, None) in destination_keys,
-            )
-            for item in source_objects
-        ],
-        "destination_objects": [
-            _listed_object_payload(
-                item,
-                eligible_for_follow_up=False,
-                present_in_destination=True,
-            )
-            for item in destination_objects
-        ],
+        "source_objects": json_list(
+            [
+                _listed_object_payload(
+                    item,
+                    route_name=route.name,
+                    bucket=route.source.bucket,
+                    eligible_for_follow_up=(route.name, item.key, item.version_id) in eligible_keys,
+                    present_in_destination=_present_in_destination(
+                        route,
+                        item,
+                        destination_keys,
+                        planned_destinations,
+                    ),
+                )
+                for item in source_objects
+            ]
+        ),
+        "destination_objects": json_list(
+            [
+                _listed_object_payload(
+                    item,
+                    route_name=route.name,
+                    bucket=route.destination.bucket,
+                    eligible_for_follow_up=False,
+                    present_in_destination=True,
+                )
+                for item in destination_objects
+            ]
+        ),
     }
 
 
 def _listed_object_payload(
     item: S3ListedObject,
     *,
+    route_name: str,
+    bucket: str,
     eligible_for_follow_up: bool,
     present_in_destination: bool,
 ) -> dict[str, JsonValue]:
     fingerprint = fingerprint_from_metadata(item.properties.metadata)
     return {
+        "route_name": route_name,
+        "bucket": bucket,
         "key": item.key,
         "size": item.size,
         "last_modified_utc": item.last_modified.isoformat(),
@@ -183,11 +249,45 @@ def _manifest_entry_payload(entry: ManifestEntry) -> dict[str, JsonValue]:
         "version_id": entry.version_id,
         "etag": entry.etag,
         "source_bucket": entry.source_bucket,
+        "destination_bucket": entry.destination_bucket,
+        "destination_key": entry.destination_key,
+        "destination_archive_key": entry.destination_archive_key,
+        "route_name": entry.route_name,
     }
 
 
-def _manifest_key_set(manifest: ArchiveManifest) -> set[tuple[str, str | None]]:
-    return {(entry.key, entry.version_id) for entry in manifest.entries}
+def _manifest_key_set(manifest: ArchiveManifest) -> set[tuple[str, str, str | None]]:
+    return {(entry.route_name, entry.key, entry.version_id) for entry in manifest.entries}
+
+
+def _manifest_destination_key_map(
+    manifest: ArchiveManifest,
+) -> dict[tuple[str, str, str | None], str]:
+    return {
+        (entry.route_name, entry.key, entry.version_id): entry.destination_key
+        for entry in manifest.entries
+    }
+
+
+def _present_in_destination(
+    route: ArchiveRoute,
+    item: S3ListedObject,
+    destination_keys: set[str],
+    planned_destinations: dict[tuple[str, str, str | None], str],
+) -> bool:
+    planned_key = planned_destinations.get((route.name, item.key, item.version_id))
+    if planned_key is not None:
+        return planned_key in destination_keys
+    return item.key in destination_keys
+
+
+def _objects_under_prefix(
+    objects: Iterable[S3ListedObject],
+    prefix: str,
+) -> list[S3ListedObject]:
+    stripped = prefix.strip("/")
+    normalized = "" if stripped == "" else f"{stripped}/"
+    return [item for item in objects if normalized == "" or item.key.startswith(normalized)]
 
 
 def _object_sort_key(item: S3ListedObject) -> tuple[str, str]:

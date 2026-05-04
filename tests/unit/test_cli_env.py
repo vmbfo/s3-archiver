@@ -210,4 +210,5 @@ def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
         destination_endpoint_url=settings.destination.resolved_endpoint_url(),
         log_file=str(log_file),
         checked_at="2026-04-09T17:00:43+00:00",
+        route_count=len(settings.routes),
     )

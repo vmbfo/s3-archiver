@@ -82,7 +82,7 @@ def test_route_manifest_uses_parser_selected_timestamp_for_eligibility() -> None
 
     assert manifest.entries == ()
     assert [(item.key, item.reason, item.route_name) for item in manifest.skipped_objects] == [
-        ("data/no-key-timestamp.txt", "outside retention window", "custom")
+        ("data/no-key-timestamp.txt", "parser timestamp after run start", "custom")
     ]
 
 

@@ -73,7 +73,9 @@ def build_archive_manifest(
             continue
         timestamp = as_utc(selected.timestamp)
         if _outside_eligibility(timestamp, run_started, target_day):
-            skipped.append(SkippedObject(listed.key, "outside retention window", route_name))
+            skipped.append(
+                SkippedObject(listed.key, _eligibility_skip_reason(target_day), route_name)
+            )
             continue
         entries.append(
             _entry(
@@ -257,6 +259,12 @@ def _outside_eligibility(
     if selected_timestamp > run_started:
         return True
     return target_day is not None and selected_timestamp.date() > target_day
+
+
+def _eligibility_skip_reason(target_day: date | None) -> str:
+    if target_day is None:
+        return "parser timestamp after run start"
+    return "outside retention window"
 
 
 def _relative_key(key: str, source_path: str) -> str:

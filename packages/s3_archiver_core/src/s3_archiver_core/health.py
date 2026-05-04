@@ -11,7 +11,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.s3 import S3Client, VersioningState, build_s3_client
-from s3_archiver_core.settings import AppSettings, S3LocationSettings
+from s3_archiver_core.settings import AppSettings, RouteSettings, S3LocationSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,7 @@ class HealthReport:
     destination_endpoint_url: str
     log_file: str
     checked_at: str
+    route_count: int
 
     def as_dict(self) -> dict[str, str]:
         """Return a JSON-serializable health report."""
@@ -46,6 +47,7 @@ class HealthReport:
             "destination_endpoint_url": self.destination_endpoint_url,
             "log_file": self.log_file,
             "checked_at": self.checked_at,
+            "route_count": str(self.route_count),
         }
 
 
@@ -53,6 +55,7 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
     """Validate bucket access and report the current runtime shape."""
 
     logger = logging.getLogger("s3_archiver.health")
+    routes = settings.routes
     source_endpoint_url = settings.source.resolved_endpoint_url()
     destination_endpoint_url = settings.destination.resolved_endpoint_url()
     logger.info(
@@ -63,13 +66,10 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
             "endpoint_url": source_endpoint_url,
             "destination_bucket": settings.destination.bucket,
             "destination_endpoint_url": destination_endpoint_url,
+            "route_count": len(routes),
         },
     )
-    source_client = build_s3_client(settings.source)
-    destination_client = build_s3_client(settings.destination)
-    _check_bucket_access(source_client, settings.source, "source")
-    _check_bucket_access(destination_client, settings.destination, "destination")
-    source_versioning = _source_versioning(source_client, settings.source)
+    source_versioning = _check_routes(routes)
     logger.info(
         "s3 health check succeeded",
         extra={
@@ -77,6 +77,7 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
             "bucket": settings.source.bucket,
             "destination_bucket": settings.destination.bucket,
             "source_versioning": source_versioning,
+            "route_count": len(routes),
         },
     )
     return HealthReport(
@@ -90,7 +91,27 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
         destination_endpoint_url=destination_endpoint_url,
         log_file=str(log_file),
         checked_at=datetime.now(tz=UTC).isoformat(),
+        route_count=len(routes),
     )
+
+
+def _check_routes(routes: tuple[RouteSettings, ...]) -> VersioningState:
+    source_versioning: VersioningState | None = None
+    for route in routes:
+        route_source_versioning = _check_route(route)
+        if source_versioning is None:
+            source_versioning = route_source_versioning
+    assert source_versioning is not None
+    return source_versioning
+
+
+def _check_route(route: RouteSettings) -> VersioningState:
+    source_client = build_s3_client(route.source)
+    _check_bucket_access(source_client, route.source, f"route {route.name!r} source")
+    source_versioning = _source_versioning(source_client, route.source)
+    destination_client = build_s3_client(route.destination)
+    _check_bucket_access(destination_client, route.destination, f"route {route.name!r} destination")
+    return source_versioning
 
 
 def _check_bucket_access(client: S3Client, location: S3LocationSettings, side: str) -> None:

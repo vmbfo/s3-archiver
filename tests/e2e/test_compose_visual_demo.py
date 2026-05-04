@@ -103,7 +103,7 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert f"archive group count: {DEMO_ARCHIVE_COUNT}" in result.stdout
     assert "source objects per archive: min=2 max=2" in result.stdout
     assert all(
-        f"SKIP   key={key} reason=outside retention window" in result.stdout
+        f"SKIP   key={key} reason=parser timestamp after run start" in result.stdout
         for key in retained_keys
     )
     assert all(

@@ -84,7 +84,6 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     emit("")
     emit("== Archive Candidates ==")
     emit(f"target day: {manifest_target_day(manifest)}")
-    emit(f"retention cutoff utc: {manifest.retention_cutoff_utc.isoformat()}")
     groups = archive_group_payloads(manifest)
     skipped = skipped_object_payloads(manifest)
     _emit_archive_coverage(emit, groups)
