@@ -106,6 +106,43 @@ def test_demo_command_exits_non_zero_when_summary_reports_error(
 
 
 @pytest.mark.unit()
+def test_visual_demo_command_run_allows_ok_summary() -> None:
+    captured: list[object] = []
+
+    def run_payload_command(
+        command: Callable[[AppSettings, Path], dict[str, demo_module.JsonValue]],
+    ) -> dict[str, demo_module.JsonValue]:
+        captured.append(command)
+        return {"status": "ok"}
+
+    demo_command_module.run(
+        run_payload_command=run_payload_command,
+        archive_runner=lambda _settings, _log_file: {"status": "ok"},
+        emit=lambda _line: None,
+    )
+
+    assert len(captured) == 1
+
+
+@pytest.mark.unit()
+def test_visual_demo_command_run_exits_for_error_summary() -> None:
+    def run_payload_command(
+        command: Callable[[AppSettings, Path], dict[str, demo_module.JsonValue]],
+    ) -> dict[str, demo_module.JsonValue]:
+        _ = command
+        return {"status": "error"}
+
+    with pytest.raises(typer.Exit) as exc_info:
+        demo_command_module.run(
+            run_payload_command=run_payload_command,
+            archive_runner=lambda _settings, _log_file: {"status": "ok"},
+            emit=lambda _line: None,
+        )
+
+    assert exc_info.value.exit_code == 1
+
+
+@pytest.mark.unit()
 def test_run_visual_demo_reports_bucket_story(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],

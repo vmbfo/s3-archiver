@@ -63,6 +63,15 @@ def test_from_env_requires_config_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_from_env_rejects_invalid_log_level(tmp_path: Path) -> None:
+    env = _dual_env(tmp_path)
+    env["LOG_LEVEL"] = "LOUD"
+
+    with pytest.raises(ConfigError, match="LOG_LEVEL"):
+        _ = AppSettings.from_env(env)
+
+
+@pytest.mark.unit()
 def test_from_env_builds_route_settings(tmp_path: Path) -> None:
     settings = AppSettings.from_env(_dual_env(tmp_path))
 

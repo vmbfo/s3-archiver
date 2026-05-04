@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 from s3_archiver_core.errors import ConfigError
@@ -53,6 +54,12 @@ def _env(tmp_path: Path, routes: list[dict[str, object]]) -> dict[str, str]:
         "S3_SOURCE_SECRET_ACCESS_KEY": "source-secret",
         "LOG_DIR": str(tmp_path / "logs"),
     }
+
+
+def _env_with_raw_config(tmp_path: Path, raw_config: str) -> dict[str, str]:
+    env = _env(tmp_path, [_route()])
+    env["ARCHIVER_CONFIG_JSON"] = raw_config
+    return env
 
 
 @pytest.mark.unit()
@@ -109,11 +116,119 @@ def test_from_env_rejects_invalid_route_enums(
 
 @pytest.mark.unit()
 def test_from_env_rejects_malformed_route_config_json(tmp_path: Path) -> None:
-    env = _env(tmp_path, [_route()])
-    env["ARCHIVER_CONFIG_JSON"] = "{}"
+    with pytest.raises(ConfigError, match="valid JSON"):
+        _ = AppSettings.from_env(_env_with_raw_config(tmp_path, "{"))
 
+
+@pytest.mark.unit()
+@pytest.mark.parametrize("raw_config", ["{}", "[]"])
+def test_from_env_rejects_non_array_or_empty_route_config_json(
+    tmp_path: Path, raw_config: str
+) -> None:
     with pytest.raises(ConfigError, match="non-empty JSON array"):
-        _ = AppSettings.from_env(env)
+        _ = AppSettings.from_env(_env_with_raw_config(tmp_path, raw_config))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_non_object_route_config_item(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="JSON object"):
+        _ = AppSettings.from_env(_env_with_raw_config(tmp_path, "[3]"))
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("route_update", "message"),
+    [
+        ({"name": ""}, "name"),
+        ({"parser": ""}, "parser"),
+        ({"copy_mode": ""}, "copy_mode"),
+        ({"source": None}, "source"),
+        ({"destination": None}, "destination"),
+    ],
+)
+def test_from_env_rejects_missing_route_fields(
+    tmp_path: Path,
+    route_update: dict[str, object],
+    message: str,
+) -> None:
+    route = _route()
+    route.update(route_update)
+
+    with pytest.raises(ConfigError, match=message):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("source_update", "message"),
+    [
+        ({"provider": "aws"}, "provider"),
+        ({"addressing_style": "invalid"}, "addressing_style"),
+        ({"endpoint_url": 4566}, "endpoint_url"),
+        ({"access_key_id": 3}, "access_key_id"),
+        ({"secret_access_key": ""}, "secret_access_key"),
+        ({"region": ""}, "region"),
+        ({"bucket": ""}, "bucket"),
+        ({"path": 3}, "path"),
+    ],
+)
+def test_from_env_rejects_invalid_route_source_fields(
+    tmp_path: Path,
+    source_update: dict[str, object],
+    message: str,
+) -> None:
+    route = _route()
+    source = cast(dict[str, object], route["source"])
+    source.update(source_update)
+
+    with pytest.raises(ConfigError, match=message):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_route_source_without_provider(tmp_path: Path) -> None:
+    route = _route()
+    source = cast(dict[str, object], route["source"])
+    _ = source.pop("provider")
+
+    with pytest.raises(ConfigError, match="provider"):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_localstack_endpoint_outside_allowlist(tmp_path: Path) -> None:
+    route = _route()
+    source = cast(dict[str, object], route["source"])
+    source["endpoint_url"] = "http://example.com"
+
+    with pytest.raises(ConfigError, match="not allowed"):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_oci_source_without_namespace(tmp_path: Path) -> None:
+    route = _route()
+    source = route["source"]
+    assert isinstance(source, dict)
+    source["provider"] = "oci"
+    source["endpoint_url"] = None
+    source["iam_user_ocid"] = "ocid1.user.oc1..example"
+
+    with pytest.raises(ConfigError, match="namespace"):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_oci_source_without_iam_user_ocid(tmp_path: Path) -> None:
+    route = _route()
+    source = route["source"]
+    assert isinstance(source, dict)
+    source["provider"] = "oci"
+    source["endpoint_url"] = None
+    source["namespace"] = "namespace"
+
+    with pytest.raises(ConfigError, match="iam_user_ocid"):
+        _ = AppSettings.from_env(_env(tmp_path, [route]))
 
 
 @pytest.mark.unit()

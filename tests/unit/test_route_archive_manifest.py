@@ -145,6 +145,22 @@ def test_route_manifest_rejects_overlapping_source_paths() -> None:
 
 
 @pytest.mark.unit()
+def test_route_manifest_allows_non_overlapping_source_paths_on_same_storage() -> None:
+    source = FakeBucket("source")
+    destination = FakeBucket("archive")
+
+    manifest = build_route_archive_manifest(
+        (
+            ArchiveManifestRoute("left", source, destination, source_path="left/"),
+            ArchiveManifestRoute("right", source, destination, source_path="right/"),
+        ),
+        run_started_at_utc=STARTED,
+    )
+
+    assert manifest.entries == ()
+
+
+@pytest.mark.unit()
 def test_route_manifest_rejects_duplicate_destinations_across_routes() -> None:
     destination = FakeBucket("archive")
 

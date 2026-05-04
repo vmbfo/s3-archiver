@@ -18,6 +18,7 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
     entries = (
         SimpleNamespace(
             key="data/fae/old.xml",
+            target_day=date(2026, 4, 13),
             archive_root="data/fae",
             destination_archive_key="data/fae/2026-04-13.tar.gz",
         ),
@@ -50,6 +51,7 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
     payloads = archive_payloads.archive_group_payloads(manifest)
 
     assert payloads[0]["archive_root"] == "data/fae"
+    assert payloads[0]["target_day"] == "2026-04-13"
 
     fallback = archive_payloads.archive_group_payload(
         SimpleNamespace(entries=entries),

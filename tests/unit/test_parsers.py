@@ -49,6 +49,9 @@ def test_registry_contains_only_supported_parser_kinds() -> None:
     }
     assert isinstance(parser_for_kind(ParserKind.DIRECT), DirectParser)
     assert ParserKind("direct") in registered_parser_kinds()
+    assert DirectParser().kind is ParserKind.DIRECT
+    assert FilenameTimestampParser().kind is ParserKind.FILENAME_TIMESTAMP
+    assert FolderTimestampParser().kind is ParserKind.FOLDER_TIMESTAMP
     assert TemplateParser().parse(_listed("data/file.txt")).reason == (
         "template parser is not configured"
     )
