@@ -15,7 +15,15 @@ from tests.unit.settings_fakes import dual_env as _dual_env
 
 @pytest.mark.parametrize(
     "key",
-    ["ARCHIVER_RETENTION_DAYS", "ARCHIVER_ENABLE_CLEANUP", "ARCHIVER_MAX_WORKERS"],
+    [
+        "ARCHIVER_RETENTION_DAYS",
+        "ARCHIVER_ENABLE_CLEANUP",
+        "ARCHIVER_MAX_WORKERS",
+        "S3_SOURCE_PATH_WHITELIST_ENABLED",
+        "S3_SOURCE_PATH_WHITELIST",
+        "S3_SOURCE_PATH_BLACKLIST_ENABLED",
+        "S3_SOURCE_PATH_BLACKLIST",
+    ],
 )
 @pytest.mark.unit()
 def test_from_env_rejects_removed_archive_env_vars(tmp_path: Path, key: str) -> None:
@@ -24,6 +32,27 @@ def test_from_env_rejects_removed_archive_env_vars(tmp_path: Path, key: str) -> 
 
     with pytest.raises(ConfigError, match=key):
         _ = AppSettings.from_env(env)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "S3_SOURCE_PATH_WHITELIST_ENABLED",
+        "S3_SOURCE_PATH_WHITELIST",
+        "S3_SOURCE_PATH_BLACKLIST_ENABLED",
+        "S3_SOURCE_PATH_BLACKLIST",
+    ],
+)
+@pytest.mark.unit()
+def test_from_env_allows_blank_removed_source_filter_env_vars(
+    tmp_path: Path, key: str
+) -> None:
+    env = _dual_env(tmp_path)
+    env[key] = " "
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.routes
 
 
 @pytest.mark.unit()
