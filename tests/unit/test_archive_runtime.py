@@ -58,8 +58,8 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
         clock=_clock,
     )
 
-    assert result.copy.failures == ()
-    assert result.skipped_archive_keys == (archive_key,)
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
 
 
 @pytest.mark.unit()
@@ -92,8 +92,8 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     )
 
     assert cleanup_result.ok is True
-    assert source.deleted == [(key, "v1")]
-    assert cleanup_result.cleanup.skipped is False
+    assert source.deleted == []
+    assert cleanup_result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -125,8 +125,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
         clock=_clock,
     )
 
-    assert verify_failed.copy.failures == ()
-    assert verify_failed.skipped_archive_keys == (archive_key,)
+    assert verify_failed.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert verify_failed.verify.skipped is True
     assert source.deleted == []
 
     class MissingDuringVerify(FakeBucket):
@@ -233,7 +233,7 @@ def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]
+    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -251,4 +251,4 @@ def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]
+    assert source.deleted == []

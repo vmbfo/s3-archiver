@@ -234,6 +234,7 @@ def test_compose_scheduler_service_runs_schedule_command(
     assert "command:" in result.stdout
     assert "- schedule" in result.stdout
     assert "restart: unless-stopped" in result.stdout
+    assert "ARCHIVER_CONFIG_JSON:" in result.stdout
 
 
 @pytest.mark.e2e()
@@ -252,7 +253,20 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
     )
 
     assert "APP_ENV_FILE: /dev/null" in result.stdout
+    assert "ARCHIVER_CONFIG_JSON:" in result.stdout
     assert "path: .env" not in result.stdout
+
+
+@pytest.mark.unit()
+def test_compose_file_uses_readable_archiver_config_block() -> None:
+    compose_text = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert compose_text.count("ARCHIVER_CONFIG_JSON: |") == 2
+    assert "ARCHIVER_RETENTION_DAYS" not in compose_text
+    assert "ARCHIVER_ENABLE_CLEANUP" not in compose_text
+    assert "ARCHIVER_MAX_WORKERS" not in compose_text
+    assert "S3_SOURCE_PATH_WHITELIST" not in compose_text
+    assert "S3_SOURCE_PATH_BLACKLIST" not in compose_text
 
 
 def _run_compose(

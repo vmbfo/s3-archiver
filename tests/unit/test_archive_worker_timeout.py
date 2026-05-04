@@ -51,7 +51,7 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_cleanup_worker() 
         clock=clock,
     )
 
-    assert result.cleanup.failures == ("archive run timed out",)
+    assert result.cleanup.skipped is True
     assert time.monotonic() - began < 0.1
 
 

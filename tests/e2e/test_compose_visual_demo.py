@@ -96,7 +96,7 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
 
     assert "== S3 Archiver Visual Demo ==" in result.stdout
     assert "== Archive Candidates ==" in result.stdout
-    assert "== Cleanup Preview ==" in result.stdout
+    assert "== Cleanup Preview ==" not in result.stdout
     assert f"archive day count: {DEMO_ARCHIVE_DAY_COUNT}" in result.stdout
     assert f"archive day range: {min(archive_days)} through {max(archive_days)}" in result.stdout
     assert f"archive root count: {DEMO_ARCHIVE_ROOT_COUNT}" in result.stdout
@@ -112,20 +112,15 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     )
     assert payload["status"] == "ok"
     archive_manifest = cast(dict[str, object], payload["archive_manifest"])
-    cleanup_preview = cast(dict[str, object], payload["cleanup_preview"])
     archive_result = cast(dict[str, object], payload["archive_result"])
     assert archive_manifest["object_count"] == len(archived_keys)
     assert archive_manifest["archive_days"] == [day.isoformat() for day in sorted(archive_days)]
     assert archive_manifest["destination_archive_keys"] == sorted(archive_keys)
     assert archive_manifest["archive_count"] == len(archive_keys)
     assert archive_manifest["skipped_object_count"] == len(retained_keys | invalid_keys)
-    assert cleanup_preview["object_count"] == len(archived_keys)
-    assert cleanup_preview["destination_archive_keys"] == sorted(archive_keys)
-    assert cleanup_statuses(archive_result) == ["skipped"] * len(archive_keys)
-    assert cleanup_statuses(cleanup_preview) == ["skipped"] * len(archive_keys)
+    assert "cleanup_preview" not in payload
+    assert all("cleanup_status" not in group for group in archive_groups(archive_result))
     assert group_source_counts(archive_result) == {DEMO_FILES_PER_PATH_DAY}
-    assert group_source_counts(cleanup_preview) == {DEMO_FILES_PER_PATH_DAY}
-    assert payload["cleanup_preview_left_bucket_state_unchanged"] is True
     assert listed_keys(destination_client, bucket_pair.destination) == archive_keys
     for archive_key, members in sampled_archive_members(archive_members).items():
         assert read_tar_gz_members_text(
@@ -143,17 +138,12 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
 def write_demo_env_file(
     tmp_path: Path,
     bucket_pair: LocalstackBucketPair,
-    *,
-    cleanup_enabled: bool = False,
 ) -> Path:
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
     )
-    env["ARCHIVER_RETENTION_DAYS"] = str(DEMO_RETENTION_DAYS)
-    env["ARCHIVER_ENABLE_CLEANUP"] = "true" if cleanup_enabled else "false"
-    env["ARCHIVER_MAX_WORKERS"] = "1"
     env["LOG_LEVEL"] = "WARNING"
     env_file = tmp_path / "compose-demo.env"
     _ = env_file.write_text(
@@ -209,11 +199,9 @@ def demo_payload(output: str) -> dict[str, object]:
     return cast(dict[str, object], json.loads(json_line))
 
 
-def cleanup_statuses(payload: dict[str, object]) -> list[str]:
-    groups = cast(list[dict[str, object]], payload["archive_groups"])
-    return [str(group["cleanup_status"]) for group in groups]
+def archive_groups(payload: dict[str, object]) -> list[dict[str, object]]:
+    return cast(list[dict[str, object]], payload["archive_groups"])
 
 
 def group_source_counts(payload: dict[str, object]) -> set[int]:
-    groups = cast(list[dict[str, object]], payload["archive_groups"])
-    return {int(cast(int, group["source_object_count"])) for group in groups}
+    return {int(cast(int, group["source_object_count"])) for group in archive_groups(payload)}

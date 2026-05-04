@@ -13,11 +13,10 @@ from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import run_archive
+from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive, run_archive_routes
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.errors import (
     ArchiveRunError,
     ConfigError,
@@ -35,8 +34,8 @@ from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli import visual_demo_command as _visual_demo_command
+from s3_archiver_cli._archive_routes import archive_routes_from_settings
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
-from s3_archiver_cli.cleanup_preview import run_cleanup_preview as _run_cleanup_preview
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
 
 type JsonScalar = str | int | float | bool | None
@@ -103,31 +102,12 @@ def archive_once() -> None:
         raise typer.Exit(code=1)
 
 
-@app.command("cleanup-preview")
-def cleanup_preview() -> None:
-    """Print and persist the cleanup manifest without deleting any source objects."""
-    payload = _run_payload_command(_run_cleanup_preview)
-    typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-
-
 @app.command()
 def demo() -> None:
     """Run a human-readable archive walkthrough backed by real S3 state."""
-    _run_visual_demo_command(perform_cleanup=False)
-
-
-@app.command("demo-cleanup")
-def demo_cleanup() -> None:
-    """Run a human-readable archive walkthrough that deletes verified source objects."""
-    _run_visual_demo_command(perform_cleanup=True)
-
-
-def _run_visual_demo_command(*, perform_cleanup: bool) -> None:
     _visual_demo_command.run(
-        perform_cleanup=perform_cleanup,
         run_payload_command=_run_payload_command,
         archive_runner=_run_archive,
-        cleanup_preview_runner=_run_cleanup_preview,
         emit=typer.echo,
     )
 
@@ -214,21 +194,8 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         )
         prepare_runtime_temp_dir(settings.temp_dir)
         _ = run_health_check(settings, log_file)
-        source = S3ArchiveBucket(
-            build_s3_client(settings.source), settings.source.bucket, settings.temp_dir
-        )
-        destination = S3ArchiveBucket(
-            build_s3_client(settings.destination),
-            settings.destination.bucket,
-            settings.temp_dir,
-        )
-        result = run_archive(
-            source,
-            destination,
-            ArchiveOptions.from_settings(settings),
-            run_started_at_utc=started,
-            debug_logger=_log_transfer_decision if settings.log_level == "DEBUG" else None,
-        )
+        routes = archive_routes_from_settings(settings, build_s3_client)
+        result = _run_configured_archive(settings, routes, started)
         if result.run_id != locked_run_id:
             result = replace(result, run_id=locked_run_id)
     except Exception as exc:
@@ -258,6 +225,28 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
     return run_archive_subprocess(settings, log_file, recovery_logger=_log_lock_recovery)
+
+
+def _run_configured_archive(
+    settings: AppSettings, routes: tuple[ArchiveRoute, ...], started: datetime
+) -> ArchiveRunResult:
+    options = ArchiveOptions.from_settings(settings)
+    debug_logger = _log_transfer_decision if settings.log_level == "DEBUG" else None
+    if len(routes) == 1:
+        route = routes[0]
+        return run_archive(
+            route.source,
+            route.destination,
+            options,
+            run_started_at_utc=started,
+            debug_logger=debug_logger,
+        )
+    return run_archive_routes(
+        routes,
+        options,
+        run_started_at_utc=started,
+        debug_logger=debug_logger,
+    )
 
 
 def _archive_lock_path(settings: AppSettings) -> Path:

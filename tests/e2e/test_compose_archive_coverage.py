@@ -1,4 +1,4 @@
-"""Additional compose archive coverage for retention matrices and temp files."""
+"""Additional compose archive coverage for temp file transfers."""
 
 from __future__ import annotations
 
@@ -49,9 +49,9 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     bucket_pair = localstack_bucket_pair
-    key = "compose-temp-file/2099-12-31T00-00-00-runtime.txt"
-    archive_key = "compose-temp-file/2099-12-31.tar.gz"
-    env_file = _write_archive_env_file(tmp_path, bucket_pair, retention_days=1)
+    key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
+    archive_key = "compose-temp-file/2099-11-02.tar.gz"
+    env_file = _write_archive_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
     probe = textwrap.dedent(
@@ -73,7 +73,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
 
         settings = AppSettings.from_env(dict(os.environ))
         temp_dir = Path("/tmp/s3-archiver-compose-temp-file")
-        key = "compose-temp-file/2099-12-31T00-00-00-runtime.txt"
+        key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
         decisions = []
         source_client = build_s3_client(settings.source)
         destination_client = build_s3_client(settings.destination)
@@ -116,7 +116,6 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
                 list(result.list.failures)
                 + list(result.copy.failures)
                 + list(result.verify.failures)
-                + list(result.cleanup.failures)
             )
             print("\\n".join(failures), file=sys.stderr)
             raise SystemExit(1)
@@ -160,18 +159,13 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
 def _write_archive_env_file(
     tmp_path: Path,
     bucket_pair: LocalstackBucketPair,
-    *,
-    retention_days: int,
 ) -> Path:
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
     )
-    env["ARCHIVER_RETENTION_DAYS"] = str(retention_days)
-    env["ARCHIVER_MAX_WORKERS"] = "1"
-    env["ARCHIVER_ENABLE_CLEANUP"] = "false"
-    env_file = tmp_path / f"compose-coverage-{retention_days}.env"
+    env_file = tmp_path / "compose-coverage.env"
     _ = env_file.write_text(
         "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
         encoding="utf-8",

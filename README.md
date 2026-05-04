@@ -48,9 +48,8 @@ The container runs rootless and writes retained JSON logs to the `app_logs` name
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
-Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, `ARCHIVER_TEMP_DIR=/tmp/s3-archiver`, and disabled source whitelist/blacklist filters.
-Each archive run selects timestamped source objects whose key-derived UTC data day is at or
-before the retention cutoff day, then writes one `.tar.gz` per archive root per data day.
+Archive route configuration is supplied through `ARCHIVER_CONFIG_JSON`, a JSON array of route objects that choose a parser, copy mode, source location, and destination location.
+Each archive run selects source objects through the configured parser, then writes archive output according to the route copy mode.
 Destination archive filenames use the data day from the source key, not the run date.
 LocalStack readiness now only proves the S3 API is reachable. The pytest integration and e2e harnesses generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test, then create and tear down those buckets in fixtures.
 
@@ -123,23 +122,19 @@ Run the visual demos directly:
 
 ```bash
 ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo
-ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo-cleanup
 ```
 
-`demo` forces cleanup off and ends with a cleanup preview. `demo-cleanup` forces cleanup on
-for that invocation and shows the post-cleanup bucket state.
+`demo` streams the real archive walkthrough and ends with a summary JSON payload.
 
 Run the compose-backed visual demo scripts:
 
 ```bash
 ./scripts/run_visual_demo.sh
-./scripts/run_visual_cleanup_demo.sh
 ```
 
 These scripts seed 365 eligible data days across 12 archive roots with 2 source files per
-root/day, plus retained and invalid-key examples. The non-cleanup script archives 4,380
-daily destination objects and previews deletion. The cleanup script archives the same
-shape, then deletes the 8,760 verified source objects while leaving the 4 skipped objects.
+root/day, plus retained and invalid-key examples. The demo archives 4,380 daily
+destination objects and leaves the source bucket unchanged.
 
 Run the production-style local wrapper:
 

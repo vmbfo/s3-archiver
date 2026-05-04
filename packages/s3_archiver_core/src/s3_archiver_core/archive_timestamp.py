@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Literal
 
-TimestampSource = Literal["basename", "path"]
+TimestampSource = Literal["last_modified", "basename", "path"]
 
 _DATE = r"(?P<year>20\d{2})[-_/]?(?P<month>0[1-9]|1[0-2])[-_/]?(?P<day>0[1-9]|[12]\d|3[01])"
 _TIME = r"(?P<hour>[01]\d|2[0-3])(?P<tsep>[-:]?)(?P<minute>[0-5]\d)(?P=tsep)(?P<second>[0-5]\d)"
@@ -50,6 +50,16 @@ def select_key_timestamp(
         candidate = _closest_to_last_modified(path_candidates, last_modified)
         return candidate.value, candidate.source
     return None
+
+
+def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None:
+    """Select a reliable UTC timestamp embedded in source key folders."""
+
+    candidates = _path_candidates(PurePosixPath(key))
+    if not candidates:
+        return None
+    candidate = _closest_to_last_modified(candidates, None)
+    return candidate.value, candidate.source
 
 
 def archive_root_for_key(key: str) -> str:

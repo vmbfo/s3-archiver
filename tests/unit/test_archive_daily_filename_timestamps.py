@@ -256,7 +256,7 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
 
     assert result.ok is True
     assert matching.uploaded == []
-    assert source.deleted == [(listed.key, "v1")]
+    assert source.deleted == []
 
     source.deleted.clear()
     mismatched = FakeBucket(
@@ -273,14 +273,14 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
         clock=lambda: STARTED,
     )
 
-    assert failed.ok is True
-    assert failed.skipped_archive_keys == (archive_key,)
-    assert failed.cleanup.skipped is False
+    assert failed.ok is False
+    assert failed.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert failed.cleanup.skipped is True
     assert source.deleted == []
 
 
 @pytest.mark.unit()
-def test_cleanup_deletes_manifest_versions_without_source_last_modified_recheck() -> None:
+def test_archive_does_not_delete_manifest_versions() -> None:
     listed = replace(
         _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, None),
         properties=_properties(last_modified=datetime(2026, 4, 14, tzinfo=UTC)),
@@ -297,4 +297,4 @@ def test_cleanup_deletes_manifest_versions_without_source_last_modified_recheck(
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]
+    assert source.deleted == []

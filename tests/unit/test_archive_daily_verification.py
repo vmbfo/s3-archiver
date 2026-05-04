@@ -47,8 +47,8 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
         clock=lambda: STARTED,
     )
 
-    assert result.ok is True
-    assert result.skipped_archive_keys == (archive_key,)
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
     assert source.deleted == []
 
 
@@ -93,7 +93,9 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
         clock=lambda: STARTED,
     )
 
-    assert result.ok is True
+    assert result.ok is False
     assert result.verified_archive_keys == (good_group.destination_archive_key,)
-    assert result.skipped_archive_keys == (skipped_group.destination_archive_key,)
-    assert source.deleted == [(good.key, "v-good")]
+    assert result.copy.failures == (
+        f"{skipped_group.destination_archive_key}: archive verification failed",
+    )
+    assert source.deleted == []

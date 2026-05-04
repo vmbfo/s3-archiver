@@ -30,17 +30,12 @@ def manifest_target_day(manifest: object) -> str:
     return ""
 
 
-def archive_group_payloads(
-    manifest: object, *, cleanup_status: str | None = None
-) -> list[dict[str, JsonValue]]:
+def archive_group_payloads(manifest: object) -> list[dict[str, JsonValue]]:
     """Return group payloads from either new group models or entry fallback data."""
 
     groups = attr(manifest, "archive_groups", "groups", "grouped_archive_entries")
     if groups is not None:
-        return [
-            archive_group_payload(group, manifest, cleanup_status=cleanup_status)
-            for group in object_list(groups)
-        ]
+        return [archive_group_payload(group, manifest) for group in object_list(groups)]
     grouped_entries: dict[str, list[object]] = {}
     for entry in cast(tuple[object, ...], attr(manifest, "entries") or ()):
         grouped_entries.setdefault(entry_destination_archive_key(entry), []).append(entry)
@@ -49,7 +44,6 @@ def archive_group_payloads(
             destination_key,
             entries,
             manifest,
-            cleanup_status=cleanup_status,
         )
         for destination_key, entries in sorted(grouped_entries.items())
     ]
@@ -58,8 +52,6 @@ def archive_group_payloads(
 def archive_group_payload(
     group: object,
     manifest: object,
-    *,
-    cleanup_status: str | None = None,
 ) -> dict[str, JsonValue]:
     """Return one archive group payload."""
 
@@ -74,8 +66,6 @@ def archive_group_payload(
         "skipped_object_count": count_from_attr(group, "skipped_object_count", skipped),
         "source_objects": json_list([entry_reference_payload(entry) for entry in entries]),
     }
-    if cleanup_status is not None:
-        payload["cleanup_status"] = string_or_none(attr(group, "cleanup_status")) or cleanup_status
     if skipped:
         payload["skipped_objects"] = json_list([skipped_object_payload(item) for item in skipped])
     return payload
@@ -85,8 +75,6 @@ def archive_group_payload_from_entries(
     destination_key: str,
     entries: list[object],
     manifest: object,
-    *,
-    cleanup_status: str | None = None,
 ) -> dict[str, JsonValue]:
     """Build a group payload from legacy flat manifest entries."""
 
@@ -98,8 +86,6 @@ def archive_group_payload_from_entries(
         "skipped_object_count": 0,
         "source_objects": json_list([entry_reference_payload(entry) for entry in entries]),
     }
-    if cleanup_status is not None:
-        payload["cleanup_status"] = cleanup_status
     return payload
 
 

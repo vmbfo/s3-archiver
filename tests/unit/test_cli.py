@@ -238,6 +238,8 @@ def test_bare_command_prints_help_and_exits_zero() -> None:
     assert "Usage:" in result.stdout
     assert "check" in result.stdout
     assert "archive" in result.stdout
+    assert "cleanup-preview" not in result.stdout
+    assert "demo-cleanup" not in result.stdout
 
 
 @pytest.mark.unit()

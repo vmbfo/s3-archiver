@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import override
@@ -10,7 +9,6 @@ from typing import override
 import pytest
 from s3_archiver_core.archive import MANIFEST_SHA256_METADATA_KEY, group_metadata, run_archive
 from s3_archiver_core.archive_manifest import (
-    ManifestEntry,
     SourcePathFilter,
     build_archive_manifest,
 )
@@ -114,7 +112,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
+def test_run_archive_omits_cleanup_phase_after_verify() -> None:
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
         source,
@@ -125,7 +123,7 @@ def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
     )
     assert result.copy.ok is True
     assert result.verify.ok is True
-    assert result.cleanup.failures == ("archive run timed out",)
+    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
@@ -158,28 +156,6 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
 
 
 @pytest.mark.unit()
-def test_cleanup_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    def broken_call_worker(
-        worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry
-    ) -> str | None:
-        _ = entry
-        if "_cleanup_phase" in worker.__qualname__:
-            raise RuntimeError("executor failed")
-        return worker(entry)
-
-    monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
-    result = run_archive(
-        FakeBucket("source", (_listed(_target_key(), 90),)),
-        FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
-        run_started_at_utc=STARTED,
-        clock=lambda: STARTED,
-    )
-    assert result.copy.ok is True
-    assert result.verify.ok is True
-    assert result.cleanup.failures == ("worker failure: executor failed",)
-
-
 @pytest.mark.unit()
 def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     current = _listed(_target_key(), 90, "v2")
@@ -197,7 +173,7 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     )
     assert result.manifest.entries[0].version_id == "v2"
     assert result.ok is True
-    assert source.deleted == [(current.key, "v2")]
+    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -231,9 +207,9 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
         clock=lambda: STARTED,
     )
 
-    assert result.copy.failures == ()
-    assert result.skipped_archive_keys == (archive_key,)
-    assert result.cleanup.skipped is False
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.skipped_archive_keys == ()
+    assert result.cleanup.skipped is True
     assert source.deleted == []
 
 

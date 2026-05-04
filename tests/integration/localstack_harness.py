@@ -82,14 +82,8 @@ def localstack_test_env(
         "S3_DESTINATION_BUCKET": bucket_pair.destination,
         "S3_DESTINATION_ENDPOINT_URL": endpoint,
         "S3_DESTINATION_ADDRESSING_STYLE": "path",
-        "ARCHIVER_RETENTION_DAYS": "60",
-        "ARCHIVER_ENABLE_CLEANUP": "false",
-        "ARCHIVER_MAX_WORKERS": "16",
+        "ARCHIVER_CONFIG_JSON": _localstack_config_json(bucket_pair, endpoint=endpoint),
         "ARCHIVER_RUN_TIMEOUT": "7d",
-        "S3_SOURCE_PATH_WHITELIST_ENABLED": "false",
-        "S3_SOURCE_PATH_BLACKLIST_ENABLED": "false",
-        "S3_SOURCE_PATH_WHITELIST": "[]",
-        "S3_SOURCE_PATH_BLACKLIST": "[]",
         "LOG_LEVEL": "INFO",
         "LOG_DIR": log_dir,
     }
@@ -99,6 +93,21 @@ def localstack_test_env(
 
 def compose_runtime_log_dir(bucket_pair: LocalstackBucketPair) -> str:
     return f"/var/log/s3-archiver/{bucket_pair.source}"
+
+
+def _localstack_config_json(bucket_pair: LocalstackBucketPair, *, endpoint: str) -> str:
+    return (
+        '[{"name":"localstack-daily","parser":"filename_timestamp",'
+        '"copy_mode":"daily_tar_gz",'
+        f'"source":{{"provider":"localstack","endpoint_url":"{endpoint}",'
+        f'"region":"us-east-1","bucket":"{bucket_pair.source}","path":"",'
+        '"access_key_id":"source-test","secret_access_key":"source-test",'
+        '"addressing_style":"path"},"destination":{'
+        f'"provider":"localstack","endpoint_url":"{endpoint}",'
+        f'"region":"us-east-1","bucket":"{bucket_pair.destination}","path":"",'
+        '"access_key_id":"destination-test","secret_access_key":"destination-test",'
+        '"addressing_style":"path"}}]'
+    )
 
 
 def write_localstack_env_file(

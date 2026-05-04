@@ -68,7 +68,7 @@ def test_archive_command_reports_lock_refusal_payload(
 
 
 @pytest.mark.unit()
-def test_archive_command_reports_timeout_and_skipped_later_phases(
+def test_archive_command_reports_timeout_and_omits_cleanup_phase(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
@@ -108,7 +108,7 @@ def test_archive_command_reports_timeout_and_skipped_later_phases(
     assert payload.get("timed_out") is True
     assert phases["copy"]["status"] == "error"
     assert phases["verify"]["status"] == "skipped"
-    assert phases["cleanup"]["status"] == "skipped"
+    assert "cleanup" not in phases
     assert any(
         payload.get("phase") == "archive.copy" and payload.get("timed_out") is True
         for payload in logged_error_payloads

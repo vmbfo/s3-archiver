@@ -45,7 +45,6 @@ def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:
             "list": {"status": "ok", "failure_count": 0},
             "copy": {"status": "ok", "failure_count": 0},
             "verify": {"status": "ok", "failure_count": 0},
-            "cleanup": {"status": "skipped", "failure_count": 0},
         },
     }
 
@@ -64,19 +63,13 @@ def test_demo_command_relays_visual_output_and_summary_json(
 
     def run_command(
         *,
-        perform_cleanup: bool,
         run_payload_command: object,
         archive_runner: object,
-        cleanup_preview_runner: object,
         emit: Callable[[str], None],
     ) -> None:
-        _ = run_payload_command, archive_runner, cleanup_preview_runner
-        assert perform_cleanup is False
+        _ = run_payload_command, archive_runner
         emit("== S3 Archiver Visual Demo ==")
-        payload: dict[str, demo_module.JsonValue] = {
-            "status": "ok",
-            "cleanup_preview_left_bucket_state_unchanged": True,
-        }
+        payload: dict[str, demo_module.JsonValue] = {"status": "ok"}
         emit(json.dumps(payload, sort_keys=True))
 
     monkeypatch.setattr(cli_module, "configure_logging", _configure_logging)
@@ -100,13 +93,11 @@ def test_demo_command_exits_non_zero_when_summary_reports_error(
 
     def run_command(
         *,
-        perform_cleanup: bool,
         run_payload_command: object,
         archive_runner: object,
-        cleanup_preview_runner: object,
         emit: Callable[[str], None],
     ) -> None:
-        _ = run_payload_command, archive_runner, cleanup_preview_runner, emit, perform_cleanup
+        _ = run_payload_command, archive_runner, emit
         emit(json.dumps({"status": "error"}, sort_keys=True))
         raise typer.Exit(code=1)
 
@@ -118,7 +109,7 @@ def test_demo_command_exits_non_zero_when_summary_reports_error(
 
 
 @pytest.mark.unit()
-def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
+def test_run_visual_demo_reports_bucket_story(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
     tmp_path: Path,
@@ -157,45 +148,6 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
         ]
         return _ok_archive_payload()
 
-    cleanup_entries: list[demo_module.JsonValue] = [
-        {
-            "key": "demo/2024-02-20T00-00-00.txt",
-            "size": 10,
-            "last_modified_utc": "2024-02-19T00:00:00+00:00",
-            "version_id": "v1",
-        }
-    ]
-    original_cleanup_entries = list(cleanup_entries)
-    cleanup_preview_payload: dict[str, demo_module.JsonValue] = {
-        "cleanup_enabled_in_settings": False,
-        "manifest_file": str(settings.temp_dir / "cleanup-preview-demo.json"),
-        "object_count": 1,
-        "entries": cleanup_entries,
-        "archive_groups": [
-            {
-                "destination_archive_key": "demo/2024-02-20.tar.gz",
-                "source_object_count": 1,
-                "skipped_object_count": 0,
-                "cleanup_status": "skipped",
-                "skipped_objects": [],
-                "source_objects": [
-                    {
-                        "key": "demo/2024-02-21T00-00-00.txt",
-                        "size": 10,
-                        "last_modified_utc": "2024-02-20T00:00:00+00:00",
-                        "version_id": None,
-                    }
-                ],
-            }
-        ],
-    }
-
-    def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
-        return {
-            "status": "ok",
-            "cleanup_preview": cleanup_preview_payload,
-        }
-
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
         return FakeReport()
 
@@ -208,7 +160,6 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
         settings,
         settings.log_dir / "s3-archiver.log",
         archive_runner=archive_runner,
-        cleanup_preview_runner=cleanup_runner,
         emit=lines.append,
         now=lambda: datetime(2024, 4, 20, tzinfo=UTC),
     )
@@ -216,18 +167,14 @@ def test_run_visual_demo_reports_bucket_story_and_cleanup_preview(
     assert summary["status"] == "ok"
     manifest = cast(dict[str, object], summary["archive_manifest"])
     assert manifest["object_count"] == 1
-    cleanup_preview = cast(dict[str, object], summary["cleanup_preview"])
-    assert cleanup_preview["object_count"] == 1
-    assert cleanup_preview["entries"] == original_cleanup_entries
     snapshots = cast(dict[str, object], summary["snapshots"])
     before_archive = cast(dict[str, object], snapshots["before_archive"])
     after_archive = cast(dict[str, object], snapshots["after_archive"])
     assert before_archive["source_object_count"] == 2
     assert after_archive["destination_object_count"] == 1
-    assert summary["cleanup_preview_left_bucket_state_unchanged"] is True
     assert any("== Archive Candidates ==" in line for line in lines)
     assert any("source_last_modified=2024-02-19T00:00:00+00:00" in line for line in lines)
-    assert any("DELETE key=demo/2024-02-20T00-00-00.txt" in line for line in lines)
+    assert not any("== Cleanup Preview ==" in line for line in lines)
     assert json.loads(lines[-1])["status"] == "ok"
 
 
@@ -260,24 +207,6 @@ def test_run_visual_demo_uses_default_utc_clock(
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return _ok_archive_payload()
 
-    def cleanup_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
-        return {
-            "status": "ok",
-            "cleanup_preview": {
-                "cleanup_enabled_in_settings": False,
-                "manifest_file": str(settings.temp_dir / "cleanup-preview-demo.json"),
-                "object_count": 1,
-                "entries": [
-                    {
-                        "key": "demo/old.txt",
-                        "size": 10,
-                        "last_modified_utc": "2024-02-19T00:00:00+00:00",
-                        "version_id": "v1",
-                    }
-                ],
-            },
-        }
-
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
         return FakeReport()
 
@@ -290,7 +219,6 @@ def test_run_visual_demo_uses_default_utc_clock(
         settings,
         settings.log_dir / "s3-archiver.log",
         archive_runner=archive_runner,
-        cleanup_preview_runner=cleanup_runner,
         emit=lambda _line: None,
     )
 

@@ -59,7 +59,7 @@
 - Create `packages/s3_archiver_core/src/s3_archiver_core/parsers/` with a parser protocol, enum registry, concrete parser files, and a non-registered copy-paste template parser.
 - Move current filename/path timestamp logic from `archive_timestamp.py` into `parsers/filename_timestamp.py`.
 - Build a global manifest containing route name, parser kind, copy mode, source/destination identity, source key, version id, parser-selected timestamp/source, destination key, and archive group when relevant.
-- Reject overlapping `source.path` prefixes for routes that point at the same normalized source storage location. Also fail manifest building if duplicate source object identities still appear.
+- Reject overlapping `source.path` prefixes for routes that point at the same normalized source storage location. Also fail manifest building if duplicate source object identities or duplicate destination object identities still appear.
 - Remove cleanup phase, cleanup preview command, demo cleanup mode, cleanup payload fields, and source delete calls. Archive phases become `list -> copy -> verify`.
 
 ## Copy Behavior
@@ -81,7 +81,7 @@
 - Unit-test parser registry behavior, direct parser S3 timestamp/metadata behavior, filename parser parity with current behavior, folder parser behavior, and template parser non-registration.
 - Unit-test that parser-selected timestamps control eligibility in both copy modes.
 - Unit-test that only the `direct` parser uses S3 timestamps, and non-direct parsers do not fall back to S3 timestamps.
-- Unit-test manifest construction for frozen run timestamp handling, direct full-key destinations, daily archive grouping, parser skip reasons, and duplicate source object failure.
+- Unit-test manifest construction for frozen run timestamp handling, direct full-key destinations, daily archive grouping, parser skip reasons, duplicate source object failure, and duplicate destination object failure across routes.
 - Unit-test archive execution with one worker per route, no cleanup phase, existing destination verification, direct-copy fingerprint conflicts, and deterministic tar metadata.
 - Run quick validation only: focused unit tests plus `make format-check`, `make lint`, `make typecheck`, and `make type-coverage`. Full CI/reviewer loop remains a pre-push gate.
 

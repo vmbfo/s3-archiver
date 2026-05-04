@@ -34,7 +34,6 @@ def emit_intro(
     emit(title)
     emit(f"source bucket: {settings.source.bucket}")
     emit(f"destination bucket: {settings.destination.bucket}")
-    emit(f"cleanup enabled in settings: {settings.cleanup_enabled}")
     emit(f"log file: {log_file}")
     emit(f"run started at utc: {started.isoformat()}")
 
@@ -134,45 +133,12 @@ def emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
             "GROUP  "
             + f"destination_archive_key={group['destination_archive_key']} "
             + f"source_object_count={group['source_object_count']} "
-            + f"skipped_object_count={group['skipped_object_count']} "
-            + f"cleanup_status={group['cleanup_status']}"
+            + f"skipped_object_count={group['skipped_object_count']}"
         )
     phases = cast(dict[str, dict[str, JsonValue]], payload["phases"])
-    for phase_name in ("list", "copy", "verify", "cleanup"):
+    for phase_name in ("list", "copy", "verify"):
         phase = phases[phase_name]
         emit(f"{phase_name}: status={phase['status']} failure_count={phase['failure_count']}")
-
-
-def emit_cleanup_preview(emit: Emitter, cleanup_preview: dict[str, JsonValue]) -> None:
-    """Emit cleanup preview output."""
-
-    emit("")
-    emit("== Cleanup Preview ==")
-    emit(f"cleanup enabled in settings: {cleanup_preview['cleanup_enabled_in_settings']}")
-    emit(f"preview manifest file: {cleanup_preview['manifest_file']}")
-    emit(f"target day: {cleanup_preview.get('target_day')}")
-    groups = cast(list[dict[str, JsonValue]], cleanup_preview.get("archive_groups", []))
-    _emit_archive_coverage(emit, groups, days=_archive_days_from_payload(cleanup_preview))
-    emit(f"archive count: {cleanup_preview.get('archive_count')}")
-    emit(f"would delete object count: {cleanup_preview['object_count']}")
-    for group in groups:
-        emit(
-            "GROUP  "
-            + f"destination_archive_key={group['destination_archive_key']} "
-            + f"source_object_count={group['source_object_count']} "
-            + f"skipped_object_count={group['skipped_object_count']} "
-            + f"cleanup_status={group['cleanup_status']}"
-        )
-    for item in cast(list[dict[str, JsonValue]], cleanup_preview.get("skipped_objects", [])):
-        emit("SKIP   " + f"key={item['key']} " + f"reason={item['reason']}")
-    for row in cast(list[dict[str, JsonValue]], cleanup_preview["entries"]):
-        emit(
-            "DELETE "
-            + f"key={row['key']} "
-            + f"size={row['size']} "
-            + f"last_modified={row['last_modified_utc']} "
-            + f"version_id={row['version_id']}"
-        )
 
 
 def _emit_archive_coverage(

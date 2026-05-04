@@ -67,7 +67,4 @@ def test_canonical_retention_dataset_archives_each_eligible_day(
     assert [entry.key for entry in result.manifest.entries] == expected_keys
     assert destination.uploaded == expected_archive_keys
     assert destination.copied == []
-    if cleanup_enabled:
-        assert source.deleted == [(key, "v1") for key in reversed(expected_keys)]
-    else:
-        assert source.deleted == []
+    assert source.deleted == []

@@ -22,14 +22,12 @@ def test_archive_result_uses_payload_archive_day_sample_for_long_ranges() -> Non
                 "destination_archive_key": "demo/2026-01-07.tar.gz",
                 "source_object_count": 2,
                 "skipped_object_count": 0,
-                "cleanup_status": "skipped",
             }
         ],
         "phases": {
             "list": {"status": "ok", "failure_count": 0},
             "copy": {"status": "ok", "failure_count": 0},
             "verify": {"status": "ok", "failure_count": 0},
-            "cleanup": {"status": "skipped", "failure_count": 0},
         },
     }
 

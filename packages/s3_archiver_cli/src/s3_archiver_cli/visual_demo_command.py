@@ -10,7 +10,6 @@ from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli.visual_demo import (
     ArchiveRunner,
-    CleanupPreviewRunner,
     Emitter,
     JsonValue,
     run_visual_demo,
@@ -23,10 +22,8 @@ type PayloadCommand = Callable[
 
 def run(
     *,
-    perform_cleanup: bool,
     run_payload_command: PayloadCommand,
     archive_runner: ArchiveRunner,
-    cleanup_preview_runner: CleanupPreviewRunner,
     emit: Emitter,
 ) -> None:
     """Run a visual demo command and map unsuccessful summaries to CLI failure."""
@@ -36,9 +33,7 @@ def run(
             settings,
             log_file,
             archive_runner=archive_runner,
-            cleanup_preview_runner=cleanup_preview_runner,
             emit=emit,
-            perform_cleanup=perform_cleanup,
         )
     )
     if payload.get("status") != "ok":
