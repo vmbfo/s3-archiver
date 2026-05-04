@@ -21,15 +21,9 @@ def phase_status(result: ArchivePhaseResult) -> str:
 def manifest_target_day(manifest: object) -> str:
     """Return the manifest target day as an ISO date string."""
 
-    has_explicit_target = hasattr(manifest, "target_day") or hasattr(manifest, "target_date")
     value = attr(manifest, "target_day", "target_date")
     if value is not None:
         return date_text(value)
-    if has_explicit_target:
-        return ""
-    cutoff = attr(manifest, "retention_cutoff_utc")
-    if isinstance(cutoff, datetime):
-        return cutoff.date().isoformat()
     return ""
 
 
@@ -58,9 +52,10 @@ def archive_group_payload(
 ) -> dict[str, JsonValue]:
     """Return one archive group payload."""
 
+    _ = manifest
     entries = object_list(attr(group, "entries", "source_entries", "objects"))
     skipped = object_list(attr(group, "skipped_objects", "skipped_entries"))
-    target_day = attr(group, "target_day", "target_date") or manifest_target_day(manifest)
+    target_day = attr(group, "target_day", "target_date")
     payload: dict[str, JsonValue] = {
         "target_day": date_text(target_day),
         "archive_root": string_or_none(attr(group, "archive_root", "root")),
@@ -81,8 +76,9 @@ def archive_group_payload_from_entries(
 ) -> dict[str, JsonValue]:
     """Build a group payload from legacy flat manifest entries."""
 
+    _ = manifest
     payload: dict[str, JsonValue] = {
-        "target_day": manifest_target_day(manifest),
+        "target_day": entry_target_day(entries),
         "archive_root": string_or_none(attr(entries[0], "archive_root")) if entries else None,
         "destination_archive_key": destination_key,
         "source_object_count": len(entries),
@@ -110,6 +106,16 @@ def skipped_object_payload(item: object) -> dict[str, JsonValue]:
         "target_day": string_or_none(attr(item, "target_day", "target_date")),
         "archive_root": string_or_none(attr(item, "archive_root", "root")),
     }
+
+
+def entry_target_day(entries: list[object]) -> str:
+    """Return the first explicit target day carried by grouped entries."""
+
+    for entry in entries:
+        value = attr(entry, "target_day", "target_date")
+        if value is not None:
+            return date_text(value)
+    return ""
 
 
 def entry_reference_payload(entry: object) -> dict[str, JsonValue]:

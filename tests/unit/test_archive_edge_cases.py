@@ -204,7 +204,6 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     )
 
     assert result.copy.failures == (f"{archive_key}: archive verification failed",)
-    assert result.skipped_archive_keys == ()
 
 
 @pytest.mark.unit()

@@ -81,8 +81,6 @@ def archive_result_payload(
         "archive_groups": archive_group_values,
         "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
     }
-    if result.manifest.target_day is not None:
-        manifest_payload["retention_cutoff_utc"] = result.manifest.retention_cutoff_utc.isoformat()
     return {
         "status": status,
         "run_id": result.run_id,

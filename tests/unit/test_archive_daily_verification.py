@@ -130,7 +130,6 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     )
 
     assert result.ok is False
-    assert result.verified_archive_keys == (good_group.destination_archive_key,)
     assert result.copy.failures == (
         f"{skipped_group.destination_archive_key}: archive verification failed",
     )

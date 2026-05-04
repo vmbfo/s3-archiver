@@ -86,8 +86,6 @@ def test_archive_result_payload_omits_cleanup_group_status(
                 list=ArchivePhaseResult("list"),
                 copy=ArchivePhaseResult("copy"),
                 verify=ArchivePhaseResult("verify"),
-                skipped_archive_keys=("data/skipped/2026-04-13.tar.gz",),
-                verified_archive_keys=("data/verified/2026-04-13.tar.gz",),
             ),
         ),
     )
@@ -121,8 +119,6 @@ def test_archive_result_payload_omits_retention_cutoff_for_route_manifest(
                 list=ArchivePhaseResult("list"),
                 copy=ArchivePhaseResult("copy"),
                 verify=ArchivePhaseResult("verify"),
-                skipped_archive_keys=(),
-                verified_archive_keys=(),
             ),
         ),
     )

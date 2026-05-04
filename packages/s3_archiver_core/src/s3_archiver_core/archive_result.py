@@ -30,8 +30,6 @@ class ArchiveRunResult:
     copy: ArchivePhaseResult
     verify: ArchivePhaseResult
     list: ArchivePhaseResult = field(default_factory=lambda: ArchivePhaseResult("list"))
-    verified_archive_keys: tuple[str, ...] = ()
-    skipped_archive_keys: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:

@@ -122,8 +122,6 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
             result.copy,
             result.verify,
             result.list,
-            ("verified.tar.gz",),
-            ("skipped.tar.gz",),
         )
 
     def archive_result_payload(
@@ -135,8 +133,6 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
         return {
             "status": status,
             "run_id": result.run_id,
-            "verified_archive_keys": list(result.verified_archive_keys),
-            "skipped_archive_keys": list(result.skipped_archive_keys),
         }
 
     monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
@@ -151,8 +147,6 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
     record = cast(dict[str, object], json.loads(record_path.read_text(encoding="utf-8")))
 
     assert payload["run_id"] == "locked-run"
-    assert payload["verified_archive_keys"] == ["verified.tar.gz"]
-    assert payload["skipped_archive_keys"] == ["skipped.tar.gz"]
     assert cast(dict[str, object], record["payload"])["run_id"] == "locked-run"
 
 

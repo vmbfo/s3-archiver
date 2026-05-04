@@ -143,8 +143,6 @@ def run_archive_routes(
             manifest,
             copy_result,
             verify_result,
-            verified_archive_keys=tuple(group.destination_archive_key for group in verified_groups),
-            skipped_archive_keys=(),
         )
     finally:
         if run_lock is not None:

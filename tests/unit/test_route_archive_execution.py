@@ -177,7 +177,6 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
     )
 
     assert result.copy.failures == (f"{archive_key}: copy failed",)
-    assert result.verified_archive_keys == (archive_key,)
 
 
 @pytest.mark.unit()
