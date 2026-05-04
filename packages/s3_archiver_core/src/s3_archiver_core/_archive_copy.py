@@ -18,10 +18,13 @@ from s3_archiver_core.archive_group_metadata import (
 from s3_archiver_core.archive_result import ArchivePhaseResult
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
+    VerificationResult,
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_content,
 )
+from s3_archiver_core.s3 import S3ObjectProperties
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
 type GroupIdentity = tuple[object | None, str, str]
@@ -86,7 +89,7 @@ def copy_direct_entry(
         metadata = archive_metadata(entry)
         existing = route.destination.head_object(destination_key)
         if existing is not None:
-            verified = verify_destination(entry, existing)
+            verified = verify_direct_entry(route, entry, existing)
             if verified.ok:
                 return None, True
             return f"{destination_key}: {verified.detail}", False
@@ -105,10 +108,24 @@ def copy_direct_entry(
         )
     except Exception as exc:
         return f"{destination_key}: {exc}", False
-    verified = verify_destination(entry, route.destination.head_object(destination_key))
+    verified = verify_direct_entry(route, entry, route.destination.head_object(destination_key))
     if verified.ok:
         return None, True
     return f"{destination_key}: {verified.detail}", False
+
+
+def verify_direct_entry(
+    route: ArchiveRoute,
+    entry: ManifestEntry,
+    destination: S3ObjectProperties | None,
+) -> VerificationResult:
+    verified = verify_destination(entry, destination)
+    if not verified.ok:
+        return verified
+    return verify_destination_content(
+        route.source.content_sha256(entry.key, entry.version_id),
+        route.destination.content_sha256(entry.destination_key),
+    )
 
 
 def copy_group(

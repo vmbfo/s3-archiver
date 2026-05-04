@@ -258,6 +258,16 @@ def test_from_env_rejects_overlapping_route_source_paths(tmp_path: Path) -> None
 
 
 @pytest.mark.unit()
+def test_from_env_allows_same_storage_sibling_source_path_names(tmp_path: Path) -> None:
+    first = _route(name="data", source_path="data")
+    second = _route(name="database", source_path="database")
+
+    settings = AppSettings.from_env(_env(tmp_path, [first, second]))
+
+    assert [route.source.path for route in settings.routes] == ["data", "database"]
+
+
+@pytest.mark.unit()
 def test_from_env_allows_same_source_path_on_different_storage(tmp_path: Path) -> None:
     first = _route(name="fae", source_path="data/fae/")
     second = _route(name="other-storage", source_path="data/fae/")

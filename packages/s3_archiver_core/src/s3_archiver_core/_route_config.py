@@ -193,12 +193,20 @@ def _validate_route_storage(decoder: EnvDecoder, routes: tuple[RouteSettings, ..
             return
     for left_index, left in enumerate(routes):
         for right in routes[left_index + 1 :]:
+            left_path = _route_path_prefix(left.source.path)
+            right_path = _route_path_prefix(right.source.path)
             if left.source.storage_identity() == right.source.storage_identity() and (
-                left.source.path.startswith(right.source.path)
-                or right.source.path.startswith(left.source.path)
+                left_path.startswith(right_path) or right_path.startswith(left_path)
             ):
                 decoder.fail(
                     "ARCHIVER_CONFIG_JSON",
                     f"source paths for routes {left.name!r} and {right.name!r} overlap",
                 )
                 return
+
+
+def _route_path_prefix(path: str) -> str:
+    normalized = _normalize_s3_prefix(path).rstrip("/")
+    if normalized == "":
+        return ""
+    return f"{normalized}/"
