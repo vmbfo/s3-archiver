@@ -67,7 +67,7 @@ def test_archive_command_reports_lock_refusal_payload(
 
 
 @pytest.mark.unit()
-def test_archive_command_reports_timeout_and_omits_cleanup_phase(
+def test_archive_command_reports_timeout_with_active_phases_only(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:

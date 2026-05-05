@@ -1,4 +1,4 @@
-"""Daily archive verification and cleanup safety tests."""
+"""Daily archive verification safety tests."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 
 @pytest.mark.unit()
-def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
+def test_existing_archive_requires_archive_hash_before_reuse() -> None:
     listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(
@@ -85,7 +85,7 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
 
 
 @pytest.mark.unit()
-def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
+def test_mismatched_existing_archive_fails_only_that_group() -> None:
     good = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v-good")
     skipped = _listed("data/harmonie/2026-04-13T07-00-00.xml", 1, "v-skip")
     source = FakeBucket("source", (good, skipped))

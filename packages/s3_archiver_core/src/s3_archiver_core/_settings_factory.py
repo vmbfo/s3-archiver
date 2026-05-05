@@ -6,7 +6,6 @@ from typing import Protocol
 
 from s3_archiver_core._settings_models import (
     RouteSettings,
-    S3LocationSettings,
 )
 
 
@@ -16,8 +15,6 @@ class AppSettingsFactory[T](Protocol):
     def __call__(
         self,
         *,
-        source: S3LocationSettings,
-        destination: S3LocationSettings,
         run_timeout: timedelta,
         temp_dir: Path,
         log_level: str,

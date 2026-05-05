@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import cast, override
 
 import pytest
 from s3_archiver_core.archive_manifest import (
     ArchiveManifestRoute,
+    ParserKind,
     SelectedObject,
     SkippedObject,
     build_route_archive_manifest,
 )
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
+from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
+
+
+class DuplicateListingBucket(FakeBucket):
+    @override
+    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
+        listed = tuple(super().list_source_objects(versioning_state))
+        return (*listed, *listed)
 
 
 @pytest.mark.unit()
@@ -130,6 +141,81 @@ def test_route_manifest_accepts_parser_protocol_skip_result() -> None:
 
 
 @pytest.mark.unit()
+def test_route_manifest_converts_parser_exceptions_to_object_skips() -> None:
+    source = FakeBucket(
+        "source",
+        (
+            _listed("data/good.txt", 1, None),
+            _listed("data/bad.txt", 1, None),
+        ),
+    )
+
+    def parser(listed: S3ListedObject) -> SelectedObject:
+        if listed.key == "data/bad.txt":
+            raise ValueError("bad parser input")
+        return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "last_modified")
+
+    manifest = build_route_archive_manifest(
+        (
+            ArchiveManifestRoute(
+                "custom",
+                source,
+                FakeBucket("archive"),
+                parser=parser,
+                parser_kind="direct",
+                copy_mode="direct",
+            ),
+        ),
+        run_started_at_utc=STARTED,
+    )
+
+    assert [entry.key for entry in manifest.entries] == ["data/good.txt"]
+    assert [
+        (item.key, item.reason, item.route_name, item.parser_kind, item.copy_mode)
+        for item in manifest.skipped_objects
+    ] == [("data/bad.txt", "parser error: bad parser input", "custom", "direct", "direct")]
+
+
+@pytest.mark.unit()
+def test_route_manifest_does_not_convert_infrastructure_parser_errors_to_skips() -> None:
+    source = FakeBucket("source", (_listed("data/bad.txt", 1, None),))
+
+    def parser(_listed: object) -> SelectedObject:
+        raise RuntimeError("metadata lookup failed")
+
+    with pytest.raises(RuntimeError, match="metadata lookup failed"):
+        _ = build_route_archive_manifest(
+            (
+                ArchiveManifestRoute(
+                    "custom",
+                    source,
+                    FakeBucket("archive"),
+                    parser=parser,
+                ),
+            ),
+            run_started_at_utc=STARTED,
+        )
+
+
+@pytest.mark.unit()
+def test_route_manifest_does_not_convert_invalid_parser_kind_to_skip() -> None:
+    source = FakeBucket("source", (_listed("data/bad.txt", 1, None),))
+
+    with pytest.raises(ValueError, match="unsupported"):
+        _ = build_route_archive_manifest(
+            (
+                ArchiveManifestRoute(
+                    "custom",
+                    source,
+                    FakeBucket("archive"),
+                    parser_kind=cast(ParserKind, cast(object, "unsupported")),
+                ),
+            ),
+            run_started_at_utc=STARTED,
+        )
+
+
+@pytest.mark.unit()
 def test_route_manifest_rejects_overlapping_source_paths() -> None:
     source = FakeBucket("source")
     destination = FakeBucket("archive")
@@ -178,6 +264,25 @@ def test_route_manifest_rejects_duplicate_destinations_across_routes() -> None:
                     "right",
                     FakeBucket("right", (_listed("same.txt", 1, None),)),
                     destination,
+                    parser_kind="direct",
+                    copy_mode="direct",
+                ),
+            ),
+            run_started_at_utc=STARTED,
+        )
+
+
+@pytest.mark.unit()
+def test_route_manifest_rejects_duplicate_source_identities() -> None:
+    source = DuplicateListingBucket("source", (_listed("same.txt", 1, "v1"),))
+
+    with pytest.raises(ValueError, match="duplicate source object identity"):
+        _ = build_route_archive_manifest(
+            (
+                ArchiveManifestRoute(
+                    "duplicates",
+                    source,
+                    FakeBucket("destination"),
                     parser_kind="direct",
                     copy_mode="direct",
                 ),

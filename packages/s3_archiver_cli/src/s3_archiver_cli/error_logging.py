@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.errors import (
@@ -18,16 +19,18 @@ from s3_archiver_core.errors import (
 from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli.archive_payloads import (
+    JsonValue,
     archive_group_payloads,
     destination_archive_keys,
+    direct_entry_payloads,
     json_list,
     manifest_target_day,
     phase_status,
     skipped_object_payloads,
 )
-
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+from s3_archiver_cli.archive_payloads import (
+    destination_keys as all_destination_keys,
+)
 
 
 def log_error_payload(payload: Mapping[str, JsonValue], error: Exception | None = None) -> None:
@@ -66,33 +69,50 @@ def archive_result_payload(
 
     target_day = manifest_target_day(result.manifest)
     archive_groups = archive_group_payloads(result.manifest)
-    destination_keys = destination_archive_keys(archive_groups)
+    direct_entries = direct_entry_payloads(result.manifest)
+    archive_keys = destination_archive_keys(archive_groups)
+    destination_keys = all_destination_keys(archive_groups, direct_entries)
     skipped_objects = skipped_object_payloads(result.manifest)
     archive_group_values = json_list(archive_groups)
+    direct_entry_values = json_list(direct_entries)
     skipped_object_values = json_list(skipped_objects)
     manifest_payload: dict[str, JsonValue] = {
         "object_count": len(result.manifest.entries),
         "target_day": target_day,
         "archive_count": len(archive_groups),
+        "direct_copy_count": len(direct_entries),
         "source_object_count": len(result.manifest.entries),
         "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": destination_keys,
+        "destination_archive_keys": archive_keys,
+        "destination_keys": destination_keys,
         "skipped_objects": skipped_object_values,
         "archive_groups": archive_group_values,
+        "direct_entries": direct_entry_values,
         "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
     }
+    routes = route_payloads(settings)
+    source_buckets = _string_json_values(sorted({str(route["source_bucket"]) for route in routes}))
+    destination_buckets = _string_json_values(
+        sorted({str(route["destination_bucket"]) for route in routes})
+    )
     return {
         "status": status,
         "run_id": result.run_id,
         "source_bucket": settings.source.bucket,
         "destination_bucket": settings.destination.bucket,
+        "source_buckets": source_buckets,
+        "destination_buckets": destination_buckets,
+        "routes": json_list(routes),
         "log_file": str(log_file),
         "target_day": target_day,
         "archive_count": len(archive_groups),
+        "direct_copy_count": len(direct_entries),
         "source_object_count": len(result.manifest.entries),
         "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": destination_keys,
+        "destination_archive_keys": archive_keys,
+        "destination_keys": destination_keys,
         "archive_groups": archive_group_values,
+        "direct_entries": direct_entry_values,
         "manifest": manifest_payload,
         "phases": {
             "list": _phase_payload(result.list),
@@ -147,9 +167,41 @@ def error_payload(
         "details": str(error),
         "source_bucket": settings.source.bucket if settings is not None else None,
         "destination_bucket": settings.destination.bucket if settings is not None else None,
+        "source_buckets": (
+            _string_json_values(
+                sorted({str(route["source_bucket"]) for route in route_payloads(settings)})
+            )
+            if settings is not None
+            else []
+        ),
+        "destination_buckets": (
+            _string_json_values(
+                sorted({str(route["destination_bucket"]) for route in route_payloads(settings)})
+            )
+            if settings is not None
+            else []
+        ),
+        "routes": json_list(route_payloads(settings)) if settings is not None else [],
         "key": None,
         "mismatch": None,
     }
+
+
+def route_payloads(settings: AppSettings) -> list[dict[str, JsonValue]]:
+    """Return route-scoped source and destination payload details."""
+
+    return [
+        {
+            "name": route.name,
+            "parser_kind": route.parser.value,
+            "copy_mode": route.copy_mode.value,
+            "source_bucket": route.source.bucket,
+            "source_path": route.source.path,
+            "destination_bucket": route.destination.bucket,
+            "destination_path": route.destination.path,
+        }
+        for route in settings.routes
+    ]
 
 
 def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
@@ -158,6 +210,10 @@ def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
         "failure_count": len(result.failures),
         "failures": list(result.failures),
     }
+
+
+def _string_json_values(items: list[str]) -> list[JsonValue]:
+    return [cast(JsonValue, item) for item in items]
 
 
 def _first_archive_failure(result: ArchiveRunResult) -> tuple[str, str]:

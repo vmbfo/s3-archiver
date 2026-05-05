@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import s3_archiver_core._route_config as route_config
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.parsers import ParserKind
 from s3_archiver_core.settings import AppSettings, CopyMode, S3Provider
@@ -99,7 +100,9 @@ def test_from_env_expands_route_env_refs_with_defaults(tmp_path: Path) -> None:
     ("route_update", "message"),
     [
         ({"parser": "unknown"}, "parser"),
+        ({"parser": "DIRECT"}, "parser"),
         ({"copy_mode": "unknown"}, "copy_mode"),
+        ({"copy_mode": "DIRECT"}, "copy_mode"),
     ],
 )
 def test_from_env_rejects_invalid_route_enums(
@@ -112,6 +115,20 @@ def test_from_env_rejects_invalid_route_enums(
 
     with pytest.raises(ConfigError, match=message):
         _ = AppSettings.from_env(_env(tmp_path, [route]))
+
+
+@pytest.mark.unit()
+def test_from_env_validates_parser_against_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        route_config,
+        "registered_parser_kinds",
+        lambda: frozenset({ParserKind.FILENAME_TIMESTAMP}),
+    )
+
+    with pytest.raises(ConfigError, match="parser"):
+        _ = AppSettings.from_env(_env(tmp_path, [_route(parser="direct")]))
 
 
 @pytest.mark.unit()

@@ -35,7 +35,7 @@ def existing_archive_verified(
     existing: Mapping[str, str],
     expected: Mapping[str, str],
 ) -> bool:
-    """Return whether an existing destination archive is verified for cleanup."""
+    """Return whether an existing destination archive is already verified."""
 
     if not metadata_matches(existing, expected):
         return False

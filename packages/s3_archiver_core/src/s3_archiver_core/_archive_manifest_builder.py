@@ -56,15 +56,37 @@ def build_archive_manifest(
             continue
         selected = _select_object(parser_kind, parser, listed, source_path)
         if selected is None:
-            skipped.append(SkippedObject(listed.key, "no reliable key timestamp", route_name))
+            skipped.append(
+                SkippedObject(
+                    listed.key,
+                    "no reliable key timestamp",
+                    route_name,
+                    parser_kind,
+                    copy_mode,
+                )
+            )
             continue
         if isinstance(selected, SkippedObject | ParserSkippedObject):
-            skipped.append(SkippedObject(listed.key, selected.reason, route_name))
+            skipped.append(
+                SkippedObject(
+                    listed.key,
+                    selected.reason,
+                    route_name,
+                    parser_kind,
+                    copy_mode,
+                )
+            )
             continue
         timestamp = as_utc(selected.timestamp)
         if timestamp > run_started:
             skipped.append(
-                SkippedObject(listed.key, "parser timestamp after run start", route_name)
+                SkippedObject(
+                    listed.key,
+                    "parser timestamp after run start",
+                    route_name,
+                    parser_kind,
+                    copy_mode,
+                )
             )
             continue
         entries.append(
@@ -230,9 +252,16 @@ def _select_object(
     listed: S3ListedObject,
     source_path: str,
 ) -> SelectedObject | SkippedObject | ParserSkippedObject | None:
-    if parser is not None:
-        return parser(listed)
-    result = parser_for_kind(RegisteredParserKind(str(parser_kind))).parse(listed)
+    object_parser = (
+        None if parser is not None else parser_for_kind(RegisteredParserKind(str(parser_kind)))
+    )
+    try:
+        if parser is not None:
+            return parser(listed)
+        assert object_parser is not None
+        result = object_parser.parse(listed)
+    except ValueError as exc:
+        return SkippedObject(listed.key, f"parser error: {exc}")
     if isinstance(result, ParserSkippedObject):
         return SkippedObject(listed.key, result.reason)
     return SelectedObject(

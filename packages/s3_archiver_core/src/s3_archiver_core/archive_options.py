@@ -6,10 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from s3_archiver_core._removed_env import reject_removed_archiver_env
-from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.archive_manifest import CopyMode, ParserKind
-from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.s3 import S3TransferCapabilities, transfer_capabilities_for_locations
 from s3_archiver_core.settings import AppSettings, RouteSettings
 
@@ -35,12 +32,9 @@ class ArchiveOptions:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> ArchiveOptions:
-        """Build archive options from archive-specific environment variables."""
+        """Build archive options from validated application settings."""
 
-        reject_removed_archiver_env(env)
-        return cls(
-            run_timeout=_duration(env, "ARCHIVER_RUN_TIMEOUT", "7d"),
-        )
+        return cls.from_settings(AppSettings.from_env(env))
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> ArchiveOptions:
@@ -70,13 +64,3 @@ def _route_options(route: RouteSettings) -> ArchiveRouteOptions:
         parser_kind=route.parser.value,
         copy_mode=route.copy_mode.value,
     )
-
-
-def _duration(env: Mapping[str, str], key: str, default: str) -> timedelta:
-    raw = env.get(key)
-    if raw is None or raw.strip() == "":
-        raw = default
-    try:
-        return parse_duration(raw)
-    except ValueError as exc:
-        raise ConfigError(f"{key} must be a positive duration such as 7d") from exc

@@ -14,9 +14,19 @@ from tests.unit.settings_fakes import dual_env
 
 
 @pytest.mark.unit()
-def test_options_env_defaults_to_route_runtime_baseline() -> None:
-    assert ArchiveOptions.from_env({}).run_timeout == timedelta(days=7)
-    options = ArchiveOptions.from_env({"ARCHIVER_RUN_TIMEOUT": "1h"})
+def test_options_env_requires_config_json() -> None:
+    with pytest.raises(ConfigError, match="ARCHIVER_CONFIG_JSON"):
+        _ = ArchiveOptions.from_env({})
+
+
+@pytest.mark.unit()
+def test_options_env_defaults_to_route_runtime_baseline(tmp_path: Path) -> None:
+    env = dual_env(tmp_path)
+    assert ArchiveOptions.from_env(env).run_timeout == timedelta(days=7)
+    env["ARCHIVER_RUN_TIMEOUT"] = "1h"
+
+    options = ArchiveOptions.from_env(env)
+
     assert options.run_timeout == timedelta(hours=1)
 
 
@@ -31,9 +41,12 @@ def test_options_reject_removed_env_values(key: str) -> None:
 
 
 @pytest.mark.unit()
-def test_options_reject_invalid_env_values() -> None:
+def test_options_reject_invalid_env_values(tmp_path: Path) -> None:
+    env = dual_env(tmp_path)
+    env["ARCHIVER_RUN_TIMEOUT"] = "soon"
+
     with pytest.raises(ConfigError, match="ARCHIVER_RUN_TIMEOUT"):
-        _ = ArchiveOptions.from_env({"ARCHIVER_RUN_TIMEOUT": "soon"})
+        _ = ArchiveOptions.from_env(env)
 
 
 @pytest.mark.unit()

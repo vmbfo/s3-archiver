@@ -61,7 +61,7 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_orders_phases_and_gates_cleanup() -> None:
+def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     key = _target_key()
     source = FakeBucket("source", (_listed(key, 90, "v1"),))
     destination = FakeBucket("destination")
@@ -79,7 +79,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     assert destination.uploaded == [archive_key]
     assert destination.copied == []
     assert decisions == [(key, "deterministic_tar_gzip")]
-    cleanup_result = run_archive(
+    reuse_result = run_archive(
         source,
         destination,
         ArchiveOptions(),
@@ -87,7 +87,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
         clock=_clock,
     )
 
-    assert cleanup_result.ok is True
+    assert reuse_result.ok is True
 
 
 @pytest.mark.unit()
@@ -205,7 +205,7 @@ def test_list_failure_blocks_archive_phases() -> None:
 
 
 @pytest.mark.unit()
-def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
+def test_archive_accepts_source_last_modified_changes_after_listing() -> None:
     listed = replace(
         _listed(_target_key(), 90, None),
         properties=_properties(last_modified=datetime(2024, 2, 21, tzinfo=UTC)),
@@ -224,7 +224,7 @@ def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
 
 
 @pytest.mark.unit()
-def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
+def test_key_only_archive_succeeds_when_current_source_still_matches() -> None:
     listed = _listed(_target_key("2024-02-20T01-00-00.txt"), 90, None)
     source = FakeBucket("source", (listed,))
     destination = FakeBucket("destination")

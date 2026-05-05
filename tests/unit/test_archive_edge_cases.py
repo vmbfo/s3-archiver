@@ -110,7 +110,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_omits_cleanup_phase_after_verify() -> None:
+def test_run_archive_completes_after_verify_phase() -> None:
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
         source,
@@ -124,7 +124,7 @@ def test_run_archive_omits_cleanup_phase_after_verify() -> None:
 
 
 @pytest.mark.unit()
-def test_verify_failure_after_copy_blocks_cleanup() -> None:
+def test_verify_failure_after_copy_fails_run() -> None:
     class VanishingDestination(FakeBucket):
         head_calls: int
 
@@ -153,7 +153,7 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
 
 @pytest.mark.unit()
 @pytest.mark.unit()
-def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
+def test_archive_uses_manifest_version_for_current_archive_group() -> None:
     current = _listed(_target_key(), 90, "v2")
     source = FakeBucket(
         "source",
@@ -172,7 +172,7 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
 
 
 @pytest.mark.unit()
-def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> None:
+def test_existing_archive_with_different_manifest_metadata_fails_verification() -> None:
     listed = _listed(_target_key(), 90, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(

@@ -216,7 +216,7 @@ def test_run_archive_uploads_deterministic_tar_with_manifest_metadata() -> None:
 
 
 @pytest.mark.unit()
-def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_it() -> None:
+def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> None:
     listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(

@@ -34,13 +34,11 @@ __all__ = (
 class AppSettings:
     """Validated runtime settings for the CLI and archive workflow."""
 
-    source: S3LocationSettings
-    destination: S3LocationSettings
     run_timeout: timedelta
     temp_dir: Path
     log_level: str
     log_dir: Path
-    routes: tuple[RouteSettings, ...] = ()
+    routes: tuple[RouteSettings, ...]
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
@@ -59,6 +57,14 @@ class AppSettings:
 
             return load_app_settings_from_config_json(cls, decoder, config_json, log_level)
         raise ConfigError("ARCHIVER_CONFIG_JSON is required")
+
+    @property
+    def source(self) -> S3LocationSettings:
+        return self.routes[0].source
+
+    @property
+    def destination(self) -> S3LocationSettings:
+        return self.routes[0].destination
 
     @property
     def provider(self) -> S3Provider:

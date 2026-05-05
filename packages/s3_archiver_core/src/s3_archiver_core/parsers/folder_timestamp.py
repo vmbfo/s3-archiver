@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from s3_archiver_core.archive_timestamp import archive_root_for_key, select_folder_timestamp
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.results import SelectedObject, SkippedObject
-from s3_archiver_core.s3 import S3ListedObject
+
+if TYPE_CHECKING:
+    from s3_archiver_core.s3 import S3ListedObject
 
 
 class FolderTimestampParser:

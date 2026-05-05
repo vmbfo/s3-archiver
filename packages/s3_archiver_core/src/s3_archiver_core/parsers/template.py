@@ -5,8 +5,12 @@ This module is intentionally not registered in ``registry.py``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from s3_archiver_core.parsers.results import SkippedObject
-from s3_archiver_core.s3 import S3ListedObject
+
+if TYPE_CHECKING:
+    from s3_archiver_core.s3 import S3ListedObject
 
 
 class TemplateParser:

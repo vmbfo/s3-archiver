@@ -95,6 +95,8 @@ class SkippedObject:
     key: str
     reason: str
     route_name: str = "default"
+    parser_kind: ParserKind = "filename_timestamp"
+    copy_mode: CopyMode = "daily_tar_gz"
 
 
 @dataclass(frozen=True, slots=True)

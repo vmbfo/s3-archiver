@@ -47,8 +47,6 @@ def load_app_settings_from_config_json[T](
     decoder.finish()
     assert routes is not None and run_timeout is not None
     return settings_type(
-        source=routes[0].source,
-        destination=routes[0].destination,
         run_timeout=run_timeout,
         temp_dir=Path(decoder.env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),
         log_level=log_level,
@@ -112,14 +110,19 @@ def _load_parser_kind(
     decoder: EnvDecoder, route: Mapping[str, object], field: str
 ) -> ParserKind | None:
     value = _required_string(decoder, route, "parser", field)
-    valid = frozenset({kind.value for kind in ParserKind})
+    valid = frozenset({kind.value for kind in registered_parser_kinds()})
     if value is None:
         return None
-    normalized = value.lower()
-    if normalized not in valid:
-        decoder.fail(field, f"{field} must be one of {valid}, got {normalized!r}")
+    if value not in valid:
+        decoder.fail(field, f"{field} must be one of {valid}, got {value!r}")
         return None
-    return ParserKind(normalized)
+    return ParserKind(value)
+
+
+def registered_parser_kinds() -> frozenset[ParserKind]:
+    """Return parser kinds accepted by route configuration."""
+
+    return frozenset(ParserKind)
 
 
 def _load_copy_mode(
@@ -129,11 +132,10 @@ def _load_copy_mode(
     valid = frozenset({mode.value for mode in CopyMode})
     if value is None:
         return None
-    normalized = value.lower()
-    if normalized not in valid:
-        decoder.fail(field, f"{field} must be one of {valid}, got {normalized!r}")
+    if value not in valid:
+        decoder.fail(field, f"{field} must be one of {valid}, got {value!r}")
         return None
-    return CopyMode(normalized)
+    return CopyMode(value)
 
 
 def _load_location(decoder: EnvDecoder, item: object, field: str) -> S3LocationSettings | None:

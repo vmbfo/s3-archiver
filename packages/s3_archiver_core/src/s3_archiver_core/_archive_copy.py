@@ -190,8 +190,8 @@ def verify_phase(
             ):
                 failures.append(f"{group.destination_archive_key}: archive verification failed")
         for entry in (item for item in entries if item.route_name == route_name):
-            verified = verify_destination(
-                entry, route.destination.head_object(entry.destination_key)
+            verified = verify_direct_entry(
+                route, entry, route.destination.head_object(entry.destination_key)
             )
             if not verified.ok:
                 failures.append(f"{entry.destination_key}: {verified.detail}")

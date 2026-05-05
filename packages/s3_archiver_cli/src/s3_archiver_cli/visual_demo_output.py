@@ -12,6 +12,7 @@ from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
+    direct_entry_payloads,
     manifest_target_day,
     skipped_object_payloads,
 )
@@ -85,9 +86,11 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     emit("== Archive Candidates ==")
     emit(f"target day: {manifest_target_day(manifest)}")
     groups = archive_group_payloads(manifest)
+    direct_entries = direct_entry_payloads(manifest)
     skipped = skipped_object_payloads(manifest)
     _emit_archive_coverage(emit, groups)
     emit(f"archive group count: {len(groups)}")
+    emit(f"direct copy count: {len(direct_entries)}")
     emit(f"source object count: {len(manifest.entries)}")
     emit(f"skipped object count: {len(skipped)}")
     for group in groups:
@@ -98,6 +101,12 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
             + f"destination_archive_key={group['destination_archive_key']} "
             + f"source_object_count={group['source_object_count']} "
             + f"skipped_object_count={group['skipped_object_count']}"
+        )
+    for entry in direct_entries:
+        emit(
+            "DIRECT "
+            + f"destination_key={entry['destination_key']} "
+            + f"source_object_count={entry['source_object_count']}"
         )
     for item in skipped:
         emit(
@@ -112,6 +121,9 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
             "SOURCE "
             + f"key={entry.key} "
             + f"size={entry.size} "
+            + f"route={getattr(entry, 'route_name', None)} "
+            + f"parser={getattr(entry, 'parser_kind', None)} "
+            + f"copy_mode={getattr(entry, 'copy_mode', None)} "
             + f"last_modified={entry.last_modified.isoformat()} "
             + f"version_id={entry.version_id}"
         )
@@ -125,14 +137,22 @@ def emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
     emit(f"status: {payload['status']}")
     emit(f"target day: {payload.get('target_day')}")
     groups = cast(list[dict[str, JsonValue]], payload.get("archive_groups", []))
+    direct_entries = cast(list[dict[str, JsonValue]], payload.get("direct_entries", []))
     _emit_archive_coverage(emit, groups, days=_archive_days_from_payload(payload))
     emit(f"archive count: {payload.get('archive_count')}")
+    emit(f"direct copy count: {payload.get('direct_copy_count', len(direct_entries))}")
     for group in groups:
         emit(
             "GROUP  "
             + f"destination_archive_key={group['destination_archive_key']} "
             + f"source_object_count={group['source_object_count']} "
             + f"skipped_object_count={group['skipped_object_count']}"
+        )
+    for entry in direct_entries:
+        emit(
+            "DIRECT "
+            + f"destination_key={entry['destination_key']} "
+            + f"source_object_count={entry['source_object_count']}"
         )
     phases = cast(dict[str, dict[str, JsonValue]], payload["phases"])
     for phase_name in ("list", "copy", "verify"):

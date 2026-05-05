@@ -61,7 +61,7 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
 
 
 @pytest.mark.unit()
-def test_archive_result_payload_omits_cleanup_group_status(
+def test_archive_result_payload_reports_archive_group_status(
     base_env: dict[str, str],
 ) -> None:
     settings = AppSettings.from_env(base_env)

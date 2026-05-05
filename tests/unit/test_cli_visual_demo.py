@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -11,23 +10,13 @@ from pathlib import Path
 from typing import cast, override
 
 import pytest
-import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.visual_demo as demo_module
-import s3_archiver_cli.visual_demo_command as demo_command_module
-import typer
 from s3_archiver_core.archive import ArchiveRoute
 from s3_archiver_core.s3 import S3ListedObject
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
-from typer.testing import CliRunner
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
-
-RUNNER = CliRunner()
-
-
-def _configure_logging(_: AppSettings) -> Path:
-    return Path("/tmp/s3-archiver.log")
 
 
 def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
@@ -49,97 +38,6 @@ def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:
 class FakeReport:
     def as_dict(self) -> dict[str, demo_module.JsonValue]:
         return {"status": "ok", "checked_at": "2026-04-24T12:00:00+00:00"}
-
-
-@pytest.mark.unit()
-def test_demo_command_relays_visual_output_and_summary_json(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-
-    def run_command(
-        *,
-        run_payload_command: object,
-        archive_runner: object,
-        emit: Callable[[str], None],
-    ) -> None:
-        _ = run_payload_command, archive_runner
-        emit("== S3 Archiver Visual Demo ==")
-        payload: dict[str, demo_module.JsonValue] = {"status": "ok"}
-        emit(json.dumps(payload, sort_keys=True))
-
-    monkeypatch.setattr(cli_module, "configure_logging", _configure_logging)
-    monkeypatch.setattr(demo_command_module, "run", run_command)
-
-    result = RUNNER.invoke(cli_module.app, ["demo"])
-
-    assert result.exit_code == 0
-    assert "== S3 Archiver Visual Demo ==" in result.stdout
-    payload = cast(dict[str, object], json.loads(result.stdout.splitlines()[-1]))
-    assert payload["status"] == "ok"
-
-
-@pytest.mark.unit()
-def test_demo_command_exits_non_zero_when_summary_reports_error(
-    monkeypatch: pytest.MonkeyPatch,
-    base_env: dict[str, str],
-) -> None:
-    monkeypatch.setattr(os, "environ", base_env)
-    monkeypatch.setattr(cli_module, "configure_logging", _configure_logging)
-
-    def run_command(
-        *,
-        run_payload_command: object,
-        archive_runner: object,
-        emit: Callable[[str], None],
-    ) -> None:
-        _ = run_payload_command, archive_runner, emit
-        emit(json.dumps({"status": "error"}, sort_keys=True))
-        raise typer.Exit(code=1)
-
-    monkeypatch.setattr(demo_command_module, "run", run_command)
-
-    result = RUNNER.invoke(cli_module.app, ["demo"])
-
-    assert result.exit_code == 1
-
-
-@pytest.mark.unit()
-def test_visual_demo_command_run_allows_ok_summary() -> None:
-    captured: list[object] = []
-
-    def run_payload_command(
-        command: Callable[[AppSettings, Path], dict[str, demo_module.JsonValue]],
-    ) -> dict[str, demo_module.JsonValue]:
-        captured.append(command)
-        return {"status": "ok"}
-
-    demo_command_module.run(
-        run_payload_command=run_payload_command,
-        archive_runner=lambda _settings, _log_file: {"status": "ok"},
-        emit=lambda _line: None,
-    )
-
-    assert len(captured) == 1
-
-
-@pytest.mark.unit()
-def test_visual_demo_command_run_exits_for_error_summary() -> None:
-    def run_payload_command(
-        command: Callable[[AppSettings, Path], dict[str, demo_module.JsonValue]],
-    ) -> dict[str, demo_module.JsonValue]:
-        _ = command
-        return {"status": "error"}
-
-    with pytest.raises(typer.Exit) as exc_info:
-        demo_command_module.run(
-            run_payload_command=run_payload_command,
-            archive_runner=lambda _settings, _log_file: {"status": "ok"},
-            emit=lambda _line: None,
-        )
-
-    assert exc_info.value.exit_code == 1
 
 
 @pytest.mark.unit()
@@ -247,6 +145,63 @@ def test_run_visual_demo_uses_default_utc_clock(
     )
 
     assert summary["run_started_at_utc"] == "2024-04-20T00:00:00+00:00"
+
+
+@pytest.mark.unit()
+def test_run_visual_demo_reports_direct_entries(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    settings = _demo_settings(base_env, tmp_path)
+    source = FakeBucket(settings.source.bucket, (_listed("raw/live.txt", 1),))
+    destination = SnapshotBucket(settings.destination.bucket)
+
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
+        return _ok_archive_payload()
+
+    def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
+        return FakeReport()
+
+    def archive_routes(
+        _settings: AppSettings,
+        _build_client: Callable[[S3LocationSettings], object],
+    ) -> tuple[ArchiveRoute, ...]:
+        return (
+            ArchiveRoute(
+                "raw",
+                source,
+                destination,
+                parser_kind="direct",
+                copy_mode="direct",
+            ),
+        )
+
+    lines: list[str] = []
+    monkeypatch.setattr(demo_module, "run_health_check", fake_health_check)
+    monkeypatch.setattr(demo_module, "archive_routes_from_settings", archive_routes)
+
+    summary = demo_module.run_visual_demo(
+        settings,
+        settings.log_dir / "s3-archiver.log",
+        archive_runner=archive_runner,
+        emit=lines.append,
+        now=lambda: datetime(2024, 4, 20, tzinfo=UTC),
+    )
+
+    manifest = cast(dict[str, object], summary["archive_manifest"])
+    direct_entries = cast(list[dict[str, object]], manifest["direct_entries"])
+    entries = cast(list[dict[str, object]], manifest["entries"])
+
+    assert manifest["archive_count"] == 0
+    assert manifest["direct_copy_count"] == 1
+    assert manifest["destination_archive_keys"] == []
+    assert manifest["destination_keys"] == ["raw/live.txt"]
+    assert direct_entries[0]["destination_key"] == "raw/live.txt"
+    assert entries[0]["parser_kind"] == "direct"
+    assert entries[0]["copy_mode"] == "direct"
+    assert any("DIRECT destination_key=raw/live.txt" in line for line in lines)
+    assert any("parser=direct copy_mode=direct" in line for line in lines)
 
 
 class SnapshotBucket(FakeBucket):

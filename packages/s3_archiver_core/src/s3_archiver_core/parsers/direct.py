@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.results import SelectedObject
-from s3_archiver_core.s3 import S3ListedObject
+
+if TYPE_CHECKING:
+    from s3_archiver_core.s3 import S3ListedObject
 
 
 class DirectParser:

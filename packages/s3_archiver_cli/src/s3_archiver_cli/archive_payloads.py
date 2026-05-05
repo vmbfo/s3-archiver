@@ -46,6 +46,16 @@ def archive_group_payloads(manifest: object) -> list[dict[str, JsonValue]]:
     ]
 
 
+def direct_entry_payloads(manifest: object) -> list[dict[str, JsonValue]]:
+    """Return direct-copy destination payloads for flat manifest entries."""
+
+    return [
+        direct_entry_payload(entry)
+        for entry in object_list(attr(manifest, "entries"))
+        if string_or_none(attr(entry, "copy_mode")) == "direct"
+    ]
+
+
 def archive_group_payload(
     group: object,
     manifest: object,
@@ -56,7 +66,15 @@ def archive_group_payload(
     entries = object_list(attr(group, "entries", "source_entries", "objects"))
     skipped = object_list(attr(group, "skipped_objects", "skipped_entries"))
     target_day = attr(group, "target_day", "target_date")
+    route_name = string_or_none(attr(group, "route_name")) or entry_value(entries, "route_name")
+    parser_kind = string_or_none(attr(group, "parser_kind")) or entry_value(entries, "parser_kind")
     payload: dict[str, JsonValue] = {
+        "route_name": route_name,
+        "parser_kind": parser_kind,
+        "copy_mode": string_or_none(attr(group, "copy_mode")) or entry_value(entries, "copy_mode"),
+        "source_bucket": entry_value(entries, "source_bucket"),
+        "destination_bucket": string_or_none(attr(group, "destination_bucket"))
+        or entry_value(entries, "destination_bucket"),
         "target_day": date_text(target_day),
         "archive_root": string_or_none(attr(group, "archive_root", "root")),
         "destination_archive_key": group_destination_archive_key(group, entries),
@@ -78,6 +96,11 @@ def archive_group_payload_from_entries(
 
     _ = manifest
     payload: dict[str, JsonValue] = {
+        "route_name": entry_value(entries, "route_name"),
+        "parser_kind": entry_value(entries, "parser_kind"),
+        "copy_mode": entry_value(entries, "copy_mode"),
+        "source_bucket": entry_value(entries, "source_bucket"),
+        "destination_bucket": entry_value(entries, "destination_bucket"),
         "target_day": entry_target_day(entries),
         "archive_root": string_or_none(attr(entries[0], "archive_root")) if entries else None,
         "destination_archive_key": destination_key,
@@ -86,6 +109,24 @@ def archive_group_payload_from_entries(
         "source_objects": json_list([entry_reference_payload(entry) for entry in entries]),
     }
     return payload
+
+
+def direct_entry_payload(entry: object) -> dict[str, JsonValue]:
+    """Build a destination payload for one direct-copy manifest entry."""
+
+    return {
+        "route_name": string_or_none(attr(entry, "route_name")),
+        "parser_kind": string_or_none(attr(entry, "parser_kind")),
+        "copy_mode": string_or_none(attr(entry, "copy_mode")),
+        "source_bucket": string_or_none(attr(entry, "source_bucket")),
+        "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
+        "target_day": date_text(attr(entry, "target_day")) if attr(entry, "target_day") else "",
+        "archive_root": string_or_none(attr(entry, "archive_root")),
+        "destination_key": string_or_none(attr(entry, "destination_key")),
+        "source_object_count": 1,
+        "skipped_object_count": 0,
+        "source_objects": json_list([entry_reference_payload(entry)]),
+    }
 
 
 def skipped_object_payloads(manifest: object) -> list[dict[str, JsonValue]]:
@@ -103,6 +144,9 @@ def skipped_object_payload(item: object) -> dict[str, JsonValue]:
     return {
         "key": string_or_none(attr(item, "key", "source_key")),
         "reason": string_or_none(attr(item, "reason", "skip_reason")),
+        "route_name": string_or_none(attr(item, "route_name")),
+        "parser_kind": string_or_none(attr(item, "parser_kind")),
+        "copy_mode": string_or_none(attr(item, "copy_mode")),
         "target_day": string_or_none(attr(item, "target_day", "target_date")),
         "archive_root": string_or_none(attr(item, "archive_root", "root")),
     }
@@ -125,7 +169,15 @@ def entry_reference_payload(entry: object) -> dict[str, JsonValue]:
         "key": string_or_none(attr(entry, "key", "source_key")),
         "version_id": string_or_none(attr(entry, "version_id")),
         "size": int_or_none(attr(entry, "size")),
-        "destination_archive_key": entry_destination_archive_key(entry),
+        "route_name": string_or_none(attr(entry, "route_name")),
+        "parser_kind": string_or_none(attr(entry, "parser_kind")),
+        "copy_mode": string_or_none(attr(entry, "copy_mode")),
+        "source_bucket": string_or_none(attr(entry, "source_bucket")),
+        "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
+        "destination_key": string_or_none(attr(entry, "destination_key")),
+        "destination_archive_key": entry_archive_key_payload(entry),
+        "source_identity": string_or_none(attr(entry, "source_identity")),
+        "destination_identity": string_or_none(attr(entry, "destination_identity")),
     }
 
 
@@ -133,6 +185,18 @@ def destination_archive_keys(groups: list[dict[str, JsonValue]]) -> list[JsonVal
     """Return destination archive keys from group payloads."""
 
     return [group["destination_archive_key"] for group in groups]
+
+
+def destination_keys(
+    groups: list[dict[str, JsonValue]],
+    direct_entries: list[dict[str, JsonValue]],
+) -> list[JsonValue]:
+    """Return all destination keys, including direct-copy objects."""
+
+    return [
+        *destination_archive_keys(groups),
+        *(entry["destination_key"] for entry in direct_entries),
+    ]
 
 
 def group_destination_archive_key(group: object, entries: list[object]) -> str:
@@ -154,6 +218,24 @@ def entry_destination_archive_key(entry: object) -> str:
 
     value = attr(entry, "destination_archive_key", "archive_key")
     return str(value if value is not None else attr(entry, "key", "source_key") or "")
+
+
+def entry_archive_key_payload(entry: object) -> str | None:
+    """Return archive-key payload data only for archive copy modes."""
+
+    if string_or_none(attr(entry, "copy_mode")) == "direct":
+        return None
+    return entry_destination_archive_key(entry)
+
+
+def entry_value(entries: list[object], name: str) -> str | None:
+    """Return a string payload value from the first entry that carries it."""
+
+    for entry in entries:
+        value = string_or_none(attr(entry, name))
+        if value is not None:
+            return value
+    return None
 
 
 def json_list(items: list[dict[str, JsonValue]]) -> list[JsonValue]:

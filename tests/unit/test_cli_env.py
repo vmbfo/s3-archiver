@@ -124,6 +124,16 @@ def test_parse_env_file_rejects_invalid_assignment(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_checked_in_env_example_is_valid_route_config() -> None:
+    env = PARSE_ENV_FILE(Path(".env.example"))
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.routes[0].source.iam_user_ocid == "ocid1.user.oc1..replace-me"
+    assert settings.routes[0].destination.iam_user_ocid == "ocid1.user.oc1..replace-me"
+
+
+@pytest.mark.unit()
 def test_load_runtime_env_returns_process_env_when_env_file_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

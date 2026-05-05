@@ -27,8 +27,25 @@ class FailingListBucket(FakeBucket):
         raise RuntimeError("list failed")
 
 
+class CorruptAfterCopyVerificationBucket(FakeBucket):
+    _destination_hash_count: int
+
+    def __init__(self, bucket: str) -> None:
+        super().__init__(bucket)
+        self._destination_hash_count = 0
+
+    @override
+    def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
+        digest = super().content_sha256(key, version_id)
+        if key == "data/raw.txt" and version_id is None:
+            self._destination_hash_count += 1
+            if self._destination_hash_count == 1:
+                self._destination_payloads[key] = b"changed after copy verification"
+        return digest
+
+
 @pytest.mark.unit()
-def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> None:
+def test_run_archive_direct_copy_mode_copies_and_verifies() -> None:
     listed = _listed("data/raw.txt", 1, "v1")
     source = FakeBucket("source", (listed,))
     destination = FakeBucket("archive")
@@ -53,6 +70,33 @@ def test_run_archive_direct_copy_mode_copies_and_verifies_without_cleanup() -> N
     assert result.ok is True
     assert destination.copied == ["data/raw.txt"]
     assert destination.head_object("mirror/data/raw.txt") is not None
+    assert destination.head_object("data/raw.txt") is None
+
+
+@pytest.mark.unit()
+def test_run_archive_direct_copy_mode_rechecks_content_in_verify_phase() -> None:
+    listed = _listed("data/raw.txt", 1, "v1")
+    source = FakeBucket("source", (listed,))
+    destination = CorruptAfterCopyVerificationBucket("archive")
+
+    result = run_archive(
+        source,
+        destination,
+        ArchiveOptions(
+            routes=(
+                ArchiveRouteOptions(
+                    "default",
+                    parser_kind="direct",
+                    copy_mode="direct",
+                ),
+            ),
+        ),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.copy.ok is True
+    assert result.verify.failures == ("data/raw.txt: content mismatch",)
 
 
 @pytest.mark.unit()
