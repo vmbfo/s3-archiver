@@ -44,7 +44,7 @@ docker compose --profile test down -v
 Running the app container without an explicit command prints CLI help and exits `0`.
 Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
-The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+The container runs rootless and writes JSON log files to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
@@ -69,7 +69,7 @@ Parser behavior:
 
 - `filename_timestamp`: prefers reliable UTC timestamps in the source key basename. Path-only timestamps can be selected as a fallback only when the basename has no timestamp and no malformed basename timestamp. Objects without a usable timestamp are reported as skipped.
 - `folder_timestamp`: selects objects whose parent folders contain a reliable UTC timestamp. Objects without a usable folder timestamp are reported as skipped.
-- `direct`: selects objects using S3 `LastModified` as the parser timestamp and uses the parent prefix as the archive root. The listed object, hydrated S3 headers, metadata, tags, size, version id, and checksums are retained for manifest, copy, and verification decisions.
+- `direct`: selects objects using S3 `LastModified` as the parser timestamp and uses the parent prefix as the archive root. The listed object, hydrated S3 headers, metadata, tags, size, version id, and checksums are available for manifest, copy, and verification decisions.
 
 Copy modes:
 
@@ -158,7 +158,7 @@ Run the compose-backed visual demo scripts:
 ```
 
 These scripts seed 365 eligible data days across 12 archive roots with 2 source files per
-root/day, plus retained and invalid-key examples. The demo archives 4,380 daily
+root/day, plus newer unarchived and invalid-key examples. The demo archives 4,380 daily
 destination objects and leaves the source bucket unchanged.
 
 Run the production-style local wrapper:
@@ -195,8 +195,8 @@ Run all suites with the canonical coverage-gated command:
 
 - Console logs are JSON lines filtered by `LOG_LEVEL`.
 - The same records are written to a timed rotating file handler.
-- Retention is 30 daily files.
-- Inspect the retained logs with Docker:
+- The file logger keeps 30 daily files.
+- Inspect the file logs with Docker:
 
 ```bash
 docker run --rm -v s3-archiver_app_logs:/logs alpine:3.22 ls -lah /logs
@@ -226,7 +226,7 @@ Built source distributions and wheels also carry explicit exclusions for test an
 
 ## Local Scheduling
 
-Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick. Each invocation archives all eligible retained data days, so missed scheduler ticks do not need catch-up replay.
+Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick. Each invocation archives all eligible data days, so missed scheduler ticks do not need catch-up replay.
 
 ```bash
 cd /opt/s3-archiver

@@ -31,7 +31,7 @@ def run_visual_demo(
     retryable_returncodes: Collection[int],
     retries: int,
     retry_delay_seconds: float,
-    retention_days: int,
+    archive_start_age_days: int,
     seeded_count: int,
 ) -> subprocess.CompletedProcess[str]:
     _print_demo_header("Preparing the runtime image")
@@ -66,7 +66,7 @@ def run_visual_demo(
         result = _run_visual_demo_once(
             env,
             repo_root=repo_root,
-            retention_days=retention_days,
+            archive_start_age_days=archive_start_age_days,
             cli_command=cli_command,
         )
         if result.returncode == 0:
@@ -96,7 +96,7 @@ def _run_visual_demo_once(
     env: dict[str, str],
     *,
     repo_root: Path,
-    retention_days: int,
+    archive_start_age_days: int,
     cli_command: str,
 ) -> subprocess.CompletedProcess[str]:
     command = ["docker", "compose", "--profile", "test", "run", "--rm", "app", cli_command]
@@ -112,7 +112,7 @@ def _run_visual_demo_once(
     output_lines: list[str] = []
     if process.stdout is None:
         raise AssertionError("visual demo process stdout was not captured")
-    printer = _SampledDemoPrinter(retention_days)
+    printer = _SampledDemoPrinter(archive_start_age_days)
     with process.stdout:
         for raw_line in process.stdout:
             output_lines.append(raw_line)
@@ -124,8 +124,8 @@ def _run_visual_demo_once(
 
 
 class _SampledDemoPrinter:
-    def __init__(self, retention_days: int) -> None:
-        self.retention_days: int = retention_days
+    def __init__(self, archive_start_age_days: int) -> None:
+        self.archive_start_age_days: int = archive_start_age_days
         self.object_count: int = 0
         self.tail: list[str] = []
 
@@ -179,7 +179,7 @@ def _print_visual_demo_line(line: str) -> None:
             print("  Applying configured route selection and grouping by each data day.")
             print(
                 "  The seed includes flat filenames, YYYY/MM/DD folders, compact dates, "
-                + "offsets, Z suffixes, and newer retained objects."
+                + "offsets, Z suffixes, and newer unarchived objects."
             )
         case "Running archive workflow against the configured buckets...":
             _print_step("4/4", "Archive execution")

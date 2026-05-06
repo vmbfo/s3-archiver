@@ -16,15 +16,15 @@ from tests.e2e.visual_demo_data import (
     DEMO_ARCHIVE_COUNT,
     DEMO_ARCHIVE_DAY_COUNT,
     DEMO_ARCHIVE_ROOT_COUNT,
+    DEMO_ARCHIVE_START_AGE_DAYS,
     DEMO_FILES_PER_PATH_DAY,
-    DEMO_RETENTION_DAYS,
     DEMO_SEEDED_OBJECT_COUNT,
     archive_demo_days,
     archive_member_name,
     expected_archive_members,
     expected_pax_headers,
     invalid_demo_keys,
-    retained_demo_keys,
+    newer_demo_keys,
     sampled_archive_members,
     seed_daily_demo_objects,
     target_day_demo_cases,
@@ -71,14 +71,14 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     destination_client = demo_client(tmp_path, bucket_pair, "destination")
     source_prefix = "compose-demo"
     seed_now = datetime.now(tz=UTC)
-    target_day = (seed_now.astimezone(UTC) - timedelta(days=DEMO_RETENTION_DAYS)).date()
+    target_day = (seed_now.astimezone(UTC) - timedelta(days=DEMO_ARCHIVE_START_AGE_DAYS)).date()
     archive_days = archive_demo_days(seed_now)
     archived_keys = {
         key for day in archive_days for _, key in target_day_demo_cases(source_prefix, day)
     }
-    retained_keys = set(retained_demo_keys(source_prefix, target_day))
+    newer_keys = set(newer_demo_keys(source_prefix, target_day))
     invalid_keys = set(invalid_demo_keys(source_prefix, target_day))
-    source_keys = archived_keys | retained_keys | invalid_keys
+    source_keys = archived_keys | newer_keys | invalid_keys
     archive_members = expected_archive_members(source_prefix, archive_days)
     archive_keys = set(archive_members)
     seed_daily_demo_objects(
@@ -104,7 +104,7 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert "source objects per archive: min=2 max=2" in result.stdout
     assert all(
         f"SKIP   key={key} reason=parser timestamp after run start" in result.stdout
-        for key in retained_keys
+        for key in newer_keys
     )
     assert all(
         f"SKIP   key={key} reason=no reliable key timestamp" in result.stdout
@@ -117,7 +117,7 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert archive_manifest["archive_days"] == [day.isoformat() for day in sorted(archive_days)]
     assert archive_manifest["destination_archive_keys"] == sorted(archive_keys)
     assert archive_manifest["archive_count"] == len(archive_keys)
-    assert archive_manifest["skipped_object_count"] == len(retained_keys | invalid_keys)
+    assert archive_manifest["skipped_object_count"] == len(newer_keys | invalid_keys)
     assert "cleanup_preview" not in payload
     assert all("cleanup_status" not in group for group in archive_groups(archive_result))
     assert group_source_counts(archive_result) == {DEMO_FILES_PER_PATH_DAY}
@@ -189,7 +189,7 @@ def _run_visual_demo(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         retryable_returncodes=COMPOSE_RETRYABLE_RETURNCODES,
         retries=VISUAL_DEMO_RETRIES,
         retry_delay_seconds=VISUAL_DEMO_RETRY_DELAY_SECONDS,
-        retention_days=DEMO_RETENTION_DAYS,
+        archive_start_age_days=DEMO_ARCHIVE_START_AGE_DAYS,
         seeded_count=DEMO_SEEDED_OBJECT_COUNT,
     )
 

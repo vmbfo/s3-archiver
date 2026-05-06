@@ -11,7 +11,7 @@ from s3_archiver_core.s3 import S3Client
 
 from tests.integration.localstack_object_helpers import listed_keys, put_test_object
 
-DEMO_RETENTION_DAYS = 60
+DEMO_ARCHIVE_START_AGE_DAYS = 60
 DEMO_ARCHIVE_DAY_COUNT = 365
 DEMO_ARCHIVE_ROOT_COUNT = 12
 DEMO_FILES_PER_PATH_DAY = 2
@@ -32,7 +32,7 @@ def seed_daily_demo_objects(
     target_day = archive_demo_days(seeded_now)[0]
     metadata_by_key: dict[str, dict[str, str]] = {}
     keys_by_age = _archive_demo_keys_by_age(prefix, seeded_now) | {
-        DEMO_RETENTION_DAYS - 1: retained_demo_keys(prefix, target_day),
+        DEMO_ARCHIVE_START_AGE_DAYS - 1: newer_demo_keys(prefix, target_day),
         0: invalid_demo_keys(prefix, target_day),
     }
     for age_days, keys in keys_by_age.items():
@@ -53,7 +53,7 @@ def seed_daily_demo_objects(
 
 
 def archive_demo_days(seed_now: datetime) -> tuple[date, ...]:
-    target_day = seed_now.astimezone(UTC).date() - timedelta(days=DEMO_RETENTION_DAYS)
+    target_day = seed_now.astimezone(UTC).date() - timedelta(days=DEMO_ARCHIVE_START_AGE_DAYS)
     return tuple(target_day - timedelta(days=offset) for offset in range(DEMO_ARCHIVE_DAY_COUNT))
 
 
@@ -99,7 +99,7 @@ def target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, str
     )
 
 
-def retained_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
+def newer_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
     next_day = target_day + timedelta(days=61)
     later_day = target_day + timedelta(days=62)
     return (
@@ -159,9 +159,9 @@ def _verify_seeded_keys(
 
 
 def _archive_demo_keys_by_age(prefix: str, seed_now: datetime) -> dict[int, tuple[str, ...]]:
-    target_day = seed_now.astimezone(UTC).date() - timedelta(days=DEMO_RETENTION_DAYS)
+    target_day = seed_now.astimezone(UTC).date() - timedelta(days=DEMO_ARCHIVE_START_AGE_DAYS)
     return {
-        DEMO_RETENTION_DAYS + offset: tuple(
+        DEMO_ARCHIVE_START_AGE_DAYS + offset: tuple(
             key for _, key in target_day_demo_cases(prefix, target_day - timedelta(days=offset))
         )
         for offset in range(DEMO_ARCHIVE_DAY_COUNT)
