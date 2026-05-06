@@ -65,7 +65,7 @@ def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRoute, ...]) -
     seen: dict[object, list[tuple[str, str]]] = {}
     for route in routes:
         identity = route.source_identity or storage_identity(route.source)
-        path = normalize_prefix(route.source_path)
+        path = route.source_path
         for other_name, other_path in seen.setdefault(identity, []):
             if _prefixes_overlap(path, other_path):
                 message = (
@@ -118,4 +118,13 @@ def _reject_duplicate_identities(keys: Iterable[object], message: str) -> None:
 
 
 def _prefixes_overlap(left: str, right: str) -> bool:
-    return left.startswith(right) or right.startswith(left)
+    left_prefix = _route_path_prefix(left)
+    right_prefix = _route_path_prefix(right)
+    return left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix)
+
+
+def _route_path_prefix(path: str) -> str:
+    normalized = normalize_prefix(path).rstrip("/")
+    if normalized == "":
+        return ""
+    return f"{normalized}/"

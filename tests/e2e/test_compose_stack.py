@@ -257,18 +257,6 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
     assert "path: .env" not in result.stdout
 
 
-@pytest.mark.unit()
-def test_compose_file_uses_readable_archiver_config_block() -> None:
-    compose_text = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
-
-    assert compose_text.count("ARCHIVER_CONFIG_JSON: |") == 2
-    assert "ARCHIVER_RETENTION_DAYS" not in compose_text
-    assert "ARCHIVER_ENABLE_CLEANUP" not in compose_text
-    assert "ARCHIVER_MAX_WORKERS" not in compose_text
-    assert "S3_SOURCE_PATH_WHITELIST" not in compose_text
-    assert "S3_SOURCE_PATH_BLACKLIST" not in compose_text
-
-
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:

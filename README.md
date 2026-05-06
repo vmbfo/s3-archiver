@@ -76,6 +76,43 @@ Copy modes:
 - `daily_tar_gz`: writes one deterministic `.tar.gz` archive per route, archive root, and data day.
 - `direct`: copies each selected source object directly to the destination path.
 
+Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
+
+Route examples:
+
+```json
+[
+  {
+    "name": "daily-by-filename",
+    "parser": "filename_timestamp",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "daily-by-last-modified",
+    "parser": "direct",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "daily-by-folder",
+    "parser": "folder_timestamp",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "direct-copy",
+    "parser": "filename_timestamp",
+    "copy_mode": "direct",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "copy/direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  }
+]
+```
+
 Removed environment variables are rejected when set. Migrate `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP`, `ARCHIVER_MAX_WORKERS`, `S3_SOURCE_PATH_WHITELIST_ENABLED`, `S3_SOURCE_PATH_WHITELIST`, `S3_SOURCE_PATH_BLACKLIST_ENABLED`, and `S3_SOURCE_PATH_BLACKLIST` into explicit route JSON. Use route `path` values for source selection and destination placement, choose `parser` for object selection behavior, and choose `copy_mode` for archive-vs-direct output behavior.
 
 ## Local Development

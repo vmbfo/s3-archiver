@@ -174,15 +174,15 @@ def test_route_manifest_does_not_convert_invalid_parser_kind_to_skip() -> None:
 
 
 @pytest.mark.unit()
-def test_route_manifest_rejects_overlapping_source_paths() -> None:
-    source = FakeBucket("source")
-    destination = FakeBucket("archive")
+@pytest.mark.parametrize(("left_path", "right_path"), (("data/", "data/fae/"), ("", "data/")))
+def test_route_manifest_rejects_overlapping_source_paths(left_path: str, right_path: str) -> None:
+    source, destination = FakeBucket("source"), FakeBucket("archive")
 
     with pytest.raises(ValueError, match="overlapping source paths"):
         _ = build_route_archive_manifest(
             (
-                ArchiveManifestRoute("left", source, destination, source_path="data/"),
-                ArchiveManifestRoute("right", source, destination, source_path="data/fae/"),
+                ArchiveManifestRoute("left", source, destination, source_path=left_path),
+                ArchiveManifestRoute("right", source, destination, source_path=right_path),
             ),
             run_started_at_utc=STARTED,
         )
@@ -197,6 +197,27 @@ def test_route_manifest_allows_non_overlapping_source_paths_on_same_storage() ->
         (
             ArchiveManifestRoute("left", source, destination, source_path="left/"),
             ArchiveManifestRoute("right", source, destination, source_path="right/"),
+        ),
+        run_started_at_utc=STARTED,
+    )
+
+    assert manifest.entries == ()
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("left_path", "right_path"),
+    (("data", "database"), ("data/", "database/")),
+)
+def test_route_manifest_allows_sibling_source_paths_on_same_storage(
+    left_path: str, right_path: str
+) -> None:
+    source, destination = FakeBucket("source"), FakeBucket("archive")
+
+    manifest = build_route_archive_manifest(
+        (
+            ArchiveManifestRoute("data", source, destination, source_path=left_path),
+            ArchiveManifestRoute("database", source, destination, source_path=right_path),
         ),
         run_started_at_utc=STARTED,
     )
