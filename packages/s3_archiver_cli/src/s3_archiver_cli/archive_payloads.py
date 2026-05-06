@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from datetime import date, datetime
 from typing import cast
 
 from s3_archiver_core.archive import ArchivePhaseResult
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+from s3_archiver_cli.archive_payload_utils import (
+    JsonScalar as JsonScalar,
+)
+from s3_archiver_cli.archive_payload_utils import (
+    JsonValue,
+    attr,
+    count_from_attr,
+    date_or_none,
+    date_text,
+    datetime_text,
+    int_or_none,
+    json_list,
+    object_list,
+    string_or_none,
+)
 
 
 def phase_status(result: ArchivePhaseResult) -> str:
@@ -72,9 +83,14 @@ def archive_group_payload(
         "route_name": route_name,
         "parser_kind": parser_kind,
         "copy_mode": string_or_none(attr(group, "copy_mode")) or entry_value(entries, "copy_mode"),
-        "source_bucket": entry_value(entries, "source_bucket"),
+        "source_bucket": string_or_none(attr(group, "source_bucket"))
+        or entry_value(entries, "source_bucket"),
+        "source_identity": string_or_none(attr(group, "source_identity"))
+        or entry_value(entries, "source_identity"),
         "destination_bucket": string_or_none(attr(group, "destination_bucket"))
         or entry_value(entries, "destination_bucket"),
+        "destination_identity": string_or_none(attr(group, "destination_identity"))
+        or entry_value(entries, "destination_identity"),
         "target_day": date_text(target_day),
         "archive_root": string_or_none(attr(group, "archive_root", "root")),
         "destination_archive_key": group_destination_archive_key(group, entries),
@@ -100,7 +116,9 @@ def archive_group_payload_from_entries(
         "parser_kind": entry_value(entries, "parser_kind"),
         "copy_mode": entry_value(entries, "copy_mode"),
         "source_bucket": entry_value(entries, "source_bucket"),
+        "source_identity": entry_value(entries, "source_identity"),
         "destination_bucket": entry_value(entries, "destination_bucket"),
+        "destination_identity": entry_value(entries, "destination_identity"),
         "target_day": entry_target_day(entries),
         "archive_root": string_or_none(attr(entries[0], "archive_root")) if entries else None,
         "destination_archive_key": destination_key,
@@ -119,7 +137,9 @@ def direct_entry_payload(entry: object) -> dict[str, JsonValue]:
         "parser_kind": string_or_none(attr(entry, "parser_kind")),
         "copy_mode": string_or_none(attr(entry, "copy_mode")),
         "source_bucket": string_or_none(attr(entry, "source_bucket")),
+        "source_identity": string_or_none(attr(entry, "source_identity")),
         "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
+        "destination_identity": string_or_none(attr(entry, "destination_identity")),
         "target_day": date_text(attr(entry, "target_day")) if attr(entry, "target_day") else "",
         "archive_root": string_or_none(attr(entry, "archive_root")),
         "destination_key": string_or_none(attr(entry, "destination_key")),
@@ -147,7 +167,16 @@ def skipped_object_payload(item: object) -> dict[str, JsonValue]:
         "route_name": string_or_none(attr(item, "route_name")),
         "parser_kind": string_or_none(attr(item, "parser_kind")),
         "copy_mode": string_or_none(attr(item, "copy_mode")),
-        "target_day": string_or_none(attr(item, "target_day", "target_date")),
+        "size": int_or_none(attr(item, "size")),
+        "last_modified": datetime_text(attr(item, "last_modified")),
+        "version_id": string_or_none(attr(item, "version_id")),
+        "selected_timestamp": datetime_text(attr(item, "selected_timestamp")),
+        "timestamp_source": string_or_none(attr(item, "timestamp_source")),
+        "source_bucket": string_or_none(attr(item, "source_bucket")),
+        "destination_bucket": string_or_none(attr(item, "destination_bucket")),
+        "source_identity": string_or_none(attr(item, "source_identity")),
+        "destination_identity": string_or_none(attr(item, "destination_identity")),
+        "target_day": date_or_none(attr(item, "target_day", "target_date")),
         "archive_root": string_or_none(attr(item, "archive_root", "root")),
     }
 
@@ -236,57 +265,3 @@ def entry_value(entries: list[object], name: str) -> str | None:
         if value is not None:
             return value
     return None
-
-
-def json_list(items: list[dict[str, JsonValue]]) -> list[JsonValue]:
-    """Cast dictionaries into JSON-value lists for strict type checking."""
-
-    return [cast(JsonValue, item) for item in items]
-
-
-def attr(source: object, *names: str) -> object | None:
-    """Read the first available attribute name from an object."""
-
-    for name in names:
-        if hasattr(source, name):
-            return cast(object, getattr(source, name))
-    return None
-
-
-def object_list(value: object | None) -> list[object]:
-    """Return iterable object values as a list, excluding strings."""
-
-    if value is None or isinstance(value, str):
-        return []
-    if isinstance(value, Iterable):
-        return list(value)
-    return []
-
-
-def count_from_attr(source: object, name: str, fallback_items: list[object]) -> int:
-    """Return an integer count attribute or the fallback item count."""
-
-    value = attr(source, name)
-    return value if isinstance(value, int) else len(fallback_items)
-
-
-def date_text(value: object) -> str:
-    """Render dates and datetimes as ISO date strings."""
-
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    return str(value)
-
-
-def string_or_none(value: object) -> str | None:
-    """Return a string value unless the input is None."""
-
-    return None if value is None else str(value)
-
-
-def int_or_none(value: object) -> int | None:
-    """Return an integer value unless the input is not an integer."""
-
-    return value if isinstance(value, int) else None

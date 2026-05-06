@@ -91,6 +91,68 @@ def test_archive_result_payload_reports_daily_archive_groups(
 
 
 @pytest.mark.unit()
+def test_archive_result_payload_uses_group_identity_fields(
+    base_env: dict[str, str],
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    entry = SimpleNamespace(
+        key="data/fae/2026/04/13/07/2026-04-13T07-00-00.xml",
+        version_id="v1",
+        size=123,
+        destination_archive_key="data/fae/2026-04-13.tar.gz",
+    )
+    group = SimpleNamespace(
+        route_name="explicit-route",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
+        source_identity="oci|https://source.example.test|eu-frankfurt-1|ns|explicit-source",
+        source_bucket="explicit-source",
+        destination_identity="oci|https://destination.example.test|eu-frankfurt-1|ns|explicit-dest",
+        destination_bucket="explicit-dest",
+        target_day=date(2026, 4, 13),
+        archive_root="data/fae",
+        destination_archive_key="data/fae/2026-04-13.tar.gz",
+        entries=(entry,),
+        skipped_objects=(),
+    )
+    manifest = SimpleNamespace(
+        run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
+        target_day=date(2026, 4, 13),
+        entries=(entry,),
+        archive_groups=(group,),
+        skipped_objects=(),
+    )
+    result = cast(
+        ArchiveRunResult,
+        cast(
+            object,
+            SimpleNamespace(
+                run_id="run-id",
+                manifest=manifest,
+                list=ArchivePhaseResult("list"),
+                copy=ArchivePhaseResult("copy"),
+                verify=ArchivePhaseResult("verify"),
+            ),
+        ),
+    )
+
+    payload = error_logging.archive_result_payload("ok", result, settings, Path("/tmp/log"))
+
+    groups = cast(list[dict[str, object]], payload["archive_groups"])
+    assert groups[0]["route_name"] == "explicit-route"
+    assert groups[0]["parser_kind"] == "filename_timestamp"
+    assert groups[0]["copy_mode"] == "daily_tar_gz"
+    assert groups[0]["source_identity"] == (
+        "oci|https://source.example.test|eu-frankfurt-1|ns|explicit-source"
+    )
+    assert groups[0]["source_bucket"] == "explicit-source"
+    assert groups[0]["destination_identity"] == (
+        "oci|https://destination.example.test|eu-frankfurt-1|ns|explicit-dest"
+    )
+    assert groups[0]["destination_bucket"] == "explicit-dest"
+
+
+@pytest.mark.unit()
 def test_archive_result_payload_reports_direct_entries_as_destinations(
     base_env: dict[str, str],
 ) -> None:

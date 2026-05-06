@@ -2,71 +2,22 @@
 
 from __future__ import annotations
 
-import json
-from copy import deepcopy
 from pathlib import Path
 from typing import cast
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
 from mypy_boto3_s3.client import S3Client
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
-
-class SuccessfulClient:
-    """Minimal client double for successful requests."""
-
-    called_bucket: str | None = None
-    _versioning_status: str | None
-
-    def __init__(self, versioning_status: str | None = "Enabled") -> None:
-        self._versioning_status = versioning_status
-
-    def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
-        self.called_bucket = Bucket
-
-    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
-        self.called_bucket = Bucket
-        if self._versioning_status is None:
-            return {}
-        return {"Status": self._versioning_status}
-
-
-class AuthFailingClient:
-    """Minimal client double for authentication failures."""
-
-    def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
-        _ = Bucket
-        raise ClientError({"Error": {"Code": "403", "Message": "denied"}}, "HeadBucket")
-
-    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
-        _ = Bucket
-        return {"Status": "Enabled"}
-
-
-class ConnectivityFailingClient:
-    """Minimal client double for connectivity failures."""
-
-    def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
-        _ = Bucket
-        raise EndpointConnectionError(endpoint_url="http://localstack:4566")
-
-    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
-        _ = Bucket
-        return {"Status": "Enabled"}
-
-
-class VersioningFailingClient:
-    """Minimal client double for source versioning failures."""
-
-    def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
-        _ = Bucket
-
-    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
-        _ = Bucket
-        raise ClientError({"Error": {"Code": "403", "Message": "denied"}}, "GetBucketVersioning")
+from tests.unit.health_helpers import (
+    AuthFailingClient,
+    ConnectivityFailingClient,
+    SuccessfulClient,
+    VersioningFailingClient,
+    multi_route_env,
+)
 
 
 @pytest.mark.unit()
@@ -128,7 +79,7 @@ def test_run_health_check_reports_non_enabled_source_versioning_states(
 def test_run_health_check_validates_all_configured_routes(
     monkeypatch: pytest.MonkeyPatch, base_env: dict[str, str]
 ) -> None:
-    env = _multi_route_env(base_env)
+    env = multi_route_env(base_env)
     settings = AppSettings.from_env(env)
     clients = [
         SuccessfulClient(),
@@ -148,9 +99,48 @@ def test_run_health_check_validates_all_configured_routes(
     )
 
     report = run_health_check(settings, Path(env["LOG_DIR"]) / "s3-archiver.log")
+    payload = report.as_dict()
 
     assert report.source_versioning == "Enabled"
     assert report.route_count == 2
+    assert payload["source_bucket"] == "archive-bucket"
+    assert payload["destination_bucket"] == "destination-bucket"
+    assert payload["source_versioning"] == "Enabled"
+    assert payload["route_count"] == "2"
+    assert payload["routes"] == [
+        {
+            "name": "default",
+            "source_provider": "oci",
+            "source_bucket": "archive-bucket",
+            "source_endpoint_url": (
+                "https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
+            ),
+            "source_path": "",
+            "destination_provider": "localstack",
+            "destination_bucket": "destination-bucket",
+            "destination_endpoint_url": "http://localstack:4566",
+            "destination_path": "",
+            "parser": "filename_timestamp",
+            "copy_mode": "daily_tar_gz",
+            "source_versioning": "Enabled",
+        },
+        {
+            "name": "secondary",
+            "source_provider": "oci",
+            "source_bucket": "second-source-bucket",
+            "source_endpoint_url": (
+                "https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
+            ),
+            "source_path": "raw/",
+            "destination_provider": "localstack",
+            "destination_bucket": "second-destination-bucket",
+            "destination_endpoint_url": "http://localstack:4566",
+            "destination_path": "mirror/",
+            "parser": "direct",
+            "copy_mode": "direct",
+            "source_versioning": "Suspended",
+        },
+    ]
     assert built_buckets == [
         "archive-bucket",
         "destination-bucket",
@@ -164,7 +154,7 @@ def test_run_health_check_validates_all_configured_routes(
 def test_run_health_check_raises_for_later_route_source_access_error(
     monkeypatch: pytest.MonkeyPatch, base_env: dict[str, str]
 ) -> None:
-    env = _multi_route_env(base_env)
+    env = multi_route_env(base_env)
     settings = AppSettings.from_env(env)
     clients = [SuccessfulClient(), SuccessfulClient(), AuthFailingClient()]
 
@@ -256,18 +246,3 @@ def test_run_health_check_raises_on_source_versioning_error(
 
     with pytest.raises(HealthCheckError, match="source bucket versioning"):
         _ = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
-
-
-def _multi_route_env(env: dict[str, str]) -> dict[str, str]:
-    updated = dict(env)
-    routes = cast(list[dict[str, object]], json.loads(updated["ARCHIVER_CONFIG_JSON"]))
-    first = routes[0]
-    second = deepcopy(first)
-    second["name"] = "secondary"
-    second_source = cast(dict[str, object], second["source"])
-    second_source["bucket"] = "second-source-bucket"
-    second_destination = cast(dict[str, object], second["destination"])
-    second_destination["bucket"] = "second-destination-bucket"
-    routes.append(second)
-    updated["ARCHIVER_CONFIG_JSON"] = json.dumps(routes)
-    return updated

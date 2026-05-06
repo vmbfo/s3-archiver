@@ -11,7 +11,7 @@ from threading import Event
 from typing import cast, override
 
 import pytest
-from s3_archiver_core import _archive_manifest_builder as manifest_builder_module
+from s3_archiver_core import _archive_manifest_paths as manifest_paths_module
 from s3_archiver_core import archive_workers as archive_workers_module
 from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core.archive_manifest import (
@@ -206,16 +206,16 @@ def _put_worker_result() -> Callable[
 
 
 def _relative_archive_root() -> Callable[[str, str], str]:
-    name = "_relative_archive_root"
+    name = "relative_archive_root"
     return cast(
         Callable[[str, str], str],
-        getattr(manifest_builder_module, name),
+        getattr(manifest_paths_module, name),
     )
 
 
 def _relative_key() -> Callable[[str, str], str]:
-    name = "_relative_key"
+    name = "relative_key"
     return cast(
         Callable[[str, str], str],
-        getattr(manifest_builder_module, name),
+        getattr(manifest_paths_module, name),
     )

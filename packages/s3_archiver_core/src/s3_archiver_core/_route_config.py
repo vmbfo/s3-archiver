@@ -26,6 +26,7 @@ from s3_archiver_core._settings_models import (
 )
 from s3_archiver_core._settings_parse import EnvDecoder
 from s3_archiver_core._settings_parse import parse_runtime_duration_result as _duration_result
+from s3_archiver_core.parsers import registry as _parser_registry
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.temp_files import default_temp_dir
 
@@ -122,7 +123,7 @@ def _load_parser_kind(
 def registered_parser_kinds() -> frozenset[ParserKind]:
     """Return parser kinds accepted by route configuration."""
 
-    return frozenset(ParserKind)
+    return _parser_registry.registered_parser_kinds()
 
 
 def _load_copy_mode(

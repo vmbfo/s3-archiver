@@ -5,10 +5,7 @@ from datetime import datetime
 
 from s3_archiver_core._archive_manifest_builder import (
     archive_groups,
-    as_utc,
     build_archive_manifest,
-    normalize_prefix,
-    storage_identity,
 )
 from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
@@ -16,6 +13,11 @@ from s3_archiver_core._archive_manifest_models import (
     ArchiveManifestRoute,
     ManifestEntry,
     SkippedObject,
+)
+from s3_archiver_core._archive_manifest_paths import (
+    as_utc,
+    normalize_prefix,
+    storage_identity,
 )
 
 

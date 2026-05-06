@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 from s3_archiver_cli import archive_payloads, error_logging
+from s3_archiver_cli.archive_payload_utils import datetime_text, object_list
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.settings import AppSettings
 
@@ -35,7 +36,8 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
 
     assert archive_payloads.manifest_target_day(SimpleNamespace()) == ""
     assert archive_payloads.skipped_object_payloads(SimpleNamespace()) == []
-    assert archive_payloads.object_list(object()) == []
+    assert object_list(object()) == []
+    assert datetime_text("already text") == "already text"
     assert archive_payloads.archive_group_payload(group, manifest)["target_day"] == "2026-04-13"
     assert archive_payloads.archive_group_payload(group, manifest)["destination_archive_key"] == (
         "data/fae/2026-04-13.tar.gz"

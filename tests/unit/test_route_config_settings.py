@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-import s3_archiver_core._route_config as route_config
+import s3_archiver_core.parsers.registry as parser_registry
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.parsers import ParserKind
 from s3_archiver_core.settings import AppSettings, CopyMode, S3Provider
@@ -122,7 +122,7 @@ def test_from_env_validates_parser_against_registry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        route_config,
+        parser_registry,
         "registered_parser_kinds",
         lambda: frozenset({ParserKind.FILENAME_TIMESTAMP}),
     )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +12,42 @@ from botocore.exceptions import BotoCoreError, ClientError
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.s3 import S3Client, VersioningState, build_s3_client
 from s3_archiver_core.settings import AppSettings, RouteSettings, S3LocationSettings
+
+
+@dataclass(frozen=True, slots=True)
+class RouteHealthReport:
+    """Serializable per-route health-check details."""
+
+    name: str
+    source_provider: str
+    source_bucket: str
+    source_endpoint_url: str
+    source_path: str
+    destination_provider: str
+    destination_bucket: str
+    destination_endpoint_url: str
+    destination_path: str
+    parser: str
+    copy_mode: str
+    source_versioning: VersioningState
+
+    def as_dict(self) -> dict[str, str]:
+        """Return one JSON-serializable route health payload."""
+
+        return {
+            "name": self.name,
+            "source_provider": self.source_provider,
+            "source_bucket": self.source_bucket,
+            "source_endpoint_url": self.source_endpoint_url,
+            "source_path": self.source_path,
+            "destination_provider": self.destination_provider,
+            "destination_bucket": self.destination_bucket,
+            "destination_endpoint_url": self.destination_endpoint_url,
+            "destination_path": self.destination_path,
+            "parser": self.parser,
+            "copy_mode": self.copy_mode,
+            "source_versioning": self.source_versioning,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +65,9 @@ class HealthReport:
     log_file: str
     checked_at: str
     route_count: int
+    routes: tuple[RouteHealthReport, ...] = field(default_factory=tuple)
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, object]:
         """Return a JSON-serializable health report."""
 
         return {
@@ -48,6 +85,7 @@ class HealthReport:
             "log_file": self.log_file,
             "checked_at": self.checked_at,
             "route_count": str(self.route_count),
+            "routes": [route.as_dict() for route in self.routes],
         }
 
 
@@ -69,7 +107,8 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
             "route_count": len(routes),
         },
     )
-    source_versioning = _check_routes(routes)
+    route_reports = _check_routes(routes)
+    source_versioning = route_reports[0].source_versioning
     logger.info(
         "s3 health check succeeded",
         extra={
@@ -92,17 +131,16 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
         log_file=str(log_file),
         checked_at=datetime.now(tz=UTC).isoformat(),
         route_count=len(routes),
+        routes=route_reports,
     )
 
 
-def _check_routes(routes: tuple[RouteSettings, ...]) -> VersioningState:
-    source_versioning: VersioningState | None = None
+def _check_routes(routes: tuple[RouteSettings, ...]) -> tuple[RouteHealthReport, ...]:
+    reports: list[RouteHealthReport] = []
     for route in routes:
         route_source_versioning = _check_route(route)
-        if source_versioning is None:
-            source_versioning = route_source_versioning
-    assert source_versioning is not None
-    return source_versioning
+        reports.append(_route_report(route, route_source_versioning))
+    return tuple(reports)
 
 
 def _check_route(route: RouteSettings) -> VersioningState:
@@ -112,6 +150,23 @@ def _check_route(route: RouteSettings) -> VersioningState:
     destination_client = build_s3_client(route.destination)
     _check_bucket_access(destination_client, route.destination, f"route {route.name!r} destination")
     return source_versioning
+
+
+def _route_report(route: RouteSettings, source_versioning: VersioningState) -> RouteHealthReport:
+    return RouteHealthReport(
+        name=route.name,
+        source_provider=route.source.provider.value,
+        source_bucket=route.source.bucket,
+        source_endpoint_url=route.source.resolved_endpoint_url(),
+        source_path=route.source.path,
+        destination_provider=route.destination.provider.value,
+        destination_bucket=route.destination.bucket,
+        destination_endpoint_url=route.destination.resolved_endpoint_url(),
+        destination_path=route.destination.path,
+        parser=route.parser.value,
+        copy_mode=route.copy_mode.value,
+        source_versioning=source_versioning,
+    )
 
 
 def _check_bucket_access(client: S3Client, location: S3LocationSettings, side: str) -> None:

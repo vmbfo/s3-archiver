@@ -20,6 +20,9 @@ from s3_archiver_core.archive_manifest import (
     select_key_timestamp,
 )
 from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_timestamp import (
+    select_key_timestamp as compatible_select_key_timestamp,
+)
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -31,20 +34,25 @@ TARGET_DAY = datetime(2026, 4, 13, tzinfo=UTC).date()
 
 @pytest.mark.unit()
 def test_timestamp_selection_prefers_basename_and_uses_path_fallback() -> None:
-    basename = select_key_timestamp(
-        "data/2026/04/12/2026-04-13T07-00-00Z.xml",
-        datetime(2026, 4, 12, 7, tzinfo=UTC),
-    )
+    basename = select_key_timestamp("data/2026/04/12/2026-04-13T07-00-00Z.xml")
     path_only = select_key_timestamp("data/fae/2026/04/13/07/no-stamp.xml")
-    tied = select_key_timestamp(
-        "a/2026/04/13/file_2026-04-13T010000Z_2026-04-13T020000Z.txt",
-        datetime(2026, 4, 13, 2, 1, tzinfo=UTC),
-    )
+    tied = select_key_timestamp("a/2026/04/13/file_2026-04-13T010000Z_2026-04-13T020000Z.txt")
 
     assert basename == (datetime(2026, 4, 13, 7, tzinfo=UTC), "basename")
     assert path_only == (datetime(2026, 4, 13, 7, tzinfo=UTC), "path")
     assert tied == (datetime(2026, 4, 13, 2, tzinfo=UTC), "basename")
     assert select_key_timestamp("data/no-stamp.txt") is None
+
+
+@pytest.mark.unit()
+def test_compat_timestamp_selection_accepts_ignored_last_modified_keyword() -> None:
+    last_modified = datetime(2030, 1, 1, tzinfo=UTC)
+
+    assert compatible_select_key_timestamp(
+        "data/2026-04-13T07-00-00Z.xml",
+        last_modified=last_modified,
+    ) == (datetime(2026, 4, 13, 7, tzinfo=UTC), "basename")
+    assert compatible_select_key_timestamp("data/no-stamp.txt", last_modified=last_modified) is None
 
 
 @pytest.mark.unit()

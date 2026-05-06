@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.results import SkippedObject
 
 if TYPE_CHECKING:
@@ -16,7 +17,9 @@ if TYPE_CHECKING:
 class TemplateParser:
     """Copy-paste starting point for a custom parser."""
 
-    def parse(self, _listed: S3ListedObject) -> SkippedObject:
+    def parse(
+        self, _listed: S3ListedObject, _context: ParserContext | None = None
+    ) -> SkippedObject:
         """Skip until the template is customized and registered."""
 
         return SkippedObject("template parser is not configured")

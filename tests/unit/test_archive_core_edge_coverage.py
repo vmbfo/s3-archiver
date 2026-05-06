@@ -180,10 +180,10 @@ def test_timestamp_parser_covers_path_stripping_and_time_separator_edges() -> No
         "basename",
     )
     assert select_key_timestamp("data/2026-04-13T120000Z+.txt") is None
-    assert select_key_timestamp(
-        "data/2026-04-13T00-00-00Z.txt",
-        datetime(2026, 4, 13),
-    ) == (datetime(2026, 4, 13, tzinfo=UTC), "basename")
+    assert select_key_timestamp("data/2026-04-13T00-00-00Z.txt") == (
+        datetime(2026, 4, 13, tzinfo=UTC),
+        "basename",
+    )
     assert archive_root_for_key("data/fae/2026-04-13/file.txt") == "data/fae"
     assert archive_root_for_key("file.txt") == ""
 

@@ -10,6 +10,7 @@ from s3_archiver_core.parsers.direct import DirectParser
 from s3_archiver_core.parsers.filename_timestamp import FilenameTimestampParser
 from s3_archiver_core.parsers.folder_timestamp import FolderTimestampParser
 from s3_archiver_core.parsers.kinds import ParserKind
+from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.registry import parser_for_kind, registered_parser_kinds
 from s3_archiver_core.parsers.template import TemplateParser
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties
@@ -68,6 +69,35 @@ def test_direct_parser_selects_s3_last_modified_timestamp() -> None:
         "last_modified",
         "data/fae",
     )
+
+
+@pytest.mark.unit()
+def test_direct_parser_validates_parser_context_properties() -> None:
+    listed = _listed("data/fae/file.txt", datetime(2026, 4, 13, 8, tzinfo=UTC))
+    other = _listed("data/fae/other.txt", datetime(2026, 4, 13, 8, tzinfo=UTC))
+    larger = S3ObjectProperties(
+        size=11,
+        etag=listed.properties.etag,
+        content_type=listed.properties.content_type,
+        content_encoding=listed.properties.content_encoding,
+        content_language=listed.properties.content_language,
+        content_disposition=listed.properties.content_disposition,
+        cache_control=listed.properties.cache_control,
+        expires=listed.properties.expires,
+        metadata=listed.properties.metadata,
+        tags=listed.properties.tags,
+        last_modified=listed.properties.last_modified,
+    )
+
+    assert DirectParser().parse(listed, ParserContext(listed)).timestamp == listed.last_modified
+    assert (
+        DirectParser().parse(listed, ParserContext(listed, listed.properties)).timestamp
+        == listed.last_modified
+    )
+    with pytest.raises(ValueError, match="context does not match"):
+        _ = DirectParser().parse(listed, ParserContext(other, other.properties))
+    with pytest.raises(ValueError, match="size differs"):
+        _ = DirectParser().parse(listed, ParserContext(listed, larger))
 
 
 @pytest.mark.unit()

@@ -16,12 +16,12 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 from s3_archiver_cli import visual_demo_output as _output
 from s3_archiver_cli._archive_routes import archive_routes_from_settings
+from s3_archiver_cli.archive_payload_utils import json_list
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
     destination_archive_keys,
     destination_keys,
     direct_entry_payloads,
-    json_list,
     manifest_target_day,
     skipped_object_payloads,
 )

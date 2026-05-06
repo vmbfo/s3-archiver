@@ -6,13 +6,10 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
 
 from s3_archiver_core.parsers.kinds import ParserKind
+from s3_archiver_core.parsers.protocol import ParserContext, ParserListedObject
 from s3_archiver_core.parsers.results import SelectedObject, SkippedObject, TimestampSource
-
-if TYPE_CHECKING:
-    from s3_archiver_core.s3 import S3ListedObject
 
 _DATE = r"(?P<year>20\d{2})[-_/]?(?P<month>0[1-9]|1[0-2])[-_/]?(?P<day>0[1-9]|[12]\d|3[01])"
 _TIME = r"(?P<hour>[01]\d|2[0-3])(?P<tsep>[-:]?)(?P<minute>[0-5]\d)(?P=tsep)(?P<second>[0-5]\d)"
@@ -44,9 +41,12 @@ class FilenameTimestampParser:
     def kind(self) -> ParserKind:
         return ParserKind.FILENAME_TIMESTAMP
 
-    def parse(self, listed: S3ListedObject) -> SelectedObject | SkippedObject:
+    def parse(
+        self, listed: ParserListedObject, context: ParserContext | None = None
+    ) -> SelectedObject | SkippedObject:
         """Select the object when its key contains a reliable timestamp."""
 
+        _ = context
         selected = select_key_timestamp(listed.key)
         if selected is None:
             return SkippedObject("no reliable key timestamp")
@@ -55,20 +55,21 @@ class FilenameTimestampParser:
 
 
 def select_key_timestamp(
-    key: str, last_modified: datetime | None = None
+    key: str, *, last_modified: datetime | None = None
 ) -> tuple[datetime, TimestampSource] | None:
     """Select the reliable UTC timestamp embedded in a source key."""
 
+    _ = last_modified
     path = PurePosixPath(key)
     basename_scan = _candidate_scan(path.name, "basename")
     basename_candidates = basename_scan.candidates
     path_candidates = _path_candidates(path)
     if basename_candidates:
-        return _pick_candidate(basename_candidates, path_candidates, last_modified)
+        return _pick_candidate(basename_candidates, path_candidates)
     if basename_scan.malformed:
         return None
     if path_candidates:
-        candidate = _closest_to_last_modified(path_candidates, last_modified)
+        candidate = _latest_candidate(path_candidates)
         return candidate.value, candidate.source
     return None
 
@@ -79,7 +80,7 @@ def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None
     candidates = _path_candidates(PurePosixPath(key))
     if not candidates:
         return None
-    candidate = _closest_to_last_modified(candidates, None)
+    candidate = _latest_candidate(candidates)
     return candidate.value, candidate.source
 
 
@@ -105,36 +106,23 @@ def destination_archive_key(archive_root: str, target_day: date) -> str:
 def _pick_candidate(
     basename_candidates: tuple[_TimestampCandidate, ...],
     path_candidates: tuple[_TimestampCandidate, ...],
-    last_modified: datetime | None,
 ) -> tuple[datetime, TimestampSource]:
     path_values = {candidate.value for candidate in path_candidates}
     candidate = max(
         basename_candidates,
         key=lambda item: (
             1 if item.value in path_values else 0,
-            -_last_modified_distance(item.value, last_modified),
             item.value,
         ),
     )
     return candidate.value, candidate.source
 
 
-def _closest_to_last_modified(
-    candidates: tuple[_TimestampCandidate, ...], last_modified: datetime | None
-) -> _TimestampCandidate:
+def _latest_candidate(candidates: tuple[_TimestampCandidate, ...]) -> _TimestampCandidate:
     return max(
         candidates,
-        key=lambda candidate: (
-            -_last_modified_distance(candidate.value, last_modified),
-            candidate.value,
-        ),
+        key=lambda candidate: candidate.value,
     )
-
-
-def _last_modified_distance(value: datetime, last_modified: datetime | None) -> float:
-    if last_modified is None:
-        return 0.0
-    return abs((value - _as_utc(last_modified)).total_seconds())
 
 
 def _path_candidates(path: PurePosixPath) -> tuple[_TimestampCandidate, ...]:
@@ -261,12 +249,6 @@ def _dedupe(candidates: tuple[_TimestampCandidate, ...]) -> tuple[_TimestampCand
             seen.add(key)
             deduped.append(candidate)
     return tuple(deduped)
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
 
 
 def _is_year(value: str | None) -> bool:

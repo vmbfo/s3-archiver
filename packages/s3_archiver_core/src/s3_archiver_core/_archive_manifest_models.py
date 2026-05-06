@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Literal, Protocol
 
 from s3_archiver_core.archive_timestamp import TimestampSource
+from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
@@ -84,6 +85,10 @@ class ArchiveGroup:
     destination_archive_key: str
     entries: tuple[ManifestEntry, ...]
     route_name: str = "default"
+    parser_kind: ParserKind = "filename_timestamp"
+    copy_mode: CopyMode = "daily_tar_gz"
+    source_bucket: str = ""
+    source_identity: object | None = None
     destination_bucket: str = ""
     destination_identity: object | None = None
 
@@ -97,6 +102,20 @@ class SkippedObject:
     route_name: str = "default"
     parser_kind: ParserKind = "filename_timestamp"
     copy_mode: CopyMode = "daily_tar_gz"
+    size: int | None = None
+    last_modified: datetime | None = None
+    etag: str | None = None
+    version_id: str | None = None
+    selected_timestamp: datetime | None = None
+    timestamp_source: TimestampSource | None = None
+    target_day: date | None = None
+    archive_root: str = ""
+    source_bucket: str = ""
+    source_path: str = ""
+    destination_bucket: str = ""
+    destination_path: str = ""
+    source_identity: object | None = None
+    destination_identity: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,9 +129,11 @@ class ArchiveManifest:
     skipped_objects: tuple[SkippedObject, ...] = ()
 
 
-ParserSelector = Callable[
-    [S3ListedObject], SelectedObject | SkippedObject | ParserSkippedObject | None
-]
+ParserResult = SelectedObject | SkippedObject | ParserSkippedObject | None
+ParserSelector = (
+    Callable[[S3ListedObject], ParserResult]
+    | Callable[[S3ListedObject, ParserContext], ParserResult]
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -53,6 +53,31 @@ Each archive run selects source objects through the configured parser, then writ
 Destination archive filenames use the data day from the source key, not the run date.
 LocalStack readiness now only proves the S3 API is reachable. The pytest integration and e2e harnesses generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test, then create and tear down those buckets in fixtures.
 
+## Archive Routes
+
+`ARCHIVER_CONFIG_JSON` is the only archive routing configuration surface. It must be a JSON array, where each object has:
+
+- `name`: unique route name used in logs, manifests, health output, and archive result payloads.
+- `parser`: `filename_timestamp`, `folder_timestamp`, or `direct`.
+- `copy_mode`: `daily_tar_gz` or `direct`.
+- `source`: source S3 location object.
+- `destination`: destination S3 location object.
+
+Source and destination location objects use the same schema: `provider`, `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, `access_key_id`, `secret_access_key`, `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty.
+
+Parser behavior:
+
+- `filename_timestamp`: prefers reliable UTC timestamps in the source key basename. Path-only timestamps can be selected as a fallback only when the basename has no timestamp and no malformed basename timestamp. Objects without a usable timestamp are reported as skipped.
+- `folder_timestamp`: selects objects whose parent folders contain a reliable UTC timestamp. Objects without a usable folder timestamp are reported as skipped.
+- `direct`: selects objects using S3 `LastModified` as the parser timestamp and uses the parent prefix as the archive root. The listed object, hydrated S3 headers, metadata, tags, size, version id, and checksums are retained for manifest, copy, and verification decisions.
+
+Copy modes:
+
+- `daily_tar_gz`: writes one deterministic `.tar.gz` archive per route, archive root, and data day.
+- `direct`: copies each selected source object directly to the destination path.
+
+Removed environment variables are rejected when set. Migrate `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP`, `ARCHIVER_MAX_WORKERS`, `S3_SOURCE_PATH_WHITELIST_ENABLED`, `S3_SOURCE_PATH_WHITELIST`, `S3_SOURCE_PATH_BLACKLIST_ENABLED`, and `S3_SOURCE_PATH_BLACKLIST` into explicit route JSON. Use route `path` values for source selection and destination placement, choose `parser` for object selection behavior, and choose `copy_mode` for archive-vs-direct output behavior.
+
 ## Local Development
 
 For host-native OCI smoke checks, create a local env file first:

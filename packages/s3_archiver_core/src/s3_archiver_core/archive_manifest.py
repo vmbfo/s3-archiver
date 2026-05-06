@@ -11,6 +11,7 @@ from s3_archiver_core._archive_manifest_models import (
     DestinationLocator,
     ManifestEntry,
     ParserKind,
+    ParserResult,
     ParserSelector,
     SelectedObject,
     SkippedObject,
@@ -22,6 +23,7 @@ from s3_archiver_core.archive_timestamp import (
     destination_archive_key,
     select_key_timestamp,
 )
+from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.s3 import VersioningState
 
 __all__ = (
@@ -30,7 +32,10 @@ __all__ = (
     "ArchiveManifestRoute",
     "CopyMode",
     "ManifestEntry",
+    "ParserContext",
     "ParserKind",
+    "ParserResult",
+    "ParserSelector",
     "SelectedObject",
     "SkippedObject",
     "SourceLister",
