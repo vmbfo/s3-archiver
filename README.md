@@ -205,9 +205,10 @@ Run the compose-backed visual demo scripts:
 ./scripts/run_visual_demo.sh
 ```
 
-These scripts seed 365 eligible data days across 12 archive roots with 2 source files per
-root/day, plus newer unarchived and invalid-key examples. The demo archives 4,380 daily
-destination objects and leaves the source bucket unchanged.
+These scripts seed 365 eligible data days across all parser and copy-mode combinations:
+`direct`, `filename_timestamp`, and `folder_timestamp`, each with `daily_tar_gz` and
+`direct` routes. The demo writes 2,190 tar.gz archives, 2,190 direct-copy destination
+objects, and leaves the source bucket unchanged.
 
 Run the production-style local wrapper:
 

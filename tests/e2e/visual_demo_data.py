@@ -3,22 +3,76 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from s3_archiver_core.archive_tar import ORIGINAL_KEY_PAX_HEADER
 from s3_archiver_core.s3 import S3Client
 
+from tests.integration.localstack_harness import LocalstackBucketPair
 from tests.integration.localstack_object_helpers import listed_keys, put_test_object
 
 DEMO_ARCHIVE_START_AGE_DAYS = 60
 DEMO_ARCHIVE_DAY_COUNT = 365
-DEMO_ARCHIVE_ROOT_COUNT = 12
 DEMO_FILES_PER_PATH_DAY = 2
 DEMO_SKIPPED_OBJECT_COUNT = 4
+DEMO_ARCHIVE_ROOT_COUNT = 6
 DEMO_ARCHIVE_COUNT = DEMO_ARCHIVE_DAY_COUNT * DEMO_ARCHIVE_ROOT_COUNT
+DEMO_DIRECT_COPY_COUNT = DEMO_ARCHIVE_DAY_COUNT * 3 * DEMO_FILES_PER_PATH_DAY
 DEMO_ARCHIVED_OBJECT_COUNT = DEMO_ARCHIVE_COUNT * DEMO_FILES_PER_PATH_DAY
-DEMO_SEEDED_OBJECT_COUNT = DEMO_ARCHIVED_OBJECT_COUNT + DEMO_SKIPPED_OBJECT_COUNT
+DEMO_DIRECT_OBJECT_COUNT = DEMO_DIRECT_COPY_COUNT
+DEMO_ELIGIBLE_OBJECT_COUNT = DEMO_ARCHIVED_OBJECT_COUNT + DEMO_DIRECT_OBJECT_COUNT
+DEMO_SEEDED_OBJECT_COUNT = DEMO_ELIGIBLE_OBJECT_COUNT + DEMO_SKIPPED_OBJECT_COUNT
+
+
+@dataclass(frozen=True, slots=True)
+class DemoRoute:
+    name: str
+    parser: str
+    copy_mode: str
+    source_path: str
+    destination_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class DemoObjectCase:
+    route: DemoRoute
+    key: str
+    destination_key: str
+
+
+def demo_routes(prefix: str) -> tuple[DemoRoute, ...]:
+    filename = "filename_timestamp"
+    folder = "folder_timestamp"
+    daily = "daily_tar_gz"
+    return (
+        DemoRoute("direct-daily", "direct", daily, f"{prefix}/direct/daily", "archives/direct"),
+        DemoRoute("direct-copy", "direct", "direct", f"{prefix}/direct/copy", "mirror/direct"),
+        DemoRoute(
+            "filename-daily", filename, daily, f"{prefix}/filename/daily", "archives/filename"
+        ),
+        DemoRoute(
+            "filename-copy", filename, "direct", f"{prefix}/filename/copy", "mirror/filename"
+        ),
+        DemoRoute("folder-daily", folder, daily, f"{prefix}/folder/daily", "archives/folder"),
+        DemoRoute("folder-copy", folder, "direct", f"{prefix}/folder/copy", "mirror/folder"),
+    )
+
+
+def demo_config_json(bucket_pair: LocalstackBucketPair, *, prefix: str) -> str:
+    routes = [
+        {
+            "name": route.name,
+            "parser": route.parser,
+            "copy_mode": route.copy_mode,
+            "source": {"bucket": bucket_pair.source, "path": route.source_path},
+            "destination": {"bucket": bucket_pair.destination, "path": route.destination_path},
+        }
+        for route in demo_routes(prefix)
+    ]
+    return json.dumps(routes, sort_keys=True)
 
 
 def seed_daily_demo_objects(
@@ -43,12 +97,7 @@ def seed_daily_demo_objects(
                 "s3-archiver-test-last-modified": target.isoformat(),
             }
             metadata_by_key[key] = metadata
-            _ = put_test_object(
-                client,
-                bucket,
-                key,
-                metadata=metadata,
-            )
+            _ = put_test_object(client, bucket, key, metadata=metadata)
     _verify_seeded_keys(client, bucket, metadata_by_key)
 
 
@@ -57,70 +106,113 @@ def archive_demo_days(seed_now: datetime) -> tuple[date, ...]:
     return tuple(target_day - timedelta(days=offset) for offset in range(DEMO_ARCHIVE_DAY_COUNT))
 
 
-def target_day_demo_cases(prefix: str, target_day: date) -> tuple[tuple[str, str], ...]:
+def target_day_demo_cases(prefix: str, target_day: date) -> tuple[DemoObjectCase, ...]:
     day = target_day.isoformat()
-    compact = target_day.strftime("%Y%m%d")
     path_day = target_day.strftime("%Y/%m/%d")
-    underscore = target_day.strftime("%Y_%m_%d")
+    routes = {route.name: route for route in demo_routes(prefix)}
     return (
-        (f"{prefix}/fae", f"{prefix}/fae/{path_day}/07/{day}T07-00-00Z.xml"),
-        (f"{prefix}/fae", f"{prefix}/fae/{path_day}/08/{day}T08-15-00Z.xml"),
-        (
-            f"{prefix}/harmonie",
-            f"{prefix}/harmonie/HARMONIE_DINI_SF_{day}T000000Z_{day}T000000Z.bz2",
-        ),
-        (f"{prefix}/harmonie", f"{prefix}/harmonie/HARMONIE_DINI_SF_{day}T060000Z.bz2"),
-        (f"{prefix}/metar", f"{prefix}/metar/{day}/METAR_{compact}120000Z.json"),
-        (f"{prefix}/metar", f"{prefix}/metar/{day}/METAR_{compact}121500Z.json"),
-        (f"{prefix}/radar", f"{prefix}/radar/{path_day}/radar_{compact}-130000.bin"),
-        (f"{prefix}/radar", f"{prefix}/radar/{path_day}/radar_{compact}-131500.bin"),
-        (f"{prefix}/satellite/flat", f"{prefix}/satellite/flat/sat_{day}T14:30:00Z.png"),
-        (f"{prefix}/satellite/flat", f"{prefix}/satellite/flat/sat_{day}T14:45:00Z.png"),
-        (f"{prefix}/observations", f"{prefix}/observations/obs_{underscore}_153000.txt"),
-        (f"{prefix}/observations", f"{prefix}/observations/obs_{underscore}_154500.txt"),
-        (f"{prefix}/models", f"{prefix}/models/{path_day}/model_{day}T16:45:00+00:00.grib"),
-        (f"{prefix}/models", f"{prefix}/models/{path_day}/model_{day}T17:45:00+00:00.grib"),
-        (f"{prefix}/lightning", f"{prefix}/lightning/{day}T17-00-00Z/lightning-latest.csv"),
-        (f"{prefix}/lightning", f"{prefix}/lightning/{day}T17-05-00Z/lightning-batch.csv"),
-        (f"{prefix}/ocean", f"{prefix}/ocean/{path_day}/wave_{day}T18:15:00+0100.nc"),
-        (f"{prefix}/ocean", f"{prefix}/ocean/{path_day}/wave_{day}T21:15:00+0000.nc"),
-        (f"{prefix}/climate", f"{prefix}/climate/{compact}/climate-summary.txt"),
-        (f"{prefix}/climate", f"{prefix}/climate/{compact}/climate-hourly.txt"),
-        ("C:/compose-demo/unsafe-drive", f"C:/compose-demo/unsafe-drive/{day}T19-00-00Z.txt"),
-        ("C:/compose-demo/unsafe-drive", f"C:/compose-demo/unsafe-drive/{day}T19-15-00Z.txt"),
-        (
-            f"s3-archiver-safe/{prefix}/reserved",
-            f"s3-archiver-safe/{prefix}/reserved/{day}T20-00-00Z.txt",
-        ),
-        (
-            f"s3-archiver-safe/{prefix}/reserved",
-            f"s3-archiver-safe/{prefix}/reserved/{day}T20-15-00Z.txt",
+        *_direct_daily_cases(routes["direct-daily"], target_day),
+        *_direct_cases(routes["direct-copy"], target_day),
+        *(
+            DemoObjectCase(route, key, _destination_key(route, key, root, target_day))
+            for route, root, key in (
+                (
+                    routes["filename-daily"],
+                    f"{prefix}/filename/daily/fae",
+                    f"{prefix}/filename/daily/fae/{day}T07-00-00Z.xml",
+                ),
+                (
+                    routes["filename-daily"],
+                    f"{prefix}/filename/daily/fae",
+                    f"{prefix}/filename/daily/fae/{day}T08-15-00Z.xml",
+                ),
+                (
+                    routes["filename-daily"],
+                    f"{prefix}/filename/daily/harmonie",
+                    f"{prefix}/filename/daily/harmonie/HARMONIE_{day}T060000Z.bz2",
+                ),
+                (
+                    routes["filename-daily"],
+                    f"{prefix}/filename/daily/harmonie",
+                    f"{prefix}/filename/daily/harmonie/HARMONIE_{day}T120000Z.bz2",
+                ),
+                (
+                    routes["filename-copy"],
+                    f"{prefix}/filename/copy/metar",
+                    f"{prefix}/filename/copy/metar/METAR_{target_day:%Y%m%d}120000Z.json",
+                ),
+                (
+                    routes["filename-copy"],
+                    f"{prefix}/filename/copy/radar",
+                    f"{prefix}/filename/copy/radar/radar_{target_day:%Y%m%d}-130000.bin",
+                ),
+                (
+                    routes["folder-daily"],
+                    f"{prefix}/folder/daily/satellite",
+                    f"{prefix}/folder/daily/satellite/{path_day}/14/sat-latest.png",
+                ),
+                (
+                    routes["folder-daily"],
+                    f"{prefix}/folder/daily/satellite",
+                    f"{prefix}/folder/daily/satellite/{path_day}/14/sat-hourly.png",
+                ),
+                (
+                    routes["folder-daily"],
+                    f"{prefix}/folder/daily/models",
+                    f"{prefix}/folder/daily/models/{path_day}/16/model.grib",
+                ),
+                (
+                    routes["folder-daily"],
+                    f"{prefix}/folder/daily/models",
+                    f"{prefix}/folder/daily/models/{path_day}/16/model-boundary.grib",
+                ),
+                (
+                    routes["folder-copy"],
+                    f"{prefix}/folder/copy/ocean",
+                    f"{prefix}/folder/copy/ocean/{path_day}/18/wave.nc",
+                ),
+                (
+                    routes["folder-copy"],
+                    f"{prefix}/folder/copy/climate",
+                    f"{prefix}/folder/copy/climate/{path_day}/20/summary.txt",
+                ),
+            )
         ),
     )
 
 
 def newer_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
-    next_day = target_day + timedelta(days=61)
-    later_day = target_day + timedelta(days=62)
+    future_day = target_day + timedelta(days=61)
     return (
-        f"{prefix}/fae/{next_day:%Y/%m/%d}/00/{next_day.isoformat()}T00-00-00Z.xml",
-        f"{prefix}/harmonie/HARMONIE_DINI_SF_{later_day.isoformat()}T230000Z.bz2",
+        f"{prefix}/filename/copy/skips/{future_day.isoformat()}T00-00-00Z.txt",
+        f"{prefix}/folder/copy/skips/{future_day:%Y/%m/%d}/future-folder.txt",
     )
 
 
 def invalid_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
+    _ = target_day
     return (
-        f"{prefix}/invalid/no-timestamp-latest.txt",
-        f"{prefix}/invalid/{target_day.isoformat()}T99-00-00Z.txt",
+        f"{prefix}/filename/daily/skips/no-timestamp-latest.txt",
+        f"{prefix}/folder/daily/skips/no-folder-timestamp.txt",
     )
 
 
 def expected_archive_members(prefix: str, archive_days: tuple[date, ...]) -> dict[str, set[str]]:
     members: dict[str, set[str]] = {}
     for target_day in archive_days:
-        for root, key in target_day_demo_cases(prefix, target_day):
-            members.setdefault(f"{root}/{target_day.isoformat()}.tar.gz", set()).add(key)
+        for case in target_day_demo_cases(prefix, target_day):
+            if case.route.copy_mode == "daily_tar_gz":
+                members.setdefault(case.destination_key, set()).add(case.key)
     return members
+
+
+def expected_direct_destination_keys(prefix: str, archive_days: tuple[date, ...]) -> set[str]:
+    return {
+        case.destination_key
+        for target_day in archive_days
+        for case in target_day_demo_cases(prefix, target_day)
+        if case.route.copy_mode == "direct"
+    }
 
 
 def archive_member_name(key: str) -> str:
@@ -140,6 +232,39 @@ def expected_pax_headers(source_keys: set[str]) -> dict[str, dict[str, str]]:
         for key in source_keys
         if archive_member_name(key) != key
     }
+
+
+def _direct_cases(route: DemoRoute, target_day: date) -> tuple[DemoObjectCase, DemoObjectCase]:
+    day = target_day.isoformat()
+    return (
+        _case(route, f"{route.source_path}/station-a/{day}-last-modified-a.txt", target_day),
+        _case(route, f"{route.source_path}/station-b/{day}-last-modified-b.txt", target_day),
+    )
+
+
+def _direct_daily_cases(route: DemoRoute, target_day: date) -> tuple[DemoObjectCase, ...]:
+    day = target_day.isoformat()
+    return tuple(
+        _case(
+            route,
+            f"{route.source_path}/{station}/{day}-last-modified-{suffix}.txt",
+            target_day,
+        )
+        for station in ("station-a", "station-b")
+        for suffix in ("a", "b")
+    )
+
+
+def _case(route: DemoRoute, key: str, target_day: date) -> DemoObjectCase:
+    root = key.rsplit("/", maxsplit=1)[0]
+    return DemoObjectCase(route, key, _destination_key(route, key, root, target_day))
+
+
+def _destination_key(route: DemoRoute, key: str, archive_root: str, target_day: date) -> str:
+    if route.copy_mode == "direct":
+        return f"{route.destination_path}/{key}"
+    relative_root = archive_root.removeprefix(f"{route.source_path}/")
+    return f"{route.destination_path}/{relative_root}/{target_day.isoformat()}.tar.gz"
 
 
 def _verify_seeded_keys(
@@ -162,7 +287,7 @@ def _archive_demo_keys_by_age(prefix: str, seed_now: datetime) -> dict[int, tupl
     target_day = seed_now.astimezone(UTC).date() - timedelta(days=DEMO_ARCHIVE_START_AGE_DAYS)
     return {
         DEMO_ARCHIVE_START_AGE_DAYS + offset: tuple(
-            key for _, key in target_day_demo_cases(prefix, target_day - timedelta(days=offset))
+            case.key for case in target_day_demo_cases(prefix, target_day - timedelta(days=offset))
         )
         for offset in range(DEMO_ARCHIVE_DAY_COUNT)
     }

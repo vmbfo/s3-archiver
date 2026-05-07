@@ -216,7 +216,8 @@ def test_run_visual_demo_reports_direct_entries(
     assert direct_entries[0]["destination_key"] == "raw/live.txt"
     assert entries[0]["parser_kind"] == "direct"
     assert entries[0]["copy_mode"] == "direct"
-    assert any("DIRECT destination_key=raw/live.txt" in line for line in lines)
+    assert any("DIRECT route=raw parser=direct copy_mode=direct" in line for line in lines)
+    assert any("destination_key=raw/live.txt" in line for line in lines)
     assert any("parser=direct copy_mode=direct" in line for line in lines)
 
 
