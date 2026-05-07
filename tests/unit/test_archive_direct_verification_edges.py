@@ -1,0 +1,53 @@
+"""Direct-copy destination verification regression tests."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime
+
+import pytest
+from s3_archiver_core._archive_copy import copy_direct_entry
+from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core.archive_manifest import ManifestEntry, build_archive_manifest
+from s3_archiver_core.archive_transfer import archive_metadata
+
+from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import listed_object as _listed
+
+
+@pytest.mark.unit()
+def test_direct_copy_existing_destination_with_mismatched_content_fails() -> None:
+    source, entry = _direct_manifest_objects()
+    destination = FakeBucket(
+        "archive",
+        destination={
+            entry.destination_key: replace(
+                entry.object.properties, metadata=archive_metadata(entry)
+            )
+        },
+        payloads={entry.destination_key: b"corrupt"},
+    )
+
+    failure, copied = copy_direct_entry(
+        ArchiveRoute("direct", source, destination, parser_kind="direct", copy_mode="direct"),
+        entry,
+        None,
+    )
+
+    assert failure == "data/raw.txt: content mismatch"
+    assert copied is False
+    assert destination.copied == []
+
+
+def _direct_manifest_objects() -> tuple[FakeBucket, ManifestEntry]:
+    listed = _listed("data/raw.txt", 1, "v1")
+    source = FakeBucket("source", (listed,))
+    manifest = build_archive_manifest(
+        source,
+        run_started_at_utc=datetime(2026, 4, 27, 12, tzinfo=UTC),
+        versioning_state="Enabled",
+        destination=FakeBucket("archive"),
+        parser_kind="direct",
+        copy_mode="direct",
+    )
+    return source, manifest.entries[0]

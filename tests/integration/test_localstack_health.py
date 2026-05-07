@@ -198,7 +198,7 @@ def test_check_command_rejects_runtime_localstack_endpoint_outside_allowlist(
     assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = cast(dict[str, object], json.loads(result.stderr))
     assert payload["status"] == "error"
-    assert payload["field"] == "S3_DESTINATION_ENDPOINT_URL"
+    assert payload["field"] == "ARCHIVER_CONFIG_JSON[0].destination.endpoint_url"
 
 
 @pytest.mark.integration()
@@ -245,8 +245,8 @@ def test_check_command_rejects_same_localstack_bucket_with_dual_credentials(
     assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = cast(dict[str, object], json.loads(result.stderr))
     assert payload["status"] == "error"
-    assert payload["field"] == "ARCHIVER_STORAGE_LOCATION"
-    assert "ARCHIVER_STORAGE_LOCATION" in str(payload["message"])
+    assert payload["field"] == "route"
+    assert "source and destination storage locations must differ" in str(payload["message"])
 
 
 def _log_records(log_file: Path) -> list[dict[str, object]]:

@@ -8,11 +8,10 @@ from typing import override
 
 import pytest
 from s3_archiver_core.archive import group_metadata, run_archive
-from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -34,9 +33,9 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=60,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -53,17 +52,17 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    assert result.copy.failures == ()
-    assert result.skipped_archive_keys == (archive_key,)
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
 
 
 @pytest.mark.unit()
-def test_run_archive_orders_phases_and_gates_cleanup() -> None:
+def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     key = _target_key()
     source = FakeBucket("source", (_listed(key, 90, "v1"),))
     destination = FakeBucket("destination")
@@ -71,7 +70,7 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
@@ -80,20 +79,16 @@ def test_run_archive_orders_phases_and_gates_cleanup() -> None:
     assert result.ok is True
     assert destination.uploaded == [archive_key]
     assert destination.copied == []
-    assert source.deleted == []
     assert decisions == [(key, "deterministic_tar_gzip")]
-    assert result.cleanup.skipped is True
-    cleanup_result = run_archive(
+    reuse_result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    assert cleanup_result.ok is True
-    assert source.deleted == [(key, "v1")]
-    assert cleanup_result.cleanup.skipped is False
+    assert reuse_result.ok is True
 
 
 @pytest.mark.unit()
@@ -107,27 +102,25 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     copy_failed = run_archive(
         source,
         failing_destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=2),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
     assert copy_failed.copy.failures == (f"{archive_key}: copy failed",)
     assert copy_failed.verify.skipped is True
-    assert source.deleted == []
 
     bad_destination = FakeBucket("destination", destination={archive_key: _properties(size=10)})
     verify_failed = run_archive(
         source,
         bad_destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
-    assert verify_failed.copy.failures == ()
-    assert verify_failed.skipped_archive_keys == (archive_key,)
-    assert source.deleted == []
+    assert verify_failed.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert verify_failed.verify.skipped is True
 
     class MissingDuringVerify(FakeBucket):
         head_calls: int
@@ -146,14 +139,13 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     verify_missing = run_archive(
         source,
         MissingDuringVerify(),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
     assert verify_missing.copy.ok is True
     assert verify_missing.verify.failures == (f"{archive_key}: destination missing",)
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -166,14 +158,13 @@ def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=2),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
     assert result.copy.failures == ("data/fae/2024-02-20.tar.gz: copy failed",)
     assert result.verify.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -185,14 +176,13 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     timed_out = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=started,
         clock=lambda: started + timedelta(days=8),
     )
 
     assert timed_out.copy.failures == ("archive run timed out",)
     assert timed_out.verify.skipped is True
-    assert source.deleted == []
 
 
 @pytest.mark.unit()
@@ -205,7 +195,7 @@ def test_list_failure_blocks_archive_phases() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -213,11 +203,10 @@ def test_list_failure_blocks_archive_phases() -> None:
     assert result.list.failures == ("source.txt: list failed",)
     assert result.copy.skipped is True
     assert result.verify.skipped is True
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
-def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
+def test_archive_accepts_source_last_modified_changes_after_listing() -> None:
     listed = replace(
         _listed(_target_key(), 90, None),
         properties=_properties(last_modified=datetime(2024, 2, 21, tzinfo=UTC)),
@@ -227,17 +216,16 @@ def test_cleanup_does_not_recheck_source_last_modified_before_delete() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]
 
 
 @pytest.mark.unit()
-def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
+def test_key_only_archive_succeeds_when_current_source_still_matches() -> None:
     listed = _listed(_target_key("2024-02-20T01-00-00.txt"), 90, None)
     source = FakeBucket("source", (listed,))
     destination = FakeBucket("destination")
@@ -245,10 +233,9 @@ def test_key_only_cleanup_deletes_when_current_source_still_matches() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]

@@ -60,7 +60,7 @@ def test_s3_archive_bucket_lists_current_versions_and_excludes_delete_markers() 
 
 
 @pytest.mark.unit()
-def test_s3_archive_bucket_copy_and_delete_use_exact_version_when_present() -> None:
+def test_s3_archive_bucket_copy_uses_exact_version_when_present() -> None:
     client = FakeArchiveClient()
     bucket = S3ArchiveBucket(client, "destination")
 
@@ -74,9 +74,6 @@ def test_s3_archive_bucket_copy_and_delete_use_exact_version_when_present() -> N
         {"fingerprint": "value"},
         "simple_native_copy",
     )
-    bucket.delete_source("key.txt", "v1")
-    bucket.delete_source("null.txt", None)
-
     assert client.copy_call["CopySource"] == {
         "Bucket": "source",
         "Key": "key.txt",
@@ -84,10 +81,6 @@ def test_s3_archive_bucket_copy_and_delete_use_exact_version_when_present() -> N
     }
     assert client.copy_call["MetadataDirective"] == "REPLACE"
     assert client.copy_call["ContentType"] == "text/plain"
-    assert client.delete_calls == [
-        {"Bucket": "destination", "Key": "key.txt", "VersionId": "v1"},
-        {"Bucket": "destination", "Key": "null.txt"},
-    ]
 
 
 @pytest.mark.unit()

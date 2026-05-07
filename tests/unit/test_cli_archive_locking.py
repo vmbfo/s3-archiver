@@ -46,21 +46,20 @@ def test_archive_command_wires_lock_recovery_logger(
             _ = run_id
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, _kwargs)
+        _ = (routes, options, run_started_at_utc, _kwargs)
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -73,10 +72,8 @@ def _archive_result() -> ArchiveRunResult:
         run_id="run-id",
         manifest=ArchiveManifest(
             run_started_at_utc=datetime.fromisoformat("2026-04-09T17:00:43+00:00"),
-            retention_cutoff_utc=datetime.fromisoformat("2026-02-08T17:00:43+00:00"),
             entries=(),
         ),
         copy=ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

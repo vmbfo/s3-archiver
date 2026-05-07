@@ -60,10 +60,6 @@ class S3Client(Protocol):
         """Copy one object server-side."""
         ...
 
-    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
-        """Delete one object or object version."""
-        ...
-
     def create_multipart_upload(self, **kwargs: object) -> Mapping[str, object]:
         """Create a multipart upload."""
         ...

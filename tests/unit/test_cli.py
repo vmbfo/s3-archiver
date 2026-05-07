@@ -106,8 +106,8 @@ def test_check_command_uses_config_exit_code_for_invalid_provider(
     assert result.exit_code == cli_module.CONFIG_ERROR_EXIT_CODE
     payload = _load_payload(result.stderr)
     assert payload["status"] == "error"
-    assert "S3_SOURCE_PROVIDER" in payload["message"]
-    assert payload.get("field") == "S3_SOURCE_PROVIDER"
+    assert "ARCHIVER_CONFIG_JSON[0].source.provider" in payload["message"]
+    assert payload.get("field") == "ARCHIVER_CONFIG_JSON[0].source.provider"
 
 
 @pytest.mark.unit()
@@ -238,6 +238,8 @@ def test_bare_command_prints_help_and_exits_zero() -> None:
     assert "Usage:" in result.stdout
     assert "check" in result.stdout
     assert "archive" in result.stdout
+    assert "cleanup-preview" not in result.stdout
+    assert "demo-cleanup" not in result.stdout
 
 
 @pytest.mark.unit()
@@ -281,4 +283,5 @@ def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
         destination_endpoint_url=settings.destination.resolved_endpoint_url(),
         log_file=str(log_file),
         checked_at="2026-04-09T17:00:43+00:00",
+        route_count=len(settings.routes),
     )

@@ -80,10 +80,6 @@ class ArchiveBucket(Protocol):
         """Copy a source object."""
         ...
 
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        """Delete a source object."""
-        ...
-
 
 class ArchiveRunLock(Protocol):
     """Single-run lock boundary."""

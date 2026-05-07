@@ -124,6 +124,16 @@ def test_parse_env_file_rejects_invalid_assignment(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit()
+def test_checked_in_env_example_is_valid_route_config() -> None:
+    env = PARSE_ENV_FILE(Path(".env.example"))
+
+    settings = AppSettings.from_env(env)
+
+    assert settings.routes[0].source.iam_user_ocid == "ocid1.user.oc1..replace-me"
+    assert settings.routes[0].destination.iam_user_ocid == "ocid1.user.oc1..replace-me"
+
+
+@pytest.mark.unit()
 def test_load_runtime_env_returns_process_env_when_env_file_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -160,13 +170,34 @@ def _env_file_contents(tmp_path: Path) -> str:
             "S3_SOURCE_NAMESPACE=tenant",
             "S3_SOURCE_BUCKET=archive-bucket",
             "S3_SOURCE_IAM_USER_OCID=ocid1.user.oc1..example",
+            "S3_SOURCE_ENDPOINT_URL=https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com",
             "S3_SOURCE_ADDRESSING_STYLE=path",
             "S3_DESTINATION_PROVIDER=localstack",
             "S3_DESTINATION_ACCESS_KEY_ID=destination-access",
             "S3_DESTINATION_SECRET_ACCESS_KEY=destination-secret",
             "S3_DESTINATION_REGION=us-east-1",
             "S3_DESTINATION_BUCKET=destination-bucket",
+            "S3_DESTINATION_ENDPOINT_URL=http://localstack:4566",
             "S3_DESTINATION_ADDRESSING_STYLE=path",
+            (
+                'ARCHIVER_CONFIG_JSON=[{"name":"default","parser":"filename_timestamp",'
+                '"copy_mode":"daily_tar_gz",'
+                '"source":{"provider":"${S3_SOURCE_PROVIDER}",'
+                '"endpoint_url":"${S3_SOURCE_ENDPOINT_URL}",'
+                '"region":"${S3_SOURCE_REGION}","namespace":"${S3_SOURCE_NAMESPACE}",'
+                '"bucket":"${S3_SOURCE_BUCKET}",'
+                '"iam_user_ocid":"${S3_SOURCE_IAM_USER_OCID}",'
+                '"path":"","access_key_id":"${S3_SOURCE_ACCESS_KEY_ID}",'
+                '"secret_access_key":"${S3_SOURCE_SECRET_ACCESS_KEY}",'
+                '"addressing_style":"${S3_SOURCE_ADDRESSING_STYLE}"},'
+                '"destination":{"provider":"${S3_DESTINATION_PROVIDER}",'
+                '"endpoint_url":"${S3_DESTINATION_ENDPOINT_URL}",'
+                '"region":"${S3_DESTINATION_REGION}",'
+                '"bucket":"${S3_DESTINATION_BUCKET}","path":"",'
+                '"access_key_id":"${S3_DESTINATION_ACCESS_KEY_ID}",'
+                '"secret_access_key":"${S3_DESTINATION_SECRET_ACCESS_KEY}",'
+                '"addressing_style":"${S3_DESTINATION_ADDRESSING_STYLE}"}}]'
+            ),
             "LOG_LEVEL=INFO",
             f"LOG_DIR={tmp_path / 'logs'}",
         )
@@ -189,4 +220,5 @@ def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
         destination_endpoint_url=settings.destination.resolved_endpoint_url(),
         log_file=str(log_file),
         checked_at="2026-04-09T17:00:43+00:00",
+        route_count=len(settings.routes),
     )

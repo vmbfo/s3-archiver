@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
 
 import pytest
 from s3_archiver_core.archive_manifest import ManifestEntry
@@ -12,7 +11,6 @@ from s3_archiver_core.archive_transfer import (
     archive_metadata,
     fingerprint_from_metadata,
     verify_destination,
-    verify_source_unchanged,
 )
 
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -46,15 +44,31 @@ def test_verify_destination_reports_each_mismatch_detail() -> None:
 
 
 @pytest.mark.unit()
-def test_verify_source_unchanged_reports_missing_and_property_changes() -> None:
-    entry = _entry()
-    current = entry.object.properties
-    assert verify_source_unchanged(entry, None).detail == "source missing before cleanup"
-    assert verify_source_unchanged(entry, replace(current, size=11)).ok is False
-    assert verify_source_unchanged(entry, replace(current, content_type=None)).ok is False
-    assert verify_source_unchanged(entry, replace(current, metadata={"owner": "other"})).ok is False
-    assert verify_source_unchanged(entry, replace(current, tags={"kind": "other"})).ok is False
-    assert verify_source_unchanged(entry, current).ok is True
+def test_verify_destination_rejects_mismatched_source_identity() -> None:
+    listed = _listed("old.txt", 90, None)
+    current = ManifestEntry(
+        "source",
+        listed.key,
+        10,
+        listed.last_modified,
+        '"etag"',
+        None,
+        listed,
+        source_identity=("localstack", "current"),
+    )
+    archived = ManifestEntry(
+        "source",
+        listed.key,
+        10,
+        listed.last_modified,
+        '"etag"',
+        None,
+        listed,
+        source_identity=("localstack", "other"),
+    )
+    destination = replace(current.object.properties, metadata=archive_metadata(archived))
+
+    assert verify_destination(current, destination).detail == "source fingerprint mismatch"
 
 
 @pytest.mark.unit()
@@ -74,10 +88,3 @@ def test_fingerprint_metadata_rejects_invalid_shapes() -> None:
         )
         is not None
     )
-
-
-@pytest.mark.unit()
-def test_verify_source_unchanged_rejects_last_modified_changes() -> None:
-    entry = _entry()
-    current = replace(entry.object.properties, last_modified=datetime(2024, 1, 22, tzinfo=UTC))
-    assert verify_source_unchanged(entry, current).detail == "source changed before cleanup"

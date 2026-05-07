@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import override
@@ -10,14 +9,11 @@ from typing import override
 import pytest
 from s3_archiver_core.archive import MANIFEST_SHA256_METADATA_KEY, group_metadata, run_archive
 from s3_archiver_core.archive_manifest import (
-    ManifestEntry,
-    SourcePathFilter,
     build_archive_manifest,
 )
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2024, 4, 20, tzinfo=UTC)
@@ -62,7 +58,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
         _ = run_archive(
             FakeBucket("source"),
             FakeBucket("destination"),
-            ArchiveOptions(retention_days=60),
+            daily_archive_options(),
             run_started_at_utc=STARTED,
             run_lock=FakeRunLock(acquired=False),
             clock=lambda: STARTED,
@@ -71,7 +67,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
     result = run_archive(
         FakeBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         run_lock=lock,
         clock=lambda: STARTED,
@@ -86,7 +82,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     batch_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=1),
     )
@@ -95,7 +91,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     copy_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=2),
     )
@@ -104,32 +100,30 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     verify_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=4),
     )
     assert verify_timeout.copy.ok is True
     assert verify_timeout.verify.failures == ("archive run timed out",)
-    assert verify_timeout.cleanup.skipped is True
 
 
 @pytest.mark.unit()
-def test_run_archive_reports_timeout_after_cleanup_phase() -> None:
+def test_run_archive_completes_after_verify_phase() -> None:
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=7),
     )
     assert result.copy.ok is True
     assert result.verify.ok is True
-    assert result.cleanup.failures == ("archive run timed out",)
 
 
 @pytest.mark.unit()
-def test_verify_failure_after_copy_blocks_cleanup() -> None:
+def test_verify_failure_after_copy_fails_run() -> None:
     class VanishingDestination(FakeBucket):
         head_calls: int
 
@@ -148,40 +142,17 @@ def test_verify_failure_after_copy_blocks_cleanup() -> None:
     result = run_archive(
         source,
         VanishingDestination("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
     assert result.copy.ok is True
     assert result.verify.failures == ("data/fae/2024-02-20.tar.gz: destination missing",)
-    assert result.cleanup.skipped is True
 
 
 @pytest.mark.unit()
-def test_cleanup_worker_future_exception_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    def broken_call_worker(
-        worker: Callable[[ManifestEntry], str | None], entry: ManifestEntry
-    ) -> str | None:
-        _ = entry
-        if "_cleanup_phase" in worker.__qualname__:
-            raise RuntimeError("executor failed")
-        return worker(entry)
-
-    monkeypatch.setattr("s3_archiver_core.archive_workers._call_worker", broken_call_worker)
-    result = run_archive(
-        FakeBucket("source", (_listed(_target_key(), 90),)),
-        FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
-        run_started_at_utc=STARTED,
-        clock=lambda: STARTED,
-    )
-    assert result.copy.ok is True
-    assert result.verify.ok is True
-    assert result.cleanup.failures == ("worker failure: executor failed",)
-
-
 @pytest.mark.unit()
-def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
+def test_archive_uses_manifest_version_for_current_archive_group() -> None:
     current = _listed(_target_key(), 90, "v2")
     source = FakeBucket(
         "source",
@@ -191,25 +162,24 @@ def test_cleanup_uses_manifest_version_for_current_archive_group() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
     assert result.manifest.entries[0].version_id == "v2"
     assert result.ok is True
-    assert source.deleted == [(current.key, "v2")]
 
 
 @pytest.mark.unit()
-def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> None:
+def test_existing_archive_with_different_manifest_metadata_fails_verification() -> None:
     listed = _listed(_target_key(), 90, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=60,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -226,15 +196,12 @@ def test_existing_archive_with_different_manifest_metadata_blocks_cleanup() -> N
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=60, cleanup_enabled=True),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
-    assert result.copy.failures == ()
-    assert result.skipped_archive_keys == (archive_key,)
-    assert result.cleanup.skipped is False
-    assert source.deleted == []
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
 
 
 @pytest.mark.unit()
@@ -248,7 +215,7 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(retention_days=60),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         run_lock=lock,
     )

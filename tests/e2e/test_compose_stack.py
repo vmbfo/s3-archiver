@@ -234,6 +234,7 @@ def test_compose_scheduler_service_runs_schedule_command(
     assert "command:" in result.stdout
     assert "- schedule" in result.stdout
     assert "restart: unless-stopped" in result.stdout
+    assert "ARCHIVER_CONFIG_JSON:" in result.stdout
 
 
 @pytest.mark.e2e()
@@ -252,6 +253,7 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
     )
 
     assert "APP_ENV_FILE: /dev/null" in result.stdout
+    assert "ARCHIVER_CONFIG_JSON:" in result.stdout
     assert "path: .env" not in result.stdout
 
 

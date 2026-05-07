@@ -12,10 +12,9 @@ from pathlib import Path
 import pytest
 from s3_archiver_core.archive import run_archive
 from s3_archiver_core.archive_manifest import ArchiveGroup, ManifestEntry
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_tar import ORIGINAL_KEY_PAX_HEADER, write_tar_gz_archive
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
@@ -62,7 +61,7 @@ def test_run_archive_rewrites_unsafe_daily_tar_member_name_and_preserves_origina
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=started,
         clock=lambda: started,
     )

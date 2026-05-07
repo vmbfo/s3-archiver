@@ -19,10 +19,7 @@ from s3_archiver_core.archive_fingerprint import (
 from s3_archiver_core.archive_manifest import (
     ArchiveGroup,
     ManifestEntry,
-    SourcePathFilter,
-    archive_root_for_key,
     build_archive_manifest,
-    select_key_timestamp,
 )
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.archive_transfer import (
@@ -31,6 +28,7 @@ from s3_archiver_core.archive_transfer import (
     verify_destination_content,
 )
 from s3_archiver_core.archive_workers import run_archive_group_workers, run_archive_workers
+from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 from s3_archiver_core.s3 import S3ObjectProperties
 
 from tests.unit.archive_s3_fakes import FakeArchiveClient
@@ -181,10 +179,10 @@ def test_timestamp_parser_covers_path_stripping_and_time_separator_edges() -> No
         "basename",
     )
     assert select_key_timestamp("data/2026-04-13T120000Z+.txt") is None
-    assert select_key_timestamp(
-        "data/2026-04-13T00-00-00Z.txt",
-        datetime(2026, 4, 13),
-    ) == (datetime(2026, 4, 13, tzinfo=UTC), "basename")
+    assert select_key_timestamp("data/2026-04-13T00-00-00Z.txt") == (
+        datetime(2026, 4, 13, tzinfo=UTC),
+        "basename",
+    )
     assert archive_root_for_key("data/fae/2026-04-13/file.txt") == "data/fae"
     assert archive_root_for_key("file.txt") == ""
 
@@ -241,9 +239,9 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
 

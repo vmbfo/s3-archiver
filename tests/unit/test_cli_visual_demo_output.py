@@ -22,14 +22,12 @@ def test_archive_result_uses_payload_archive_day_sample_for_long_ranges() -> Non
                 "destination_archive_key": "demo/2026-01-07.tar.gz",
                 "source_object_count": 2,
                 "skipped_object_count": 0,
-                "cleanup_status": "skipped",
             }
         ],
         "phases": {
             "list": {"status": "ok", "failure_count": 0},
             "copy": {"status": "ok", "failure_count": 0},
             "verify": {"status": "ok", "failure_count": 0},
-            "cleanup": {"status": "skipped", "failure_count": 0},
         },
     }
 
@@ -41,3 +39,30 @@ def test_archive_result_uses_payload_archive_day_sample_for_long_ranges() -> Non
         + "2026-01-01, 2026-01-02, 2026-01-03, ..., 2026-01-05, 2026-01-06, 2026-01-07"
         in lines
     )
+
+
+@pytest.mark.unit()
+def test_archive_result_emits_direct_entries() -> None:
+    lines: list[str] = []
+    payload: dict[str, JsonValue] = {
+        "status": "ok",
+        "target_day": None,
+        "archive_count": 0,
+        "direct_copy_count": 1,
+        "archive_groups": [],
+        "direct_entries": [
+            {
+                "destination_key": "mirror/raw/live.txt",
+                "source_object_count": 1,
+            }
+        ],
+        "phases": {
+            "list": {"status": "ok", "failure_count": 0},
+            "copy": {"status": "ok", "failure_count": 0},
+            "verify": {"status": "ok", "failure_count": 0},
+        },
+    }
+
+    emit_archive_result(lines.append, payload)
+
+    assert "DIRECT destination_key=mirror/raw/live.txt source_object_count=1" in lines

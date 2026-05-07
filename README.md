@@ -44,15 +44,76 @@ docker compose --profile test down -v
 Running the app container without an explicit command prints CLI help and exits `0`.
 Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
-The container runs rootless and writes retained JSON logs to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+The container runs rootless and writes JSON log files to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
-Archive defaults are explicit in those files: `ARCHIVER_RETENTION_DAYS=60`, `ARCHIVER_ENABLE_CLEANUP=false`, `ARCHIVER_MAX_WORKERS=16`, `ARCHIVER_RUN_TIMEOUT=7d`, `ARCHIVER_TEMP_DIR=/tmp/s3-archiver`, and disabled source whitelist/blacklist filters.
-Each archive run selects timestamped source objects whose key-derived UTC data day is at or
-before the retention cutoff day, then writes one `.tar.gz` per archive root per data day.
+Archive route configuration is supplied through `ARCHIVER_CONFIG_JSON`, a JSON array of route objects that choose a parser, copy mode, source location, and destination location.
+Each archive run selects source objects through the configured parser, then writes archive output according to the route copy mode.
 Destination archive filenames use the data day from the source key, not the run date.
 LocalStack readiness now only proves the S3 API is reachable. The pytest integration and e2e harnesses generate LocalStack-only env files with fresh UUID-suffixed source and destination buckets for each test, then create and tear down those buckets in fixtures.
+
+## Archive Routes
+
+`ARCHIVER_CONFIG_JSON` is the only archive routing configuration surface. It must be a JSON array, where each object has:
+
+- `name`: unique route name used in logs, manifests, health output, and archive result payloads.
+- `parser`: `filename_timestamp`, `folder_timestamp`, or `direct`.
+- `copy_mode`: `daily_tar_gz` or `direct`.
+- `source`: source S3 location object.
+- `destination`: destination S3 location object.
+
+Source and destination location objects use the same schema: `provider`, `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, `access_key_id`, `secret_access_key`, `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty.
+
+Parser behavior:
+
+- `filename_timestamp`: prefers reliable UTC timestamps in the source key basename. Path-only timestamps can be selected as a fallback only when the basename has no timestamp and no malformed basename timestamp. Objects without a usable timestamp are reported as skipped.
+- `folder_timestamp`: selects objects whose parent folders contain a reliable UTC timestamp. Objects without a usable folder timestamp are reported as skipped.
+- `direct`: selects objects using S3 `LastModified` as the parser timestamp and uses the parent prefix as the archive root. The listed object, hydrated S3 headers, metadata, tags, size, version id, and checksums are available for manifest, copy, and verification decisions.
+
+Copy modes:
+
+- `daily_tar_gz`: writes one deterministic `.tar.gz` archive per route, archive root, and data day.
+- `direct`: copies each selected source object directly to the destination path.
+
+Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
+
+Route examples:
+
+```json
+[
+  {
+    "name": "daily-by-filename",
+    "parser": "filename_timestamp",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "daily-by-last-modified",
+    "parser": "direct",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "daily-by-folder",
+    "parser": "folder_timestamp",
+    "copy_mode": "daily_tar_gz",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  },
+  {
+    "name": "direct-copy",
+    "parser": "filename_timestamp",
+    "copy_mode": "direct",
+    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
+    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "copy/direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+  }
+]
+```
+
+Removed environment variables are rejected when set. Migrate `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP`, `ARCHIVER_MAX_WORKERS`, `S3_SOURCE_PATH_WHITELIST_ENABLED`, `S3_SOURCE_PATH_WHITELIST`, `S3_SOURCE_PATH_BLACKLIST_ENABLED`, and `S3_SOURCE_PATH_BLACKLIST` into explicit route JSON. Use route `path` values for source selection and destination placement, choose `parser` for object selection behavior, and choose `copy_mode` for archive-vs-direct output behavior.
 
 ## Local Development
 
@@ -123,23 +184,19 @@ Run the visual demos directly:
 
 ```bash
 ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo
-ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo-cleanup
 ```
 
-`demo` forces cleanup off and ends with a cleanup preview. `demo-cleanup` forces cleanup on
-for that invocation and shows the post-cleanup bucket state.
+`demo` streams the real archive walkthrough and ends with a summary JSON payload.
 
 Run the compose-backed visual demo scripts:
 
 ```bash
 ./scripts/run_visual_demo.sh
-./scripts/run_visual_cleanup_demo.sh
 ```
 
 These scripts seed 365 eligible data days across 12 archive roots with 2 source files per
-root/day, plus retained and invalid-key examples. The non-cleanup script archives 4,380
-daily destination objects and previews deletion. The cleanup script archives the same
-shape, then deletes the 8,760 verified source objects while leaving the 4 skipped objects.
+root/day, plus newer unarchived and invalid-key examples. The demo archives 4,380 daily
+destination objects and leaves the source bucket unchanged.
 
 Run the production-style local wrapper:
 
@@ -175,8 +232,8 @@ Run all suites with the canonical coverage-gated command:
 
 - Console logs are JSON lines filtered by `LOG_LEVEL`.
 - The same records are written to a timed rotating file handler.
-- Retention is 30 daily files.
-- Inspect the retained logs with Docker:
+- The file logger keeps 30 daily files.
+- Inspect the file logs with Docker:
 
 ```bash
 docker run --rm -v s3-archiver_app_logs:/logs alpine:3.22 ls -lah /logs
@@ -206,7 +263,7 @@ Built source distributions and wheels also carry explicit exclusions for test an
 
 ## Local Scheduling
 
-Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick. Each invocation archives all eligible retained data days, so missed scheduler ticks do not need catch-up replay.
+Schedule exactly one local archive task on the production machine. The repo now ships a built-in scheduler loop that runs one `archive` invocation per UTC day and always computes the next future tick. Each invocation archives all eligible data days, so missed scheduler ticks do not need catch-up replay.
 
 ```bash
 cd /opt/s3-archiver

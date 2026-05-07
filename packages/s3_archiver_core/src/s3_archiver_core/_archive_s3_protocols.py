@@ -64,7 +64,3 @@ class ArchiveS3Client(Protocol):
     def put_object_tagging(self, **kwargs: object) -> Mapping[str, object]:
         """Write object tags."""
         ...
-
-    def delete_object(self, **kwargs: object) -> Mapping[str, object]:
-        """Delete one object or object version."""
-        ...

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import chain
 from pathlib import Path
 
+from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
 from s3_archiver_core.temp_files import default_temp_dir
@@ -28,6 +29,21 @@ class FakeReadableBody:
 
     def close(self) -> None:
         self._body.close()
+
+
+def daily_archive_options(*, run_timeout: timedelta | None = None) -> ArchiveOptions:
+    """Build explicit daily archive route options for legacy workflow tests."""
+
+    return ArchiveOptions(
+        run_timeout=timedelta(days=7) if run_timeout is None else run_timeout,
+        routes=(
+            ArchiveRouteOptions(
+                "default",
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        ),
+    )
 
 
 def object_properties(
@@ -79,8 +95,8 @@ class FakeBucket:
     bucket: str
     temp_dir: Path
     copied: list[str]
+    copy_strategies: list[TransferStrategy]
     uploaded: list[str]
-    deleted: list[tuple[str, str | None]]
     fail_copy: bool
     _objects: dict[str, S3ListedObject]
     _versions: dict[tuple[str, str | None], S3ListedObject]
@@ -105,8 +121,8 @@ class FakeBucket:
         self.bucket = bucket
         self.temp_dir = temp_dir or default_temp_dir()
         self.copied = []
+        self.copy_strategies = []
         self.uploaded = []
-        self.deleted = []
         self.fail_copy = False
         self._objects = {item.key: item for item in objects}
         self._versions = {(item.key, item.version_id): item for item in chain(objects, versions)}
@@ -192,10 +208,11 @@ class FakeBucket:
     ) -> None:
         assert isinstance(source, FakeBucket)
         assert source.bucket == source_bucket
-        _ = (source_version_id, strategy)
+        _ = source_version_id
         if self.fail_copy:
             raise RuntimeError("copy failed")
         self.copied.append(source_key)
+        self.copy_strategies.append(strategy)
         self._destination[destination_key] = replace(properties, metadata=destination_metadata)
         payload = (
             source._version_payloads.get((source_key, source_version_id))
@@ -204,6 +221,3 @@ class FakeBucket:
         )
         assert payload is not None
         self._destination_payloads[destination_key] = payload
-
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        self.deleted.append((key, version_id))
