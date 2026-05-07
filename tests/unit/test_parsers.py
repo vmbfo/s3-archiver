@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from types import ModuleType
 
 import pytest
+import s3_archiver_core.parsers.registry as parser_registry
 from s3_archiver_core.parsers import SelectedObject, SkippedObject
 from s3_archiver_core.parsers.direct import DirectParser
 from s3_archiver_core.parsers.filename_timestamp import FilenameTimestampParser
@@ -13,6 +15,8 @@ from s3_archiver_core.parsers.folder_timestamp import FolderTimestampParser
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.registry import (
+    ParserFactory,
+    clear_parser_registry_cache,
     discover_parser_factories,
     parser_for_kind,
     registered_parser_kinds,
@@ -61,6 +65,12 @@ def test_registry_contains_only_supported_parser_kinds() -> None:
 
 
 @pytest.mark.unit()
+def test_parser_for_kind_rejects_unsupported_parser() -> None:
+    with pytest.raises(ValueError, match="unsupported parser kind"):
+        _ = parser_for_kind("unsupported")
+
+
+@pytest.mark.unit()
 def test_registry_auto_discovers_parser_class_by_module_filename() -> None:
     custom = ModuleType("s3_archiver_core.parsers.customer_timestamp")
     custom.__dict__["Parser"] = DirectParser
@@ -84,6 +94,29 @@ def test_registry_auto_discovers_parser_class_by_module_filename() -> None:
     )
 
     assert registry == {ParserKind("customer_timestamp"): DirectParser}
+
+
+@pytest.mark.unit()
+def test_parser_for_kind_reuses_discovered_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[tuple[str, ...], Callable[[str], ModuleType]]] = []
+
+    def discover(
+        module_names: Iterable[str],
+        import_module: Callable[[str], ModuleType],
+    ) -> Mapping[ParserKind, ParserFactory]:
+        calls.append((tuple(module_names), import_module))
+        return {ParserKind("direct"): DirectParser}
+
+    clear_parser_registry_cache()
+    monkeypatch.setattr(parser_registry, "discover_parser_factories", discover)
+
+    try:
+        assert isinstance(parser_for_kind("direct"), DirectParser)
+        assert isinstance(parser_for_kind("direct"), DirectParser)
+        assert registered_parser_kinds() == {ParserKind("direct")}
+        assert len(calls) == 1
+    finally:
+        clear_parser_registry_cache()
 
 
 @pytest.mark.unit()

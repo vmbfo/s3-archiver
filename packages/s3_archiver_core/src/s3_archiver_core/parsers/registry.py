@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from collections.abc import Callable, Iterable, Mapping
+from functools import cache
 from types import ModuleType
 from typing import cast
 
@@ -34,6 +35,13 @@ def registered_parser_kinds() -> frozenset[ParserKind]:
     return frozenset(_registry())
 
 
+def clear_parser_registry_cache() -> None:
+    """Clear cached parser discovery results."""
+
+    _registry.cache_clear()
+
+
+@cache
 def _registry() -> Mapping[ParserKind, ParserFactory]:
     return discover_parser_factories(_iter_parser_module_names(), importlib.import_module)
 
