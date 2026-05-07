@@ -11,7 +11,7 @@ from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 CopyMode = Literal["direct", "daily_tar_gz"]
-ParserKind = Literal["direct", "filename_timestamp", "folder_timestamp"]
+ParserKind = str
 
 
 class SourceLister(Protocol):

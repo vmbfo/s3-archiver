@@ -238,6 +238,7 @@ def test_check_command_rejects_same_localstack_bucket_with_dual_credentials(
 ) -> None:
     env = _integration_env(localstack_bucket_pair)
     env["S3_DESTINATION_BUCKET"] = localstack_bucket_pair.source
+    _set_route_destination_bucket(env, localstack_bucket_pair.source)
     monkeypatch.setattr(os, "environ", env)
 
     result = RUNNER.invoke(cli_module.app, ["check"])
@@ -247,6 +248,14 @@ def test_check_command_rejects_same_localstack_bucket_with_dual_credentials(
     assert payload["status"] == "error"
     assert payload["field"] == "route"
     assert "source and destination storage locations must differ" in str(payload["message"])
+
+
+def _set_route_destination_bucket(env: dict[str, str], bucket: str) -> None:
+    routes = cast(list[dict[str, object]], json.loads(env["ARCHIVER_CONFIG_JSON"]))
+    route = routes[0]
+    destination = cast(dict[str, object], route["destination"])
+    destination["bucket"] = bucket
+    env["ARCHIVER_CONFIG_JSON"] = json.dumps(routes)
 
 
 def _log_records(log_file: Path) -> list[dict[str, object]]:

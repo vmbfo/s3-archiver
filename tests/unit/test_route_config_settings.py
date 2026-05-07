@@ -69,7 +69,7 @@ def test_from_env_decodes_route_config_json(tmp_path: Path) -> None:
 
     route = settings.routes[0]
     assert route.name == "fae-daily"
-    assert route.parser is ParserKind.FILENAME_TIMESTAMP
+    assert route.parser == ParserKind.FILENAME_TIMESTAMP
     assert route.copy_mode is CopyMode.DAILY_TAR_GZ
     assert route.source.provider is S3Provider.LOCALSTACK
     assert route.source.endpoint_url == "http://localstack:4566"
@@ -124,7 +124,7 @@ def test_from_env_validates_parser_against_registry(
     monkeypatch.setattr(
         parser_registry,
         "registered_parser_kinds",
-        lambda: frozenset({ParserKind.FILENAME_TIMESTAMP}),
+        lambda: frozenset({ParserKind("filename_timestamp")}),
     )
 
     with pytest.raises(ConfigError, match="parser"):
@@ -179,7 +179,9 @@ def test_from_env_rejects_missing_route_fields(
 @pytest.mark.parametrize(
     ("source_update", "message"),
     [
+        ({"provider": 3}, "provider"),
         ({"provider": "aws"}, "provider"),
+        ({"addressing_style": 3}, "addressing_style"),
         ({"addressing_style": "invalid"}, "addressing_style"),
         ({"endpoint_url": 4566}, "endpoint_url"),
         ({"access_key_id": 3}, "access_key_id"),
@@ -203,13 +205,14 @@ def test_from_env_rejects_invalid_route_source_fields(
 
 
 @pytest.mark.unit()
-def test_from_env_rejects_route_source_without_provider(tmp_path: Path) -> None:
+def test_from_env_uses_default_provider_when_route_source_omits_provider(tmp_path: Path) -> None:
     route = _route()
     source = cast(dict[str, object], route["source"])
     _ = source.pop("provider")
 
-    with pytest.raises(ConfigError, match="provider"):
-        _ = AppSettings.from_env(_env(tmp_path, [route]))
+    settings = AppSettings.from_env(_env(tmp_path, [route]))
+
+    assert settings.source.provider is S3Provider.LOCALSTACK
 
 
 @pytest.mark.unit()

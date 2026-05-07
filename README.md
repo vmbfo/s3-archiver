@@ -58,12 +58,14 @@ LocalStack readiness now only proves the S3 API is reachable. The pytest integra
 `ARCHIVER_CONFIG_JSON` is the only archive routing configuration surface. It must be a JSON array, where each object has:
 
 - `name`: unique route name used in logs, manifests, health output, and archive result payloads.
-- `parser`: `filename_timestamp`, `folder_timestamp`, or `direct`.
+- `parser`: registered parser name, such as `filename_timestamp`, `folder_timestamp`, or `direct`.
 - `copy_mode`: `daily_tar_gz` or `direct`.
 - `source`: source S3 location object.
 - `destination`: destination S3 location object.
 
-Source and destination location objects use the same schema: `provider`, `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, `access_key_id`, `secret_access_key`, `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty.
+Source and destination location objects use the same schema: optional `provider`, optional `region`, `bucket`, optional `namespace`, optional `iam_user_ocid`, optional `endpoint_url`, optional `access_key_id`, optional `secret_access_key`, optional `addressing_style`, and optional `path`. `provider` is `oci` or `localstack`; `addressing_style` is `path` or `virtual`. For OCI routes, omit `endpoint_url` to derive `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`. `path` scopes the route to a prefix on that side and may be empty.
+
+Missing location fields are resolved from the explicit route value, then the side-specific environment variable, then the shared `S3_*` environment variable, then a built-in default where one is valid. For example, `source.region` falls back to `S3_SOURCE_REGION`, then `S3_REGION`, then `us-east-1`; `destination.access_key_id` falls back to `S3_DESTINATION_ACCESS_KEY_ID`, then `S3_ACCESS_KEY_ID`. Buckets intentionally do not have a shared fallback: source buckets use `S3_SOURCE_BUCKET`, and destination buckets use `S3_DESTINATION_BUCKET`. Common shared defaults are `S3_PROVIDER`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_NAMESPACE`, `S3_IAM_USER_OCID`, and `S3_ADDRESSING_STYLE`.
 
 Parser behavior:
 
@@ -78,39 +80,35 @@ Copy modes:
 
 Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
 
-Route examples:
+Minimal route example:
 
 ```json
 [
   {
-    "name": "daily-by-filename",
+    "name": "daily",
     "parser": "filename_timestamp",
     "copy_mode": "daily_tar_gz",
-    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
-    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/filename/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
-  },
-  {
-    "name": "daily-by-last-modified",
-    "parser": "direct",
-    "copy_mode": "daily_tar_gz",
-    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
-    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/last-modified/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
-  },
-  {
-    "name": "daily-by-folder",
-    "parser": "folder_timestamp",
-    "copy_mode": "daily_tar_gz",
-    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
-    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "archives/folder/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
-  },
-  {
-    "name": "direct-copy",
-    "parser": "filename_timestamp",
-    "copy_mode": "direct",
-    "source": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueidsource", "bucket": "source", "path": "direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"},
-    "destination": {"provider": "oci", "region": "eu-frankfurt-1", "namespace": "tenant", "iam_user_ocid": "ocid1.user.oc1..exampleuniqueiddestination", "bucket": "destination", "path": "copy/direct/", "access_key_id": "...", "secret_access_key": "...", "addressing_style": "path"}
+    "source": {"bucket": "source-bucket"},
+    "destination": {"bucket": "archive-bucket"}
   }
 ]
+```
+
+Use explicit fields only when a route differs from the shared defaults. For example, set `source.path` to scope source selection to one prefix, or set `destination.path` for advanced placement of generated archives.
+
+### Create A New Parser
+
+Custom parsers live in `packages/s3_archiver_core/src/s3_archiver_core/parsers`.
+
+1. Copy `packages/s3_archiver_core/src/s3_archiver_core/parsers/template.py`.
+2. Rename the copy to a snake_case parser name, for example `customer_timestamp.py`.
+3. Edit the sections marked `CHANGE HERE` in the copied file.
+4. Keep the parser class named `Parser`; the registry discovers it automatically.
+5. Use `"parser": "customer_timestamp"` in `ARCHIVER_CONFIG_JSON`.
+6. Run the targeted parser tests:
+
+```bash
+uv run pytest tests/unit/test_parsers.py tests/unit/test_route_config_settings.py -m unit
 ```
 
 Removed environment variables are rejected when set. Migrate `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP`, `ARCHIVER_MAX_WORKERS`, `S3_SOURCE_PATH_WHITELIST_ENABLED`, `S3_SOURCE_PATH_WHITELIST`, `S3_SOURCE_PATH_BLACKLIST_ENABLED`, and `S3_SOURCE_PATH_BLACKLIST` into explicit route JSON. Use route `path` values for source selection and destination placement, choose `parser` for object selection behavior, and choose `copy_mode` for archive-vs-direct output behavior.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import ModuleType
 
 import pytest
 from s3_archiver_core.parsers import SelectedObject, SkippedObject
@@ -11,8 +12,12 @@ from s3_archiver_core.parsers.filename_timestamp import FilenameTimestampParser
 from s3_archiver_core.parsers.folder_timestamp import FolderTimestampParser
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.protocol import ParserContext
-from s3_archiver_core.parsers.registry import parser_for_kind, registered_parser_kinds
-from s3_archiver_core.parsers.template import TemplateParser
+from s3_archiver_core.parsers.registry import (
+    discover_parser_factories,
+    parser_for_kind,
+    registered_parser_kinds,
+)
+from s3_archiver_core.parsers.template import Parser as TemplateParser
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties
 
 
@@ -44,18 +49,56 @@ def _listed(key: str, last_modified: datetime | None = None) -> S3ListedObject:
 @pytest.mark.unit()
 def test_registry_contains_only_supported_parser_kinds() -> None:
     assert registered_parser_kinds() == {
-        ParserKind.DIRECT,
-        ParserKind.FILENAME_TIMESTAMP,
-        ParserKind.FOLDER_TIMESTAMP,
+        ParserKind("direct"),
+        ParserKind("filename_timestamp"),
+        ParserKind("folder_timestamp"),
     }
-    assert isinstance(parser_for_kind(ParserKind.DIRECT), DirectParser)
-    assert ParserKind("direct") in registered_parser_kinds()
-    assert DirectParser().kind is ParserKind.DIRECT
-    assert FilenameTimestampParser().kind is ParserKind.FILENAME_TIMESTAMP
-    assert FolderTimestampParser().kind is ParserKind.FOLDER_TIMESTAMP
-    assert TemplateParser().parse(_listed("data/file.txt")).reason == (
-        "template parser is not configured"
+    assert isinstance(parser_for_kind("direct"), DirectParser)
+    assert "template" not in {kind.value for kind in registered_parser_kinds()}
+    assert DirectParser().kind == ParserKind.DIRECT
+    assert FilenameTimestampParser().kind == ParserKind.FILENAME_TIMESTAMP
+    assert FolderTimestampParser().kind == ParserKind.FOLDER_TIMESTAMP
+
+
+@pytest.mark.unit()
+def test_registry_auto_discovers_parser_class_by_module_filename() -> None:
+    custom = ModuleType("s3_archiver_core.parsers.customer_timestamp")
+    custom.__dict__["Parser"] = DirectParser
+    no_parser = ModuleType("s3_archiver_core.parsers.no_parser")
+    not_callable = ModuleType("s3_archiver_core.parsers.not_callable")
+    not_callable.__dict__["Parser"] = "not-callable"
+    modules = {
+        custom.__name__: custom,
+        no_parser.__name__: no_parser,
+        not_callable.__name__: not_callable,
+    }
+
+    registry = discover_parser_factories(
+        (
+            "s3_archiver_core.parsers.customer_timestamp",
+            "s3_archiver_core.parsers.no_parser",
+            "s3_archiver_core.parsers.not_callable",
+            "s3_archiver_core.parsers.template",
+        ),
+        modules.__getitem__,
     )
+
+    assert registry == {ParserKind("customer_timestamp"): DirectParser}
+
+
+@pytest.mark.unit()
+def test_template_parser_documents_select_and_skip_results() -> None:
+    parser = TemplateParser()
+
+    assert parser.parse(_listed("data/file.txt")) == SkippedObject("not an XML object")
+    assert parser.parse(_listed("file.xml")) == SelectedObject(
+        datetime(2026, 1, 1, tzinfo=UTC),
+        "basename",
+        "",
+    )
+    result = parser.parse(_listed("data/file.xml"))
+    assert isinstance(result, SelectedObject)
+    assert result.archive_root == "data"
 
 
 @pytest.mark.unit()

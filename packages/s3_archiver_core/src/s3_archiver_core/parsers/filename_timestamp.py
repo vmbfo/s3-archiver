@@ -265,3 +265,6 @@ def _is_day(value: str | None) -> bool:
 
 def _is_hour(value: str | None) -> bool:
     return value is not None and re.fullmatch(r"[01]\d|2[0-3]", value) is not None
+
+
+Parser = FilenameTimestampParser
