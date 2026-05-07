@@ -44,6 +44,8 @@ def test_manifest_uses_frozen_cutoff_filters_and_preserves_versions() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [(entry.key, entry.version_id) for entry in manifest.entries] == [

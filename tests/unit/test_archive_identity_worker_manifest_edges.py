@@ -97,6 +97,8 @@ def test_route_manifest_skips_unselected_objects_and_records_storage_identity() 
         skipped_source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
         parser=lambda _listed: None,
     )
 
@@ -112,6 +114,8 @@ def test_route_manifest_skips_unselected_objects_and_records_storage_identity() 
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
         source_path="raw/prefix",
         destination=destination,
         destination_path="archives",
@@ -145,6 +149,8 @@ def test_manifest_filters_source_path_and_relativizes_default_archive_root() -> 
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
         source_path="raw/prefix",
         parser=lambda _listed: SelectedObject(
             datetime(2026, 4, 13, tzinfo=UTC),
@@ -187,6 +193,8 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
 

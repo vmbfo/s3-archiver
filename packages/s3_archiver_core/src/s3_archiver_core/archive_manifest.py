@@ -17,12 +17,6 @@ from s3_archiver_core._archive_manifest_models import (
     SkippedObject,
     SourceLister,
 )
-from s3_archiver_core.archive_timestamp import (
-    TimestampSource,
-    archive_root_for_key,
-    destination_archive_key,
-    select_key_timestamp,
-)
 from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.s3 import VersioningState
 
@@ -39,12 +33,8 @@ __all__ = (
     "SelectedObject",
     "SkippedObject",
     "SourceLister",
-    "TimestampSource",
-    "archive_root_for_key",
     "build_archive_manifest",
     "build_route_archive_manifest",
-    "destination_archive_key",
-    "select_key_timestamp",
 )
 
 
@@ -53,9 +43,9 @@ def build_archive_manifest(
     *,
     run_started_at_utc: datetime,
     versioning_state: VersioningState,
+    parser_kind: ParserKind,
+    copy_mode: CopyMode,
     route_name: str = "default",
-    parser_kind: ParserKind = "filename_timestamp",
-    copy_mode: CopyMode = "daily_tar_gz",
     source_path: str = "",
     destination: DestinationLocator | None = None,
     destination_path: str = "",

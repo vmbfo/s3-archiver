@@ -57,6 +57,8 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
 

@@ -13,9 +13,8 @@ from typing import override
 
 import pytest
 from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
@@ -35,9 +34,7 @@ def test_run_archive_returns_quickly_after_copy_and_verify() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(
-            run_timeout=timedelta(milliseconds=50),
-        ),
+        daily_archive_options(run_timeout=timedelta(milliseconds=50)),
         run_started_at_utc=started,
         clock=clock,
     )
@@ -66,9 +63,7 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(
-            run_timeout=timedelta(milliseconds=50),
-        ),
+        daily_archive_options(run_timeout=timedelta(milliseconds=50)),
         run_started_at_utc=started,
         clock=lambda: datetime.now(tz=UTC),
     )
@@ -84,9 +79,12 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
         """
         import time
         from datetime import UTC, datetime, timedelta
-        from tests.unit.archive_workflow_fakes import FakeBucket, listed_object
+        from tests.unit.archive_workflow_fakes import (
+            FakeBucket,
+            daily_archive_options,
+            listed_object,
+        )
         from s3_archiver_core.archive import run_archive
-        from s3_archiver_core.archive_options import ArchiveOptions
 
         started = datetime.now(tz=UTC)
         target_day = started.date() - timedelta(days=60)
@@ -94,9 +92,7 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
         run_archive(
             FakeBucket("source", (listed_object(source_key, 90),)),
             FakeBucket("destination"),
-            ArchiveOptions(
-                run_timeout=timedelta(milliseconds=50),
-            ),
+            daily_archive_options(run_timeout=timedelta(milliseconds=50)),
             run_started_at_utc=started,
             clock=lambda: datetime.now(tz=UTC),
         )

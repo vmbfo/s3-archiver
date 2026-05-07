@@ -14,17 +14,10 @@ from s3_archiver_core.archive import (
     group_metadata,
     run_archive,
 )
-from s3_archiver_core.archive_manifest import (
-    archive_root_for_key,
-    build_archive_manifest,
-    select_key_timestamp,
-)
-from s3_archiver_core.archive_options import ArchiveOptions
-from s3_archiver_core.archive_timestamp import (
-    select_key_timestamp as compatible_select_key_timestamp,
-)
+from s3_archiver_core.archive_manifest import build_archive_manifest
+from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -45,17 +38,6 @@ def test_timestamp_selection_prefers_basename_and_uses_path_fallback() -> None:
 
 
 @pytest.mark.unit()
-def test_compat_timestamp_selection_accepts_ignored_last_modified_keyword() -> None:
-    last_modified = datetime(2030, 1, 1, tzinfo=UTC)
-
-    assert compatible_select_key_timestamp(
-        "data/2026-04-13T07-00-00Z.xml",
-        last_modified=last_modified,
-    ) == (datetime(2026, 4, 13, 7, tzinfo=UTC), "basename")
-    assert compatible_select_key_timestamp("data/no-stamp.txt", last_modified=last_modified) is None
-
-
-@pytest.mark.unit()
 def test_malformed_filename_time_is_not_used_as_date_only_fallback() -> None:
     assert select_key_timestamp("data/fae/2026-04-13T99-00-00.xml") is None
     assert select_key_timestamp("data/fae/2026/04/13/2026-04-13T99-00-00.xml") is None
@@ -72,6 +54,8 @@ def test_malformed_filename_time_is_not_used_as_date_only_fallback() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
@@ -97,6 +81,8 @@ def test_filename_timestamp_offset_is_converted_to_utc_target_day() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [group.target_day for group in manifest.archive_groups] == [TARGET_DAY]
@@ -133,6 +119,8 @@ def test_manifest_selects_parser_timestamp_days_and_records_skips() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert manifest.target_day is None
@@ -161,6 +149,8 @@ def test_invalid_date_like_timestamp_is_skipped_instead_of_failing_manifest() ->
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [entry.key for entry in manifest.entries] == ["data/fae/2026-04-13T00-00-00Z.xml"]
@@ -195,7 +185,7 @@ def test_run_archive_uploads_deterministic_tar_with_manifest_metadata() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -231,6 +221,8 @@ def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> No
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     existing_payload = b"archive"
@@ -246,7 +238,7 @@ def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> No
     result = run_archive(
         source,
         matching,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -262,7 +254,7 @@ def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> No
     failed = run_archive(
         source,
         mismatched,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -283,7 +275,7 @@ def test_archive_does_not_delete_manifest_versions() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

@@ -28,6 +28,18 @@ class FailingListBucket(FakeBucket):
 
 
 @pytest.mark.unit()
+def test_run_archive_requires_explicit_route_options() -> None:
+    with pytest.raises(ValueError, match="at least one route"):
+        _ = run_archive(
+            FakeBucket("source"),
+            FakeBucket("archive"),
+            ArchiveOptions(),
+            run_started_at_utc=STARTED,
+            clock=lambda: STARTED,
+        )
+
+
+@pytest.mark.unit()
 def test_direct_copy_uses_route_transfer_capabilities() -> None:
     listed = _listed("data/raw.txt", 1, "v1")
     source = FakeBucket("source", (listed,))
@@ -65,7 +77,15 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
     destination = FakeBucket("archive")
 
     result = run_archive_routes(
-        (ArchiveRoute("broken", source, destination),),
+        (
+            ArchiveRoute(
+                "broken",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        ),
         ArchiveOptions(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
@@ -91,6 +111,8 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
                 destination,
                 source_path="left/",
                 destination_path="archives/",
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
             ),
             ArchiveRoute(
                 "direct",
@@ -130,6 +152,8 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
                 "failed",
                 FakeBucket("source", (listed,)),
                 failed_destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
                 source_identity=("source", "failed"),
                 destination_identity=("destination", "failed"),
             ),
@@ -137,6 +161,8 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
                 "verified",
                 FakeBucket("source", (listed,)),
                 verified_destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
                 source_identity=("source", "verified"),
                 destination_identity=("destination", "verified"),
             ),

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from datetime import date, datetime
 from typing import Literal, Protocol
 
-from s3_archiver_core.archive_timestamp import TimestampSource
 from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
+from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 CopyMode = Literal["direct", "daily_tar_gz"]
@@ -143,10 +143,11 @@ class ArchiveManifestRoute:
     name: str
     source: SourceLister
     destination: DestinationLocator
+    _: KW_ONLY
+    parser_kind: ParserKind
+    copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    parser_kind: ParserKind = "filename_timestamp"
-    copy_mode: CopyMode = "daily_tar_gz"
     parser: ParserSelector | None = None
     versioning_state: VersioningState | None = None
     source_identity: object | None = None

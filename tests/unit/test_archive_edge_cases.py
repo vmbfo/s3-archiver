@@ -11,10 +11,9 @@ from s3_archiver_core.archive import MANIFEST_SHA256_METADATA_KEY, group_metadat
 from s3_archiver_core.archive_manifest import (
     build_archive_manifest,
 )
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2024, 4, 20, tzinfo=UTC)
@@ -59,7 +58,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
         _ = run_archive(
             FakeBucket("source"),
             FakeBucket("destination"),
-            ArchiveOptions(),
+            daily_archive_options(),
             run_started_at_utc=STARTED,
             run_lock=FakeRunLock(acquired=False),
             clock=lambda: STARTED,
@@ -68,7 +67,7 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
     result = run_archive(
         FakeBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         run_lock=lock,
         clock=lambda: STARTED,
@@ -83,7 +82,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     batch_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=1),
     )
@@ -92,7 +91,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     copy_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=2),
     )
@@ -101,7 +100,7 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     verify_timeout = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=4),
     )
@@ -115,7 +114,7 @@ def test_run_archive_completes_after_verify_phase() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=7),
     )
@@ -143,7 +142,7 @@ def test_verify_failure_after_copy_fails_run() -> None:
     result = run_archive(
         source,
         VanishingDestination("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -163,7 +162,7 @@ def test_archive_uses_manifest_version_for_current_archive_group() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -179,6 +178,8 @@ def test_existing_archive_with_different_manifest_metadata_fails_verification() 
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -195,7 +196,7 @@ def test_existing_archive_with_different_manifest_metadata_fails_verification() 
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -214,7 +215,7 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         run_lock=lock,
     )

@@ -30,13 +30,15 @@ def archive_routes_from_settings(
                 route.destination.bucket,
                 settings.temp_dir,
             ),
-            route.source.path,
-            route.destination.path,
-            route.parser.value,
-            route.copy_mode.value,
-            route.source.storage_identity(),
-            route.destination.storage_identity(),
-            transfer_capabilities_for_locations(route.source, route.destination),
+            parser_kind=route.parser.value,
+            copy_mode=route.copy_mode.value,
+            source_path=route.source.path,
+            destination_path=route.destination.path,
+            source_identity=route.source.storage_identity(),
+            destination_identity=route.destination.storage_identity(),
+            transfer_capabilities=transfer_capabilities_for_locations(
+                route.source, route.destination
+            ),
         )
         for route in settings.routes
     )

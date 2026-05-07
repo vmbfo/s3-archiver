@@ -22,12 +22,12 @@ from s3_archiver_core._archive_manifest_paths import (
     storage_identity,
 )
 from s3_archiver_core._archive_manifest_selection import select_object
-from s3_archiver_core.archive_timestamp import (
-    TimestampSource,
+from s3_archiver_core.parsers.filename_timestamp import (
     archive_root_for_key,
     destination_archive_key,
 )
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
+from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
 
@@ -36,9 +36,9 @@ def build_archive_manifest(
     *,
     run_started_at_utc: datetime,
     versioning_state: VersioningState,
+    parser_kind: ParserKind,
+    copy_mode: CopyMode,
     route_name: str = "default",
-    parser_kind: ParserKind = "filename_timestamp",
-    copy_mode: CopyMode = "daily_tar_gz",
     source_path: str = "",
     destination: DestinationLocator | None = None,
     destination_path: str = "",
@@ -170,6 +170,7 @@ def archive_groups(entries: tuple[ManifestEntry, ...]) -> tuple[ArchiveGroup, ..
                 key=lambda item: item.key,
             )
         )
+        first = grouped[0]
         groups.append(
             ArchiveGroup(
                 target_day,
@@ -177,12 +178,12 @@ def archive_groups(entries: tuple[ManifestEntry, ...]) -> tuple[ArchiveGroup, ..
                 destination_key,
                 grouped,
                 route_name,
-                grouped[0].parser_kind if grouped else "filename_timestamp",
-                grouped[0].copy_mode if grouped else "daily_tar_gz",
-                grouped[0].source_bucket if grouped else "",
-                grouped[0].source_identity if grouped else None,
+                first.parser_kind,
+                first.copy_mode,
+                first.source_bucket,
+                first.source_identity,
                 destination_bucket,
-                grouped[0].destination_identity if grouped else None,
+                first.destination_identity,
             )
         )
     return tuple(groups)

@@ -19,9 +19,7 @@ from s3_archiver_core.archive_fingerprint import (
 from s3_archiver_core.archive_manifest import (
     ArchiveGroup,
     ManifestEntry,
-    archive_root_for_key,
     build_archive_manifest,
-    select_key_timestamp,
 )
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.archive_transfer import (
@@ -30,6 +28,7 @@ from s3_archiver_core.archive_transfer import (
     verify_destination_content,
 )
 from s3_archiver_core.archive_workers import run_archive_group_workers, run_archive_workers
+from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 from s3_archiver_core.s3 import S3ObjectProperties
 
 from tests.unit.archive_s3_fakes import FakeArchiveClient
@@ -241,6 +240,8 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
 

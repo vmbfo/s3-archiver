@@ -76,7 +76,15 @@ def test_run_visual_demo_reports_bucket_story(
         _settings: AppSettings,
         _build_client: Callable[[S3LocationSettings], object],
     ) -> tuple[ArchiveRoute, ...]:
-        return (ArchiveRoute("default", source, destination),)
+        return (
+            ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        )
 
     lines: list[str] = []
     monkeypatch.setattr(demo_module, "run_health_check", fake_health_check)
@@ -131,7 +139,15 @@ def test_run_visual_demo_uses_default_utc_clock(
         _settings: AppSettings,
         _build_client: Callable[[S3LocationSettings], object],
     ) -> tuple[ArchiveRoute, ...]:
-        return (ArchiveRoute("default", source, destination),)
+        return (
+            ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        )
 
     monkeypatch.setattr(demo_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(demo_module, "run_health_check", fake_health_check)

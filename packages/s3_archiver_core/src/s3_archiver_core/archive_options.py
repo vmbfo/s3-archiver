@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import timedelta
 
 from s3_archiver_core.archive_manifest import CopyMode, ParserKind
@@ -16,10 +16,11 @@ class ArchiveRouteOptions:
     """Route-specific archive workflow settings."""
 
     name: str
+    _: KW_ONLY
+    parser_kind: ParserKind
+    copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    parser_kind: ParserKind = "filename_timestamp"
-    copy_mode: CopyMode = "daily_tar_gz"
 
 
 @dataclass(frozen=True, slots=True)

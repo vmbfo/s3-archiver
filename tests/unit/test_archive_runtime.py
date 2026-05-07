@@ -9,10 +9,9 @@ from typing import override
 import pytest
 from s3_archiver_core.archive import group_metadata, run_archive
 from s3_archiver_core.archive_manifest import build_archive_manifest
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -35,6 +34,8 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     destination = FakeBucket(
@@ -51,7 +52,7 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -69,7 +70,7 @@ def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
@@ -82,7 +83,7 @@ def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     reuse_result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -101,7 +102,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     copy_failed = run_archive(
         source,
         failing_destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -113,7 +114,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     verify_failed = run_archive(
         source,
         bad_destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -138,7 +139,7 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     verify_missing = run_archive(
         source,
         MissingDuringVerify(),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -157,7 +158,7 @@ def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -175,7 +176,7 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     timed_out = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=started,
         clock=lambda: started + timedelta(days=8),
     )
@@ -194,7 +195,7 @@ def test_list_failure_blocks_archive_phases() -> None:
     result = run_archive(
         BrokenListBucket("source"),
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -215,7 +216,7 @@ def test_archive_accepts_source_last_modified_changes_after_listing() -> None:
     result = run_archive(
         source,
         FakeBucket("destination"),
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -232,7 +233,7 @@ def test_key_only_archive_succeeds_when_current_source_still_matches() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )

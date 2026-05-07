@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import chain
 from pathlib import Path
 
+from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
 from s3_archiver_core.temp_files import default_temp_dir
@@ -28,6 +29,21 @@ class FakeReadableBody:
 
     def close(self) -> None:
         self._body.close()
+
+
+def daily_archive_options(*, run_timeout: timedelta | None = None) -> ArchiveOptions:
+    """Build explicit daily archive route options for legacy workflow tests."""
+
+    return ArchiveOptions(
+        run_timeout=timedelta(days=7) if run_timeout is None else run_timeout,
+        routes=(
+            ArchiveRouteOptions(
+                "default",
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+        ),
+    )
 
 
 def object_properties(

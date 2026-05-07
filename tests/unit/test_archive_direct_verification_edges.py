@@ -28,7 +28,11 @@ def test_direct_copy_existing_destination_with_mismatched_content_fails() -> Non
         payloads={entry.destination_key: b"corrupt"},
     )
 
-    failure, copied = copy_direct_entry(ArchiveRoute("direct", source, destination), entry, None)
+    failure, copied = copy_direct_entry(
+        ArchiveRoute("direct", source, destination, parser_kind="direct", copy_mode="direct"),
+        entry,
+        None,
+    )
 
     assert failure == "data/raw.txt: content mismatch"
     assert copied is False

@@ -13,9 +13,8 @@ from s3_archiver_core.archive import (
     run_archive,
 )
 from s3_archiver_core.archive_manifest import build_archive_manifest
-from s3_archiver_core.archive_options import ArchiveOptions
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -30,6 +29,8 @@ def test_existing_archive_requires_archive_hash_before_reuse() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     missing_hash = FakeBucket(
@@ -40,7 +41,7 @@ def test_existing_archive_requires_archive_hash_before_reuse() -> None:
     result = run_archive(
         source,
         missing_hash,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -58,6 +59,8 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
         destination=destination_bucket,
         source_identity=("other", "source"),
     )
@@ -75,7 +78,7 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -93,6 +96,8 @@ def test_mismatched_existing_archive_fails_only_that_group() -> None:
         source,
         run_started_at_utc=STARTED,
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     good_group = next(
         group for group in manifest.archive_groups if group.archive_root == "data/fae"
@@ -118,7 +123,7 @@ def test_mismatched_existing_archive_fails_only_that_group() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

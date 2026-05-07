@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from s3_archiver_core.archive_timestamp import archive_root_for_key, select_folder_timestamp
+from s3_archiver_core.parsers.filename_timestamp import (
+    archive_root_for_key,
+    select_folder_timestamp,
+)
 from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.protocol import ParserContext, ParserListedObject
 from s3_archiver_core.parsers.results import SelectedObject, SkippedObject

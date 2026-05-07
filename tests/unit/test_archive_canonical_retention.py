@@ -6,9 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2024, 4, 20, tzinfo=UTC)
@@ -41,7 +40,7 @@ def test_canonical_timestamp_dataset_archives_each_selected_day() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )

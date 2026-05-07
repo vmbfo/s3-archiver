@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import cast
 from uuid import uuid4
 
 from s3_archiver_core._archive_copy import copy_group as _copy_group_impl
@@ -49,15 +48,17 @@ def run_archive(
 ) -> ArchiveRunResult:
     """Run one archive pass from source objects into destination archives."""
 
-    route_option = options.routes[0] if options.routes else None
+    if not options.routes:
+        raise ValueError("archive options must include at least one route")
+    route_option = options.routes[0]
     route = ArchiveRoute(
-        name="default" if route_option is None else route_option.name,
+        name=route_option.name,
         source=source,
         destination=destination,
-        source_path="" if route_option is None else route_option.source_path,
-        destination_path="" if route_option is None else route_option.destination_path,
-        parser_kind="filename_timestamp" if route_option is None else route_option.parser_kind,
-        copy_mode="daily_tar_gz" if route_option is None else route_option.copy_mode,
+        parser_kind=route_option.parser_kind,
+        copy_mode=route_option.copy_mode,
+        source_path=route_option.source_path,
+        destination_path=route_option.destination_path,
         transfer_capabilities=options.transfer_capabilities,
     )
     return run_archive_routes(
@@ -162,28 +163,16 @@ def _copy_group(
 
 
 def _verify_phase(
-    groups_or_destination: tuple[ArchiveGroup, ...] | ArchiveBucket,
-    entries_or_groups: tuple[ManifestEntry, ...] | tuple[ArchiveGroup, ...],
-    routes_or_worker_limit: dict[str, ArchiveRoute] | int,
+    groups: tuple[ArchiveGroup, ...],
+    entries: tuple[ManifestEntry, ...],
+    routes: dict[str, ArchiveRoute],
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
-    if isinstance(routes_or_worker_limit, dict):
-        assert isinstance(groups_or_destination, tuple)
-        return _verify_phase_impl(
-            groups_or_destination,
-            cast(tuple[ManifestEntry, ...], entries_or_groups),
-            routes_or_worker_limit,
-            timed_out,
-            time_remaining,
-        )
-    destination = groups_or_destination
-    groups = entries_or_groups
-    assert not isinstance(destination, tuple)
     return _verify_phase_impl(
-        cast(tuple[ArchiveGroup, ...], groups),
-        (),
-        {"default": ArchiveRoute("default", destination, destination)},
+        groups,
+        entries,
+        routes,
         timed_out,
         time_remaining,
     )
@@ -202,10 +191,10 @@ def _build_manifest(
                 route.name,
                 route.source,
                 route.destination,
-                route.source_path,
-                route.destination_path,
-                route.parser_kind,
-                route.copy_mode,
+                parser_kind=route.parser_kind,
+                copy_mode=route.copy_mode,
+                source_path=route.source_path,
+                destination_path=route.destination_path,
                 source_identity=route.source_identity,
                 destination_identity=route.destination_identity,
             )

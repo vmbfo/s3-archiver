@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, datetime
-from typing import cast, override
+from typing import cast
 
 import pytest
 from s3_archiver_core import _archive_copy as archive_copy_module
 from s3_archiver_core import archive as archive_module
-from s3_archiver_core._archive_copy import copy_direct_entry, copy_phase, run_route_workers
+from s3_archiver_core._archive_copy import copy_phase, run_route_workers
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core._archive_routes import DebugLogger
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRoute
@@ -20,8 +19,6 @@ from s3_archiver_core.archive_manifest import (
     ManifestEntry,
     build_archive_manifest,
 )
-from s3_archiver_core.archive_transfer import archive_metadata
-from s3_archiver_core.s3 import S3ObjectProperties
 
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
@@ -35,14 +32,16 @@ def test_verify_phase_reports_archive_verification_failure() -> None:
         source,
         run_started_at_utc=datetime(2026, 4, 27, 12, tzinfo=UTC),
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     group = manifest.archive_groups[0]
     verify_phase = cast(
         Callable[
             [
-                FakeBucket,
                 tuple[ArchiveGroup, ...],
-                int,
+                tuple[ManifestEntry, ...],
+                dict[str, ArchiveRoute],
                 Callable[[], bool],
                 Callable[[], float],
             ],
@@ -55,7 +54,21 @@ def test_verify_phase_reports_archive_verification_failure() -> None:
         destination={group.destination_archive_key: _properties(metadata={})},
     )
 
-    result = verify_phase(destination, (group,), 1, lambda: False, lambda: 1.0)
+    result = verify_phase(
+        (group,),
+        (),
+        {
+            "default": ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            )
+        },
+        lambda: False,
+        lambda: 1.0,
+    )
 
     assert result.failures == ("data/fae/2026-04-13.tar.gz: archive verification failed",)
 
@@ -68,6 +81,8 @@ def test_verify_phase_compatibility_accepts_route_map() -> None:
         source,
         run_started_at_utc=datetime(2026, 4, 27, 12, tzinfo=UTC),
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     verify_phase = cast(
         Callable[
@@ -86,7 +101,15 @@ def test_verify_phase_compatibility_accepts_route_map() -> None:
     result = verify_phase(
         manifest.archive_groups,
         (),
-        {"default": ArchiveRoute("default", source, destination)},
+        {
+            "default": ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            )
+        },
         lambda: False,
         lambda: 1.0,
     )
@@ -135,6 +158,8 @@ def test_copy_phase_ignores_uncopied_success_results(
         FakeBucket("daily", (_listed("data/fae/2026-04-13T00-00-00Z.txt", 1),)),
         run_started_at_utc=datetime(2026, 4, 27, 12, tzinfo=UTC),
         versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
         destination=destination,
         route_name="daily",
     )
@@ -167,8 +192,20 @@ def test_copy_phase_ignores_uncopied_success_results(
     phase, groups, entries = copy_phase(
         manifest,
         {
-            "default": ArchiveRoute("default", source, destination),
-            "daily": ArchiveRoute("daily", source, destination),
+            "default": ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
+            "daily": ArchiveRoute(
+                "daily",
+                source,
+                destination,
+                parser_kind="filename_timestamp",
+                copy_mode="daily_tar_gz",
+            ),
         },
         None,
         lambda: False,
@@ -181,65 +218,26 @@ def test_copy_phase_ignores_uncopied_success_results(
 
 
 @pytest.mark.unit()
-def test_direct_copy_existing_verified_destination_is_reused() -> None:
-    source, destination, entry = _direct_manifest_objects()
-    destination = FakeBucket(
-        "archive",
-        destination={
-            entry.destination_key: replace(
-                entry.object.properties, metadata=archive_metadata(entry)
-            )
-        },
-    )
-
-    failure, copied = copy_direct_entry(ArchiveRoute("direct", source, destination), entry, None)
-
-    assert failure is None
-    assert copied is True
-    assert destination.copied == []
-
-
-@pytest.mark.unit()
-def test_direct_copy_reports_copy_and_post_copy_verification_failures() -> None:
-    source, destination, entry = _direct_manifest_objects()
-    destination.fail_copy = True
-
-    failure, copied = copy_direct_entry(ArchiveRoute("direct", source, destination), entry, None)
-
-    assert failure == "data/raw.txt: copy failed"
-    assert copied is False
-
-    failure, copied = copy_direct_entry(
-        ArchiveRoute("direct", source, MissingDirectDestinationBucket("archive")),
-        entry,
-        None,
-    )
-
-    assert failure == "data/raw.txt: destination missing"
-    assert copied is False
-
-
-@pytest.mark.unit()
 def test_verify_phase_reports_direct_entry_verification_failure() -> None:
     source, destination, entry = _direct_manifest_objects()
 
     result = _verify_route_phase(
         (),
         (entry,),
-        {"default": ArchiveRoute("default", source, destination)},
+        {
+            "default": ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="direct",
+                copy_mode="direct",
+            )
+        },
         lambda: False,
         lambda: 1.0,
     )
 
     assert result.failures == ("data/raw.txt: destination missing",)
-
-
-class MissingDirectDestinationBucket(FakeBucket):
-    @override
-    def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-        _ = key
-        _ = version_id
-        return None
 
 
 def _direct_manifest_objects() -> tuple[FakeBucket, FakeBucket, ManifestEntry]:
