@@ -5,14 +5,17 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 
 from botocore.exceptions import ClientError
 
 from s3_archiver_core._archive_s3_helpers import (
+    ReadableBody,
+    close_body,
     is_not_found_error,
     object_list,
     optional_string,
+    parse_versioning_state,
     properties_from_head,
     required_int,
     supports_checksum_mode,
@@ -43,12 +46,7 @@ class S3ArchiveBucket:
     def versioning_state(self) -> VersioningState:
         """Return the bucket versioning state."""
         response = self.client.get_bucket_versioning(Bucket=self.bucket)
-        status = response.get("Status")
-        if status == "Enabled":
-            return "Enabled"
-        if status == "Suspended":
-            return "Suspended"
-        return "Disabled"
+        return parse_versioning_state(response.get("Status"))
 
     def list_source_objects(self, versioning_state: VersioningState) -> Iterator[S3ListedObject]:
         """List current source objects for the supplied versioning mode."""
@@ -87,7 +85,7 @@ class S3ArchiveBucket:
             while chunk := body.read(S3_CHUNK_BYTES):
                 digest.update(chunk)
         finally:
-            body.close()
+            close_body(body)
         return digest.hexdigest()
 
     def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
@@ -98,7 +96,7 @@ class S3ArchiveBucket:
             while chunk := body.read(S3_CHUNK_BYTES):
                 chunks.append(chunk)
         finally:
-            body.close()
+            close_body(body)
         return b"".join(chunks)
 
     def read_source_stream(self, key: str, version_id: str | None = None) -> ReadableBody:
@@ -219,15 +217,3 @@ class S3ArchiveBucket:
         etag = optional_string(item.get("ETag"))
         properties = self._source_properties(key, version_id)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
-
-
-class ReadableBody(Protocol):
-    """Readable streaming body returned by S3 get-object calls."""
-
-    def read(self, amt: int = -1) -> bytes:
-        """Read up to ``amt`` bytes."""
-        ...
-
-    def close(self) -> None:
-        """Close the body."""
-        ...

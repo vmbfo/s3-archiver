@@ -5,8 +5,14 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 
+from s3_archiver_core._archive_s3_helpers import (
+    ReadableBody,
+    close_body,
+    copy_source_kwargs,
+    versioned_kwargs,
+)
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
@@ -15,14 +21,6 @@ S3_MAX_MULTIPART_PARTS = 10_000
 S3TransferStrategy = Literal[
     "simple_native_copy", "multipart_native_copy", "multipart_streaming", "temp_file_backed"
 ]
-
-
-class ReadableBody(Protocol):
-    """Readable streaming object body."""
-
-    def read(self, size: int = -1) -> bytes:
-        """Read up to size bytes from the stream."""
-        ...
 
 
 def copy_s3_object(
@@ -40,7 +38,7 @@ def copy_s3_object(
 ) -> None:
     """Copy an S3 object with the requested strategy."""
 
-    source = _copy_source(source_bucket, source_key, source_version_id)
+    source = copy_source_kwargs(source_bucket, source_key, source_version_id)
     if strategy == "simple_native_copy" or (
         strategy == "multipart_native_copy" and properties.size == 0
     ):
@@ -81,7 +79,7 @@ def copy_s3_object(
             path.unlink(missing_ok=True)
     finally:
         if body is not None:
-            _close_body(body)
+            close_body(body)
 
 
 def upload_s3_file(
@@ -239,30 +237,10 @@ def _object_kwargs(
 
 
 def _source_body(client: S3Client, bucket: str, key: str, version_id: str | None) -> ReadableBody:
-    body = client.get_object(**_versioned_kwargs(bucket, key, version_id)).get("Body")
+    body = client.get_object(**versioned_kwargs(bucket, key, version_id)).get("Body")
     if not callable(getattr(body, "read", None)):
         raise TypeError("S3 get_object response Body is not readable")
     return cast(ReadableBody, body)
-
-
-def _close_body(body: ReadableBody) -> None:
-    close = getattr(body, "close", None)
-    if callable(close):
-        _ = close()
-
-
-def _versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:
-    kwargs: dict[str, object] = {"Bucket": bucket, "Key": key}
-    if version_id is not None:
-        kwargs["VersionId"] = version_id
-    return kwargs
-
-
-def _copy_source(bucket: str, key: str, version_id: str | None) -> dict[str, str]:
-    source = {"Bucket": bucket, "Key": key}
-    if version_id is not None:
-        source["VersionId"] = version_id
-    return source
 
 
 def _multipart_chunk_size(size: int) -> int:

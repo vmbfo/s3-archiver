@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 
+from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_manifest_builder import (
     archive_groups,
     build_archive_manifest,
@@ -16,7 +17,7 @@ from s3_archiver_core._archive_manifest_models import (
 )
 from s3_archiver_core._archive_manifest_paths import (
     as_utc,
-    normalize_prefix,
+    route_path_prefix,
     storage_identity,
 )
 
@@ -48,7 +49,6 @@ def build_route_archive_manifest(
             source_path=route.source_path,
             destination=route.destination,
             destination_path=route.destination_path,
-            parser=route.parser,
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
         )
@@ -62,9 +62,11 @@ def build_route_archive_manifest(
 
 
 def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRoute, ...]) -> None:
-    seen: dict[object, list[tuple[str, str]]] = {}
+    seen: dict[str, list[tuple[str, str]]] = {}
     for route in routes:
-        identity = route.source_identity or storage_identity(route.source)
+        identity = repr(
+            stable_identity_value(route.source_identity or storage_identity(route.source))
+        )
         path = route.source_path
         for other_name, other_path in seen.setdefault(identity, []):
             if _prefixes_overlap(path, other_path):
@@ -110,21 +112,15 @@ def _reject_duplicate_destinations(
 
 
 def _reject_duplicate_identities(keys: Iterable[object], message: str) -> None:
-    seen: set[object] = set()
+    seen: set[str] = set()
     for key in keys:
-        if key in seen:
+        stable_key = repr(stable_identity_value(key))
+        if stable_key in seen:
             raise ValueError(message)
-        seen.add(key)
+        seen.add(stable_key)
 
 
 def _prefixes_overlap(left: str, right: str) -> bool:
-    left_prefix = _route_path_prefix(left)
-    right_prefix = _route_path_prefix(right)
+    left_prefix = route_path_prefix(left)
+    right_prefix = route_path_prefix(right)
     return left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix)
-
-
-def _route_path_prefix(path: str) -> str:
-    normalized = normalize_prefix(path).rstrip("/")
-    if normalized == "":
-        return ""
-    return f"{normalized}/"

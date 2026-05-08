@@ -62,12 +62,13 @@ def test_health_check_succeeds_against_isolated_localstack_buckets(
         records = _log_records(log_file)
         assert any(
             record.get("event") == "health.started"
-            and record.get("bucket") == settings.bucket
-            and record.get("endpoint_url") == settings.resolved_endpoint_url()
+            and record.get("bucket") == settings.routes[0].source.bucket
+            and record.get("endpoint_url") == settings.routes[0].source.resolved_endpoint_url()
             for record in records
         )
         assert any(
-            record.get("event") == "health.succeeded" and record.get("bucket") == settings.bucket
+            record.get("event") == "health.succeeded"
+            and record.get("bucket") == settings.routes[0].source.bucket
             for record in records
         )
         file_handler = next(
@@ -98,7 +99,7 @@ def test_localstack_service_readiness_requires_only_s3_api(
     _ = localstack_service
     bucket_pair = bucket_pair_from_env(compose_env)
     settings = AppSettings.from_env(_integration_env(bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     list_buckets = client.list_buckets()
     bucket_names = {
         str(bucket["Name"])
@@ -115,13 +116,13 @@ def test_s3_client_supports_bucket_listing(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     key = "integration/listing-probe.txt"
     body = b"listed"
 
-    _ = client.put_object(Bucket=settings.bucket, Key=key, Body=body)
+    _ = client.put_object(Bucket=settings.routes[0].source.bucket, Key=key, Body=body)
 
-    assert key in listed_keys(client, settings.bucket)
+    assert key in listed_keys(client, settings.routes[0].source.bucket)
 
 
 @pytest.mark.integration()
@@ -129,12 +130,12 @@ def test_s3_client_supports_isolated_object_round_trip(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     key = "integration/probe.txt"
     body = b"s3-archiver"
 
-    _ = client.put_object(Bucket=settings.bucket, Key=key, Body=body)
-    response = client.get_object(Bucket=settings.bucket, Key=key)
+    _ = client.put_object(Bucket=settings.routes[0].source.bucket, Key=key, Body=body)
+    response = client.get_object(Bucket=settings.routes[0].source.bucket, Key=key)
     payload = cast(StreamingBody, response["Body"]).read()
 
     assert payload == body
@@ -212,15 +213,15 @@ def test_health_check_succeeds_for_source_bucket_versioning_states(
     expected_state: VersioningState,
 ) -> None:
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     if status is not None:
         configuration: VersioningConfigurationTypeDef = {"Status": status}
         _ = client.put_bucket_versioning(
-            Bucket=settings.bucket,
+            Bucket=settings.routes[0].source.bucket,
             VersioningConfiguration=configuration,
         )
 
-    raw_state = client.get_bucket_versioning(Bucket=settings.bucket).get("Status")
+    raw_state = client.get_bucket_versioning(Bucket=settings.routes[0].source.bucket).get("Status")
     state: VersioningState = (
         cast(VersioningState, raw_state) if raw_state in {"Enabled", "Suspended"} else "Disabled"
     )
@@ -228,7 +229,10 @@ def test_health_check_succeeds_for_source_bucket_versioning_states(
 
     assert state == expected_state
     assert report.status == "ok"
-    assert (report.source_bucket, report.source_versioning) == (settings.bucket, expected_state)
+    assert (report.source_bucket, report.source_versioning) == (
+        settings.routes[0].source.bucket,
+        expected_state,
+    )
 
 
 @pytest.mark.integration()

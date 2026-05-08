@@ -14,7 +14,7 @@ from typing import override
 import pytest
 from s3_archiver_core.archive import run_archive
 
-from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes, daily_run_timeout
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
@@ -32,9 +32,8 @@ def test_run_archive_returns_quickly_after_copy_and_verify() -> None:
     began = time.monotonic()
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(run_timeout=timedelta(milliseconds=50)),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(run_timeout=timedelta(milliseconds=50)),
         run_started_at_utc=started,
         clock=clock,
     )
@@ -61,9 +60,8 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
     began = time.monotonic()
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(run_timeout=timedelta(milliseconds=50)),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(run_timeout=timedelta(milliseconds=50)),
         run_started_at_utc=started,
         clock=lambda: datetime.now(tz=UTC),
     )
@@ -81,7 +79,7 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
         from datetime import UTC, datetime, timedelta
         from tests.unit.archive_workflow_fakes import (
             FakeBucket,
-            daily_archive_options,
+            archive_routes, daily_run_timeout,
             listed_object,
         )
         from s3_archiver_core.archive import run_archive
@@ -89,10 +87,11 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
         started = datetime.now(tz=UTC)
         target_day = started.date() - timedelta(days=60)
         source_key = f"data/fae/{target_day.isoformat()}T00-00-00.txt"
+        source = FakeBucket("source", (listed_object(source_key, 90),))
+        destination = FakeBucket("destination")
         run_archive(
-            FakeBucket("source", (listed_object(source_key, 90),)),
-            FakeBucket("destination"),
-            daily_archive_options(run_timeout=timedelta(milliseconds=50)),
+            archive_routes(source, destination),
+            run_timeout=daily_run_timeout(run_timeout=timedelta(milliseconds=50)),
             run_started_at_utc=started,
             clock=lambda: datetime.now(tz=UTC),
         )

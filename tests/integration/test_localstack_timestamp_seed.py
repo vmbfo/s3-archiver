@@ -39,7 +39,7 @@ def test_timestamp_seed_helper_sets_exact_last_modified_values(
         seed_now=SEED_NOW,
     )
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
 
     rows = [line.split("\t") for line in result.stdout.splitlines()]
 
@@ -48,7 +48,7 @@ def test_timestamp_seed_helper_sets_exact_last_modified_values(
         expected = SEED_NOW - timedelta(days=int(age_days))
         assert key == f"seed-helper/age-{age_days}-days.txt"
         assert _parse_timestamp(last_modified) == expected
-        head = _head_object_with_retry(client, settings.bucket, key)
+        head = _head_object_with_retry(client, settings.routes[0].source.bucket, key)
         metadata = cast(dict[str, object], head.get("Metadata", {}))
         assert metadata.get("s3-archiver-test-age-days") == age_days
         assert _required_datetime(head, "LastModified") == expected
@@ -71,10 +71,10 @@ def run_timestamp_seed_helper(
         log_dir=str(REPO_ROOT / ".local" / "integration-runtime" / "var" / "log"),
     )
     settings = AppSettings.from_env(env)
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     seed_timestamped_objects(
         client,
-        settings.bucket,
+        settings.routes[0].source.bucket,
         prefix=prefix,
         days=days,
         seed_now=seed_now,
@@ -82,7 +82,7 @@ def run_timestamp_seed_helper(
     rows: list[str] = []
     for day in days:
         key = f"{prefix}/age-{day}-days.txt"
-        head = _head_object_with_retry(client, settings.bucket, key)
+        head = _head_object_with_retry(client, settings.routes[0].source.bucket, key)
         rows.append(f"{key}\t{day}\t{_required_datetime(head, 'LastModified').isoformat()}")
     return subprocess.CompletedProcess(
         args=["seed-object-timestamps"],

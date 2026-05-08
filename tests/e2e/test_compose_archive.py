@@ -156,19 +156,20 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         import json
 
         from s3_archiver_cli import main as cli
-        from s3_archiver_core.archive_options import ArchiveOptions
         from s3_archiver_core.archive_transfer import select_transfer_strategy
+        from s3_archiver_core.s3 import transfer_capabilities_for_locations
         from s3_archiver_core.settings import AppSettings
 
         settings = AppSettings.from_env(cli._load_runtime_env())
-        capabilities = ArchiveOptions.from_settings(settings).transfer_capabilities
+        route = settings.routes[0]
+        capabilities = transfer_capabilities_for_locations(route.source, route.destination)
         print(
             json.dumps(
                 {
                     "multipart_copy": capabilities.multipart_copy,
                     "native_copy": capabilities.native_copy,
-                    "source_endpoint": settings.source.resolved_endpoint_url(),
-                    "destination_endpoint": settings.destination.resolved_endpoint_url(),
+                    "source_endpoint": settings.routes[0].source.resolved_endpoint_url(),
+                    "destination_endpoint": settings.routes[0].destination.resolved_endpoint_url(),
                     "strategy": select_transfer_strategy(
                         11,
                         capabilities,

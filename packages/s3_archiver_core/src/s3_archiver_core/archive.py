@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from s3_archiver_core._archive_copy import copy_group as _copy_group_impl
 from s3_archiver_core._archive_copy import copy_phase as _copy_phase_impl
 from s3_archiver_core._archive_copy import verify_phase as _verify_phase_impl
-from s3_archiver_core._archive_protocols import ArchiveBucket, ArchiveRunLock
+from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core._archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
@@ -15,13 +14,10 @@ from s3_archiver_core.archive_group_metadata import (
     group_metadata,
 )
 from s3_archiver_core.archive_manifest import (
-    ArchiveGroup,
     ArchiveManifest,
     ArchiveManifestRoute,
-    ManifestEntry,
     build_route_archive_manifest,
 )
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
 
 __all__ = (
@@ -32,49 +28,13 @@ __all__ = (
     "ArchiveRunResult",
     "group_metadata",
     "run_archive",
-    "run_archive_routes",
 )
 
 
 def run_archive(
-    source: ArchiveBucket,
-    destination: ArchiveBucket,
-    options: ArchiveOptions,
-    *,
-    run_started_at_utc: datetime | None = None,
-    run_lock: ArchiveRunLock | None = None,
-    debug_logger: DebugLogger | None = None,
-    clock: Callable[[], datetime] | None = None,
-) -> ArchiveRunResult:
-    """Run one archive pass from source objects into destination archives."""
-
-    if not options.routes:
-        raise ValueError("archive options must include at least one route")
-    route_option = options.routes[0]
-    route = ArchiveRoute(
-        name=route_option.name,
-        source=source,
-        destination=destination,
-        parser_kind=route_option.parser_kind,
-        copy_mode=route_option.copy_mode,
-        source_path=route_option.source_path,
-        destination_path=route_option.destination_path,
-        transfer_capabilities=options.transfer_capabilities,
-    )
-    return run_archive_routes(
-        (route,),
-        options,
-        run_started_at_utc=run_started_at_utc,
-        run_lock=run_lock,
-        debug_logger=debug_logger,
-        clock=clock,
-    )
-
-
-def run_archive_routes(
     routes: tuple[ArchiveRoute, ...],
-    options: ArchiveOptions,
     *,
+    run_timeout: timedelta,
     run_started_at_utc: datetime | None = None,
     run_lock: ArchiveRunLock | None = None,
     debug_logger: DebugLogger | None = None,
@@ -82,12 +42,14 @@ def run_archive_routes(
 ) -> ArchiveRunResult:
     """Run one archive pass with one execution worker per route."""
 
+    if not routes:
+        raise ValueError("archive run requires at least one route")
     now = clock or (lambda: datetime.now(tz=UTC))
     started = _as_utc(run_started_at_utc or now())
-    deadline = started + options.run_timeout
+    deadline = started + run_timeout
     run_id = uuid4().hex
     if run_lock is not None and not run_lock.acquire(
-        run_id=run_id, run_started_at_utc=started, timeout=options.run_timeout
+        run_id=run_id, run_started_at_utc=started, timeout=run_timeout
     ):
         raise RuntimeError("archive run lock is already held")
     try:
@@ -151,34 +113,6 @@ def _run_result(
     verify: ArchivePhaseResult,
 ) -> ArchiveRunResult:
     return ArchiveRunResult(run_id, manifest, copy, verify)
-
-
-def _copy_group(
-    source: ArchiveBucket,
-    destination: ArchiveBucket,
-    group: ArchiveGroup,
-    debug_logger: DebugLogger | None,
-) -> tuple[str | None, bool]:
-    return _copy_group_impl(source, destination, group, debug_logger)
-
-
-def _verify_phase(
-    groups: tuple[ArchiveGroup, ...],
-    entries: tuple[ManifestEntry, ...],
-    routes: dict[str, ArchiveRoute],
-    timed_out: Callable[[], bool],
-    time_remaining: Callable[[], float],
-) -> ArchivePhaseResult:
-    return _verify_phase_impl(
-        groups,
-        entries,
-        routes,
-        timed_out,
-        time_remaining,
-    )
-
-
-_PRIVATE_TEST_HOOKS = (_copy_group, _verify_phase)
 
 
 def _build_manifest(

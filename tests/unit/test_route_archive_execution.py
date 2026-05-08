@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import override
 
 import pytest
-from s3_archiver_core.archive import ArchiveRoute, run_archive, run_archive_routes
+from s3_archiver_core.archive import ArchiveRoute, run_archive
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
 from s3_archiver_core.archive_transfer import archive_metadata
 from s3_archiver_core.s3 import S3ListedObject, S3TransferCapabilities, VersioningState
 
@@ -31,9 +30,8 @@ class FailingListBucket(FakeBucket):
 def test_run_archive_requires_explicit_route_options() -> None:
     with pytest.raises(ValueError, match="at least one route"):
         _ = run_archive(
-            FakeBucket("source"),
-            FakeBucket("archive"),
-            ArchiveOptions(),
+            (),
+            run_timeout=timedelta(days=7),
             run_started_at_utc=STARTED,
             clock=lambda: STARTED,
         )
@@ -45,7 +43,7 @@ def test_direct_copy_uses_route_transfer_capabilities() -> None:
     source = FakeBucket("source", (listed,))
     destination = FakeBucket("archive")
 
-    result = run_archive_routes(
+    result = run_archive(
         (
             ArchiveRoute(
                 "direct",
@@ -61,7 +59,7 @@ def test_direct_copy_uses_route_transfer_capabilities() -> None:
                 ),
             ),
         ),
-        ArchiveOptions(),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -76,7 +74,7 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
     source = FailingListBucket("source")
     destination = FakeBucket("archive")
 
-    result = run_archive_routes(
+    result = run_archive(
         (
             ArchiveRoute(
                 "broken",
@@ -86,7 +84,7 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
                 copy_mode="daily_tar_gz",
             ),
         ),
-        ArchiveOptions(),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -97,13 +95,13 @@ def test_route_list_failure_uses_route_manifest_defaults() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_routes_uses_one_worker_per_route() -> None:
+def test_run_archive_uses_one_worker_per_route() -> None:
     left = FakeBucket("left", (_listed("left/2026-04-13T00-00-00Z.txt", 1, None),))
     right = FakeBucket("right", (_listed("right.txt", 1, None),))
     destination = FakeBucket("archive")
     decisions: list[tuple[str, str]] = []
 
-    result = run_archive_routes(
+    result = run_archive(
         (
             ArchiveRoute(
                 "daily",
@@ -123,7 +121,7 @@ def test_run_archive_routes_uses_one_worker_per_route() -> None:
                 copy_mode="direct",
             ),
         ),
-        ArchiveOptions(),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
         debug_logger=lambda entry, strategy: decisions.append((entry.route_name, strategy)),
@@ -146,7 +144,7 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
     verified_destination = FakeBucket("archive")
     archive_key = "data/2026-04-13.tar.gz"
 
-    result = run_archive_routes(
+    result = run_archive(
         (
             ArchiveRoute(
                 "failed",
@@ -167,7 +165,7 @@ def test_verified_daily_groups_are_tracked_by_destination_identity() -> None:
                 destination_identity=("destination", "verified"),
             ),
         ),
-        ArchiveOptions(),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -200,17 +198,16 @@ def test_direct_copy_existing_conflicting_destination_fails() -> None:
     )
 
     result = run_archive(
-        source,
-        destination,
-        ArchiveOptions(
-            routes=(
-                ArchiveRouteOptions(
-                    "default",
-                    parser_kind="direct",
-                    copy_mode="direct",
-                ),
+        (
+            ArchiveRoute(
+                "default",
+                source,
+                destination,
+                parser_kind="direct",
+                copy_mode="direct",
             ),
         ),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

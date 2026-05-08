@@ -1,19 +1,20 @@
-"""Route manifest custom parser context tests."""
+"""Route manifest parser module context tests."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import cast
+from types import ModuleType
 
 import pytest
 from s3_archiver_core.archive_manifest import (
-    ArchiveManifest,
     ArchiveManifestRoute,
     ParserContext,
-    ParserSelector,
-    SelectedObject,
     build_route_archive_manifest,
 )
+from s3_archiver_core.parsers import registry
+from s3_archiver_core.parsers.kinds import ParserKind
+from s3_archiver_core.parsers.protocol import ParserListedObject
+from s3_archiver_core.parsers.results import SelectedObject
 from s3_archiver_core.s3 import S3ListedObject
 
 from tests.unit.archive_workflow_fakes import FakeBucket
@@ -24,7 +25,9 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 
 @pytest.mark.unit()
-def test_route_manifest_passes_parser_context_with_hydrated_properties() -> None:
+def test_route_manifest_passes_parser_context_with_hydrated_properties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     listed = _listed("data/custom.txt", 1, "v-context")
     properties = _properties(
         metadata={"dataset": "raw"},
@@ -40,21 +43,31 @@ def test_route_manifest_passes_parser_context_with_hydrated_properties() -> None
         listed.version_id,
         properties,
     )
+    parser_kind = ParserKind("custom_context")
     seen: list[tuple[str, str, str | None]] = []
 
-    def parser(listed_object: S3ListedObject, context: ParserContext) -> SelectedObject:
-        assert context.listed is listed_object
-        assert context.properties == properties
-        context_properties = context.properties
-        assert context_properties is not None
-        seen.append(
-            (
-                context_properties.metadata["dataset"],
-                context_properties.tags["route"],
-                context_properties.checksums["sha256"],
+    class Parser:
+        def parse(
+            self, listed_object: ParserListedObject, context: ParserContext
+        ) -> SelectedObject:
+            assert context.listed is listed_object
+            assert context.properties == properties
+            context_properties = context.properties
+            assert context_properties is not None
+            seen.append(
+                (
+                    context_properties.metadata["dataset"],
+                    context_properties.tags["route"],
+                    context_properties.checksums["sha256"],
+                )
             )
-        )
-        return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "last_modified")
+            return SelectedObject(
+                datetime(2026, 4, 13, tzinfo=UTC),
+                "last_modified",
+                "data",
+            )
+
+    monkeypatch.setattr(registry, "_registry", lambda: {parser_kind: Parser})
 
     manifest = build_route_archive_manifest(
         (
@@ -62,9 +75,8 @@ def test_route_manifest_passes_parser_context_with_hydrated_properties() -> None
                 "custom",
                 FakeBucket("source", (listed,)),
                 FakeBucket("archive"),
-                parser=parser,
-                parser_kind="direct",
-                copy_mode="direct",
+                parser_kind=parser_kind,
+                copy_mode="daily_tar_gz",
             ),
         ),
         run_started_at_utc=STARTED,
@@ -75,57 +87,60 @@ def test_route_manifest_passes_parser_context_with_hydrated_properties() -> None
 
 
 @pytest.mark.unit()
-def test_route_manifest_supports_varargs_and_opaque_legacy_parser_signatures() -> None:
-    listed = _listed("data/custom.txt", 1, "v-context")
-    calls: list[int] = []
+def test_parser_module_discovery_registers_parser_class_by_filename() -> None:
+    module = ModuleType("s3_archiver_core.parsers.customer_timestamp")
 
-    def varargs_parser(*args: object) -> SelectedObject:
-        calls.append(len(args))
-        return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "last_modified")
+    class Parser:
+        def parse(self, listed: ParserListedObject, context: ParserContext) -> SelectedObject:
+            _ = (listed, context)
+            return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "basename", "")
 
-    def keyword_parser(
-        listed_object: S3ListedObject, *, context: ParserContext | None = None
-    ) -> SelectedObject:
-        assert listed_object is listed
-        assert context is None
-        calls.append(1)
-        return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "last_modified")
+    module.__dict__["Parser"] = Parser
 
-    class OpaqueLegacyParser:
-        @property
-        def __signature__(self) -> object:
-            raise ValueError("opaque")
+    factories = registry.discover_parser_factories(
+        ("s3_archiver_core.parsers.customer_timestamp",),
+        lambda _name: module,
+    )
 
-        def __call__(self, listed_object: S3ListedObject) -> SelectedObject:
-            assert listed_object is listed
-            calls.append(1)
-            return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "last_modified")
-
-    varargs_manifest = _manifest(cast_parser(varargs_parser), listed)
-    keyword_manifest = _manifest(cast_parser(keyword_parser), listed)
-    legacy_manifest = _manifest(cast_parser(OpaqueLegacyParser()), listed)
-
-    assert [entry.key for entry in varargs_manifest.entries] == ["data/custom.txt"]
-    assert [entry.key for entry in keyword_manifest.entries] == ["data/custom.txt"]
-    assert [entry.key for entry in legacy_manifest.entries] == ["data/custom.txt"]
-    assert calls == [2, 1, 1]
+    parser = factories[ParserKind("customer_timestamp")]()
+    assert isinstance(parser, Parser)
 
 
-def cast_parser(value: object) -> ParserSelector:
-    return cast(ParserSelector, value)
+@pytest.mark.unit()
+def test_route_manifest_converts_parser_value_errors_to_object_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser_kind = ParserKind("value_error_parser")
 
+    class Parser:
+        def parse(self, listed: ParserListedObject, context: ParserContext) -> SelectedObject:
+            _ = context
+            if listed.key == "data/bad.txt":
+                raise ValueError("bad parser input")
+            return SelectedObject(datetime(2026, 4, 13, tzinfo=UTC), "basename", "")
 
-def _manifest(parser: ParserSelector, listed: S3ListedObject) -> ArchiveManifest:
-    return build_route_archive_manifest(
+    monkeypatch.setattr(registry, "_registry", lambda: {parser_kind: Parser})
+
+    manifest = build_route_archive_manifest(
         (
             ArchiveManifestRoute(
                 "custom",
-                FakeBucket("source", (listed,)),
+                FakeBucket(
+                    "source",
+                    (
+                        _listed("data/good.txt", 1, None),
+                        _listed("data/bad.txt", 1, None),
+                    ),
+                ),
                 FakeBucket("archive"),
-                parser=parser,
-                parser_kind="direct",
+                parser_kind=parser_kind,
                 copy_mode="direct",
             ),
         ),
         run_started_at_utc=STARTED,
     )
+
+    assert [entry.key for entry in manifest.entries] == ["data/good.txt"]
+    assert [(item.key, item.reason) for item in manifest.skipped_objects] == [
+        ("data/bad.txt", "parser error: bad parser input")
+    ]

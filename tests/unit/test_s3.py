@@ -115,7 +115,7 @@ def test_build_s3_client_wires_derived_oci_endpoint(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    client = s3_module.build_s3_client(settings)
+    client = s3_module.build_s3_client(settings.routes[0].source)
 
     session = sessions[0]
     config = cast(RecordingConfig, session.client_call["config"])
@@ -126,7 +126,7 @@ def test_build_s3_client_wires_derived_oci_endpoint(
         "region_name": "eu-frankfurt-1",
     }
     assert session.client_call["service_name"] == "s3"
-    assert session.client_call["endpoint_url"] == settings.resolved_endpoint_url()
+    assert session.client_call["endpoint_url"] == settings.routes[0].source.resolved_endpoint_url()
     assert config.signature_version == "s3v4"
     assert config.s3 == {"addressing_style": "path"}
 
@@ -176,7 +176,7 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    _ = s3_module.build_s3_client(settings)
+    _ = s3_module.build_s3_client(settings.routes[0].source)
 
     session = sessions[0]
     config = cast(RecordingConfig, session.client_call["config"])
@@ -213,7 +213,7 @@ def test_build_s3_client_uses_short_localstack_timeouts(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    _ = s3_module.build_s3_client(settings)
+    _ = s3_module.build_s3_client(settings.routes[0].source)
 
     config = cast(RecordingConfig, sessions[0].client_call["config"])
     assert config.connect_timeout == s3_module.LOCALSTACK_CONNECT_TIMEOUT_SECONDS
@@ -231,8 +231,8 @@ def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
     settings = AppSettings.from_env(dual_env(tmp_path))
 
     capabilities = s3_module.transfer_capabilities_for_locations(
-        settings.source,
-        settings.destination,
+        settings.routes[0].source,
+        settings.routes[0].destination,
     )
 
     assert capabilities.native_copy is False
@@ -264,8 +264,8 @@ def test_transfer_capabilities_honor_provider_profile_registry(
     )
 
     capabilities = s3_module.transfer_capabilities_for_locations(
-        settings.source,
-        settings.destination,
+        settings.routes[0].source,
+        settings.routes[0].destination,
     )
 
     assert capabilities.native_copy is False

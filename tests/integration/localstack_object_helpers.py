@@ -28,7 +28,9 @@ def localstack_s3_client(
     env: Mapping[str, str], side: Literal["source", "destination"]
 ) -> S3Client:
     settings = AppSettings.from_env(env)
-    return build_s3_client(settings.source if side == "source" else settings.destination)
+    return build_s3_client(
+        settings.routes[0].source if side == "source" else settings.routes[0].destination
+    )
 
 
 def put_test_object(

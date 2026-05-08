@@ -111,8 +111,8 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
             events.append(f"build:{location.bucket}")
             return object()
 
-        def fake_run_archive(routes, options, **kwargs):
-            _ = (routes, options, kwargs)
+        def fake_run_archive(routes, **kwargs):
+            _ = (routes, kwargs)
             events.append("run_archive")
             started = datetime(2026, 4, 23, tzinfo=UTC)
             return ArchiveRunResult(
@@ -129,7 +129,7 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
         cli._log_lock_recovery = fake_recovery
         cli.run_health_check = fake_health
         cli.build_s3_client = fake_build
-        cli.run_archive_routes = fake_run_archive
+        cli.run_archive = fake_run_archive
 
         lock_path = Path(os.environ["LOG_DIR"]) / "archive.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)

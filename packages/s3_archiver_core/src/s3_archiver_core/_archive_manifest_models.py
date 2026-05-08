@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass
 from datetime import date, datetime
 from typing import Literal, Protocol
 
-from s3_archiver_core.parsers.protocol import ParserContext
-from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
@@ -129,13 +127,6 @@ class ArchiveManifest:
     skipped_objects: tuple[SkippedObject, ...] = ()
 
 
-ParserResult = SelectedObject | SkippedObject | ParserSkippedObject | None
-ParserSelector = (
-    Callable[[S3ListedObject], ParserResult]
-    | Callable[[S3ListedObject, ParserContext], ParserResult]
-)
-
-
 @dataclass(frozen=True, slots=True)
 class ArchiveManifestRoute:
     """One route used to build a global archive manifest."""
@@ -148,7 +139,6 @@ class ArchiveManifestRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    parser: ParserSelector | None = None
     versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None

@@ -48,13 +48,13 @@ def test_run_visual_demo_reports_bucket_story(
 ) -> None:
     settings = _demo_settings(base_env, tmp_path)
     source = FakeBucket(
-        settings.source.bucket,
+        settings.routes[0].source.bucket,
         (
             _listed("demo/2024-02-20T00-00-00.txt", 61),
             _listed("demo/2024-04-21T00-00-00.txt", 1),
         ),
     )
-    destination = SnapshotBucket(settings.destination.bucket)
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         archived = _listed("demo/2024-02-20T00-00-00.txt", 61)
@@ -126,8 +126,8 @@ def test_run_visual_demo_uses_default_utc_clock(
             _ = tz
             return datetime(2024, 4, 20, tzinfo=UTC)
 
-    source = FakeBucket(settings.source.bucket, (_listed("demo/old.txt", 61),))
-    destination = SnapshotBucket(settings.destination.bucket)
+    source = FakeBucket(settings.routes[0].source.bucket, (_listed("demo/old.txt", 61),))
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return _ok_archive_payload()
@@ -170,8 +170,8 @@ def test_run_visual_demo_reports_direct_entries(
     tmp_path: Path,
 ) -> None:
     settings = _demo_settings(base_env, tmp_path)
-    source = FakeBucket(settings.source.bucket, (_listed("raw/live.txt", 1),))
-    destination = SnapshotBucket(settings.destination.bucket)
+    source = FakeBucket(settings.routes[0].source.bucket, (_listed("raw/live.txt", 1),))
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
     def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
         return _ok_archive_payload()

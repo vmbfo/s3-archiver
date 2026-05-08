@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast, override
+from typing import override
 
 import pytest
-from s3_archiver_core import archive as archive_module
+from s3_archiver_core._archive_copy import copy_group
 from s3_archiver_core.archive_manifest import (
     ArchiveGroup,
     build_archive_manifest,
@@ -25,7 +25,6 @@ def test_copy_group_stages_archive_in_destination_temp_dir(tmp_path: Path) -> No
     source, group = _source_and_group()
     temp_dir = tmp_path / "runtime-temp"
     destination = RecordingUploadBucket("destination", temp_dir=temp_dir)
-    copy_group = _copy_group_func()
 
     failure, verified = copy_group(source, destination, group, None)
 
@@ -61,20 +60,3 @@ def _source_and_group() -> tuple[FakeBucket, ArchiveGroup]:
         copy_mode="daily_tar_gz",
     )
     return source, manifest.archive_groups[0]
-
-
-def _copy_group_func() -> Callable[
-    [FakeBucket, RecordingUploadBucket, ArchiveGroup, object | None],
-    tuple[str | None, bool],
-]:
-    return cast(
-        Callable[
-            [FakeBucket, RecordingUploadBucket, ArchiveGroup, object | None],
-            tuple[str | None, bool],
-        ],
-        _private_attr(archive_module, "_copy_group"),
-    )
-
-
-def _private_attr(module: object, name: str) -> object:
-    return cast(object, getattr(module, name))

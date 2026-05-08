@@ -133,9 +133,8 @@ def localstack_bucket_pair(
         log_dir=str(REPO_ROOT / ".local" / "pytest-logs"),
     )
     assert_localstack_test_target(test_env)
-    client = cast(
-        LocalstackS3AdminClient, _as_object(build_s3_client(AppSettings.from_env(test_env)))
-    )
+    settings = AppSettings.from_env(test_env)
+    client = cast(LocalstackS3AdminClient, _as_object(build_s3_client(settings.routes[0].source)))
     ensure_localstack_bucket(client, bucket_pair.source)
     ensure_localstack_bucket(client, bucket_pair.destination)
     try:
@@ -223,9 +222,10 @@ def _healthcheck_responds(health_url: str) -> bool:
 
 
 def _bucket_is_ready(settings: AppSettings) -> bool:
-    client = cast(LocalstackS3AdminClient, _as_object(build_s3_client(settings)))
+    route = settings.routes[0]
+    client = cast(LocalstackS3AdminClient, _as_object(build_s3_client(route.source)))
     try:
-        _ = client.head_bucket(Bucket=settings.bucket)
+        _ = client.head_bucket(Bucket=route.source.bucket)
     except (BotoCoreError, ClientError):
         return False
     return True
@@ -234,7 +234,7 @@ def _bucket_is_ready(settings: AppSettings) -> bool:
 def _s3_api_is_ready(settings: AppSettings) -> bool:
     if _bucket_is_ready is not _ORIGINAL_BUCKET_IS_READY:
         return _bucket_is_ready(settings)
-    client = cast(LocalstackS3AdminClient, _as_object(build_s3_client(settings)))
+    client = cast(LocalstackS3AdminClient, _as_object(build_s3_client(settings.routes[0].source)))
     try:
         _ = client.list_buckets()
     except (BotoCoreError, ClientError):

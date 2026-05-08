@@ -80,7 +80,7 @@ class ObjectParser(Protocol):
     """Select or skip one listed S3 object."""
 
     def parse(
-        self, listed: ParserListedObject, context: ParserContext | None = None
+        self, listed: ParserListedObject, context: ParserContext
     ) -> SelectedObject | SkippedObject:
         """Parse one listed object."""
         ...

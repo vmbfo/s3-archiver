@@ -10,7 +10,7 @@ from typing import Literal, Protocol, cast
 from boto3.session import Session
 from botocore.config import Config
 
-from s3_archiver_core.settings import AppSettings, S3LocationSettings
+from s3_archiver_core.settings import S3LocationSettings
 
 
 class S3Client(Protocol):
@@ -169,10 +169,9 @@ class S3ClientFactory(Protocol):
         ...
 
 
-def build_s3_client(settings: AppSettings | S3LocationSettings) -> S3Client:
+def build_s3_client(location: S3LocationSettings) -> S3Client:
     """Create a configured S3 client for one S3 location."""
 
-    location = settings.source if isinstance(settings, AppSettings) else settings
     session = Session(
         aws_access_key_id=location.access_key_id,
         aws_secret_access_key=location.secret_access_key,

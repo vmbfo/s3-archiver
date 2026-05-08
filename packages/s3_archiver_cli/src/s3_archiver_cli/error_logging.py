@@ -94,11 +94,12 @@ def archive_result_payload(
     destination_buckets = _string_json_values(
         sorted({str(route["destination_bucket"]) for route in routes})
     )
+    first_route = settings.routes[0]
     return {
         "status": status,
         "run_id": result.run_id,
-        "source_bucket": settings.source.bucket,
-        "destination_bucket": settings.destination.bucket,
+        "source_bucket": first_route.source.bucket,
+        "destination_bucket": first_route.destination.bucket,
         "source_buckets": source_buckets,
         "destination_buckets": destination_buckets,
         "routes": json_list(routes),
@@ -158,14 +159,15 @@ def error_payload(
         if isinstance(error, ArchiveRunError)
         else "startup.preflight"
     )
+    first_route = settings.routes[0] if settings is not None else None
     return {
         "status": "error",
         "phase": phase,
         "field": _error_field(error),
         "message": str(error),
         "details": str(error),
-        "source_bucket": settings.source.bucket if settings is not None else None,
-        "destination_bucket": settings.destination.bucket if settings is not None else None,
+        "source_bucket": first_route.source.bucket if first_route is not None else None,
+        "destination_bucket": (first_route.destination.bucket if first_route is not None else None),
         "source_buckets": (
             _string_json_values(
                 sorted({str(route["source_bucket"]) for route in route_payloads(settings)})

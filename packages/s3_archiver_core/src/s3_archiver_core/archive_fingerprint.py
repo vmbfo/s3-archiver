@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import cast
 
@@ -145,14 +145,13 @@ def recover_fingerprinted_entry(
         fingerprint.source_version_id,
         properties,
     )
-    return ManifestEntry(
-        entry.source_bucket,
-        entry.key,
-        fingerprint.source_size,
-        last_modified,
-        fingerprint.source_etag,
-        fingerprint.source_version_id,
-        listed,
+    return replace(
+        entry,
+        size=fingerprint.source_size,
+        last_modified=last_modified,
+        etag=fingerprint.source_etag,
+        version_id=fingerprint.source_version_id,
+        object=listed,
     )
 
 

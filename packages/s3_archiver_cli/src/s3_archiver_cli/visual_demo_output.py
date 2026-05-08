@@ -32,9 +32,10 @@ def emit_intro(
 ) -> None:
     """Emit the visual demo heading and runtime context."""
 
+    first_route = settings.routes[0]
     emit(title)
-    emit(f"source bucket: {settings.source.bucket}")
-    emit(f"destination bucket: {settings.destination.bucket}")
+    emit(f"source bucket: {first_route.source.bucket}")
+    emit(f"destination bucket: {first_route.destination.bucket}")
     emit(f"log file: {log_file}")
     emit(f"run started at utc: {started.isoformat()}")
 

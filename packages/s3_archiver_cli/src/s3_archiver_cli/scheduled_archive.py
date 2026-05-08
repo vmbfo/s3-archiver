@@ -161,14 +161,15 @@ def run_scheduled_archive(
 
 
 def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
+    first_route = settings.routes[0]
     return {
         "status": "error",
         "phase": "archive.run",
         "field": "ARCHIVER_RUN_TIMEOUT",
         "message": "archive run timed out",
         "details": "archive run timed out",
-        "source_bucket": settings.source.bucket,
-        "destination_bucket": settings.destination.bucket,
+        "source_bucket": first_route.source.bucket,
+        "destination_bucket": first_route.destination.bucket,
         "key": None,
         "mismatch": None,
         "reason": "archive_run_timeout",

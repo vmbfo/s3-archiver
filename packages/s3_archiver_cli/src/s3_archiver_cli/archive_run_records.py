@@ -24,6 +24,7 @@ def record_started(
 ) -> None:
     """Persist an active run record after lock acquisition."""
 
+    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
@@ -33,8 +34,8 @@ def record_started(
             "run_id": run_id,
             "run_started_at_utc": run_started_at_utc.isoformat(),
             "updated_at_utc": _now(),
-            "source_bucket": settings.source.bucket,
-            "destination_bucket": settings.destination.bucket,
+            "source_bucket": route.source.bucket,
+            "destination_bucket": route.destination.bucket,
             "log_file": str(log_file),
         },
     )
@@ -50,6 +51,7 @@ def record_result(
     """Persist a terminal archive run record."""
 
     status = "succeeded" if payload.get("status") == "ok" else "failed"
+    route = settings.routes[0]
     _write_record(
         settings,
         result.run_id,
@@ -59,8 +61,8 @@ def record_result(
             "run_id": result.run_id,
             "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
             "updated_at_utc": _now(),
-            "source_bucket": settings.source.bucket,
-            "destination_bucket": settings.destination.bucket,
+            "source_bucket": route.source.bucket,
+            "destination_bucket": route.destination.bucket,
             "log_file": str(log_file),
             "payload": dict(payload),
         },
@@ -77,6 +79,7 @@ def record_failure(
 ) -> None:
     """Persist a terminal failed run record for setup/runtime exceptions."""
 
+    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
@@ -86,8 +89,8 @@ def record_failure(
             "run_id": run_id,
             "run_started_at_utc": run_started_at_utc.isoformat(),
             "updated_at_utc": _now(),
-            "source_bucket": settings.source.bucket,
-            "destination_bucket": settings.destination.bucket,
+            "source_bucket": route.source.bucket,
+            "destination_bucket": route.destination.bucket,
             "log_file": str(log_file),
             "payload": dict(payload),
         },
@@ -110,6 +113,7 @@ def record_subprocess_timeout(
     )
     run_id = _string(lock.get("run_id")) or f"unknown-{datetime.now(tz=UTC).timestamp():.0f}"
     started = _string(lock.get("run_started_at_utc"))
+    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
@@ -119,8 +123,8 @@ def record_subprocess_timeout(
             "run_id": run_id,
             "run_started_at_utc": started,
             "updated_at_utc": _now(),
-            "source_bucket": settings.source.bucket,
-            "destination_bucket": settings.destination.bucket,
+            "source_bucket": route.source.bucket,
+            "destination_bucket": route.destination.bucket,
             "log_file": str(log_file),
             "payload": dict(payload),
         },

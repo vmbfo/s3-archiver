@@ -46,7 +46,11 @@ def test_archive_result_payload_reports_daily_archive_groups(
         archive_root="data/fae",
         destination_archive_key="data/fae/2026-04-13.tar.gz",
         entries=(entry,),
-        skipped_objects=(skipped,),
+        route_name="fae",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
+        source_bucket="source-bucket",
+        destination_bucket="destination-bucket",
     )
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
@@ -79,13 +83,14 @@ def test_archive_result_payload_reports_daily_archive_groups(
     groups = cast(list[dict[str, object]], payload["archive_groups"])
     assert "cleanup_status" not in groups[0]
     assert groups[0]["source_object_count"] == 1
-    assert groups[0]["skipped_object_count"] == 1
+    assert groups[0]["skipped_object_count"] == 0
     assert groups[0]["route_name"] == "fae"
     assert groups[0]["parser_kind"] == "filename_timestamp"
     assert groups[0]["copy_mode"] == "daily_tar_gz"
     source_objects = cast(list[dict[str, object]], groups[0]["source_objects"])
     assert source_objects[0]["route_name"] == "fae"
-    skipped_objects = cast(list[dict[str, object]], groups[0]["skipped_objects"])
+    manifest_payload = cast(dict[str, object], payload["manifest"])
+    skipped_objects = cast(list[dict[str, object]], manifest_payload["skipped_objects"])
     assert skipped_objects[0]["route_name"] == "fae"
     assert cast(list[dict[str, object]], payload["routes"])[0]["copy_mode"] == "daily_tar_gz"
 

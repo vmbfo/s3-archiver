@@ -43,6 +43,13 @@ def relative_archive_root(archive_root: str, source_path: str) -> str:
     return archive_root
 
 
+def route_path_prefix(path: str) -> str:
+    normalized = normalize_prefix(path).rstrip("/")
+    if normalized == "":
+        return ""
+    return f"{normalized}/"
+
+
 def join_key(prefix: str, key: str) -> str:
     normalized_prefix = normalize_prefix(prefix)
     stripped_key = key.lstrip("/")

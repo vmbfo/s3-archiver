@@ -6,7 +6,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -14,8 +14,7 @@ import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult
-from s3_archiver_core.archive import run_archive_routes as run_core_archive_routes
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive import run_archive as run_core_archive
 from s3_archiver_core.s3 import S3Client
 from typer.testing import CliRunner
 
@@ -100,27 +99,27 @@ def run_archive_command(
     attempts: int = 3,
 ) -> ArchiveCommandPayload:
     monkeypatch.setattr(os, "environ", env)
-    core_run_archive_routes = run_core_archive_routes
+    core_run_archive = run_core_archive
 
-    def run_archive_routes_with_frozen_timestamp(
+    def run_archive_with_frozen_timestamp(
         routes: tuple[ArchiveRoute, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: timedelta,
         run_started_at_utc: datetime | None = None,
         run_lock: ArchiveRunLock | None = None,
         debug_logger: DebugLogger | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> ArchiveRunResult:
         _ = (run_started_at_utc, run_lock)
-        return core_run_archive_routes(
+        return core_run_archive(
             routes,
-            options,
+            run_timeout=run_timeout,
             run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
             debug_logger=debug_logger,
             clock=clock,
         )
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_archive_routes_with_frozen_timestamp)
+    monkeypatch.setattr(cli_module, "run_archive", run_archive_with_frozen_timestamp)
     for attempt in range(attempts):
         result = RUNNER.invoke(cli_module.app, ["archive-once"])
         if result.exit_code == 0 and result.stderr == "":

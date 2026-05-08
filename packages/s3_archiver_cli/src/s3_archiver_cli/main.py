@@ -13,10 +13,9 @@ from typing import Annotated, NoReturn
 from uuid import uuid4
 
 import typer
-from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive_routes
+from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import (
     ArchiveRunError,
     ConfigError,
@@ -230,11 +229,10 @@ def _run_archive_command(settings: AppSettings, log_file: Path) -> int:
 def _run_configured_archive(
     settings: AppSettings, routes: tuple[ArchiveRoute, ...], started: datetime
 ) -> ArchiveRunResult:
-    options = ArchiveOptions.from_settings(settings)
     debug_logger = _log_transfer_decision if settings.log_level == "DEBUG" else None
-    return run_archive_routes(
+    return run_archive(
         routes,
-        options,
+        run_timeout=settings.run_timeout,
         run_started_at_utc=started,
         debug_logger=debug_logger,
     )

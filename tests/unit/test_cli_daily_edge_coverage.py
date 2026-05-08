@@ -24,28 +24,25 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
             destination_archive_key="data/fae/2026-04-13.tar.gz",
         ),
     )
-    manifest = SimpleNamespace(
-        entries=entries,
-    )
     group = SimpleNamespace(
         target_day=datetime(2026, 4, 13, 7, tzinfo=UTC),
-        destination_archive_keys=("data/fae/2026-04-13.tar.gz",),
-        entries=(),
-        skipped_objects=(),
+        archive_root="data/fae",
+        destination_archive_key="data/fae/2026-04-13.tar.gz",
+        entries=entries,
     )
+    manifest = SimpleNamespace(entries=entries, archive_groups=(group,))
 
     assert archive_payloads.manifest_target_day(SimpleNamespace()) == ""
     assert archive_payloads.skipped_object_payloads(SimpleNamespace()) == []
     assert object_list(object()) == []
     assert datetime_text("already text") == "already text"
-    assert archive_payloads.archive_group_payload(group, manifest)["target_day"] == "2026-04-13"
-    assert archive_payloads.archive_group_payload(group, manifest)["destination_archive_key"] == (
+    assert archive_payloads.archive_group_payload(group)["target_day"] == "2026-04-13"
+    assert archive_payloads.archive_group_payload(group)["destination_archive_key"] == (
         "data/fae/2026-04-13.tar.gz"
     )
     assert (
         archive_payloads.archive_group_payload(
-            SimpleNamespace(destination_archive_keys=(None,), entries=()),
-            manifest,
+            SimpleNamespace(destination_archive_key=None, entries=()),
         )["destination_archive_key"]
         == ""
     )
@@ -55,11 +52,14 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
     assert payloads[0]["archive_root"] == "data/fae"
     assert payloads[0]["target_day"] == "2026-04-13"
 
-    fallback = archive_payloads.archive_group_payload(
-        SimpleNamespace(entries=entries),
-        manifest,
-    )
+    fallback = archive_payloads.archive_group_payload(SimpleNamespace(entries=entries))
     assert fallback["destination_archive_key"] == "data/fae/2026-04-13.tar.gz"
+    assert (
+        archive_payloads.archive_group_payload(
+            SimpleNamespace(entries=(SimpleNamespace(source_identity="fallback"),)),
+        )["source_identity"]
+        == "fallback"
+    )
 
 
 @pytest.mark.unit()

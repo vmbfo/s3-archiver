@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive import ArchiveRoute, run_archive
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3TransferCapabilities
 from s3_archiver_core.settings import AppSettings
@@ -214,22 +212,36 @@ def test_archive_core_uses_temp_file_backed_transfer_against_localstack(
     archive_key = f"temp-file-backed/{TARGET_DAY}.tar.gz"
     runtime_temp_dir = tmp_path / "runtime-temp"
     _ = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"temp-file\n")
-    options = replace(
-        ArchiveOptions.from_settings(settings),
-        transfer_capabilities=S3TransferCapabilities(
-            native_copy=False,
-            multipart_copy=False,
-            streaming_upload=True,
-            temp_file_backed=True,
-            streaming_limit_bytes=1,
+    route = settings.routes[0]
+    source = S3ArchiveBucket(source_client, localstack_bucket_pair.source, runtime_temp_dir)
+    destination = S3ArchiveBucket(
+        destination_client, localstack_bucket_pair.destination, runtime_temp_dir
+    )
+    routes = (
+        ArchiveRoute(
+            route.name,
+            source,
+            destination,
+            parser_kind=route.parser.value,
+            copy_mode=route.copy_mode.value,
+            source_path=route.source.path,
+            destination_path=route.destination.path,
+            source_identity=route.source.storage_identity(),
+            destination_identity=route.destination.storage_identity(),
+            transfer_capabilities=S3TransferCapabilities(
+                native_copy=False,
+                multipart_copy=False,
+                streaming_upload=True,
+                temp_file_backed=True,
+                streaming_limit_bytes=1,
+            ),
         ),
     )
     decisions: list[str] = []
 
     result = run_archive(
-        S3ArchiveBucket(source_client, localstack_bucket_pair.source, runtime_temp_dir),
-        S3ArchiveBucket(destination_client, localstack_bucket_pair.destination, runtime_temp_dir),
-        options,
+        routes,
+        run_timeout=settings.run_timeout,
         run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
         debug_logger=lambda _entry, strategy: decisions.append(strategy),
     )

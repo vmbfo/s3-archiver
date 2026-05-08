@@ -11,8 +11,6 @@ from s3_archiver_core._archive_manifest_models import (
     DestinationLocator,
     ManifestEntry,
     ParserKind,
-    ParserResult,
-    ParserSelector,
     SelectedObject,
     SkippedObject,
     SourceLister,
@@ -28,8 +26,6 @@ __all__ = (
     "ManifestEntry",
     "ParserContext",
     "ParserKind",
-    "ParserResult",
-    "ParserSelector",
     "SelectedObject",
     "SkippedObject",
     "SourceLister",
@@ -49,7 +45,6 @@ def build_archive_manifest(
     source_path: str = "",
     destination: DestinationLocator | None = None,
     destination_path: str = "",
-    parser: ParserSelector | None = None,
     source_identity: object | None = None,
     destination_identity: object | None = None,
 ) -> ArchiveManifest:
@@ -67,7 +62,6 @@ def build_archive_manifest(
         source_path=source_path,
         destination=destination,
         destination_path=destination_path,
-        parser=parser,
         source_identity=source_identity,
         destination_identity=destination_identity,
     )

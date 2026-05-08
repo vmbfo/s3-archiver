@@ -8,8 +8,7 @@ from typing import cast
 
 import pytest
 from s3_archiver_core import _archive_copy as archive_copy_module
-from s3_archiver_core import archive as archive_module
-from s3_archiver_core._archive_copy import copy_phase, run_route_workers
+from s3_archiver_core._archive_copy import copy_phase, verify_phase
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core._archive_routes import DebugLogger
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRoute
@@ -36,19 +35,6 @@ def test_verify_phase_reports_archive_verification_failure() -> None:
         copy_mode="daily_tar_gz",
     )
     group = manifest.archive_groups[0]
-    verify_phase = cast(
-        Callable[
-            [
-                tuple[ArchiveGroup, ...],
-                tuple[ManifestEntry, ...],
-                dict[str, ArchiveRoute],
-                Callable[[], bool],
-                Callable[[], float],
-            ],
-            ArchivePhaseResult,
-        ],
-        _private_attr(archive_module, "_verify_phase"),
-    )
     destination = FakeBucket(
         "destination",
         destination={group.destination_archive_key: _properties(metadata={})},
@@ -84,20 +70,6 @@ def test_verify_phase_compatibility_accepts_route_map() -> None:
         parser_kind="filename_timestamp",
         copy_mode="daily_tar_gz",
     )
-    verify_phase = cast(
-        Callable[
-            [
-                tuple[ArchiveGroup, ...],
-                tuple[ManifestEntry, ...],
-                dict[str, ArchiveRoute],
-                Callable[[], bool],
-                Callable[[], float],
-            ],
-            ArchivePhaseResult,
-        ],
-        _private_attr(archive_module, "_verify_phase"),
-    )
-
     result = verify_phase(
         manifest.archive_groups,
         (),
@@ -119,16 +91,17 @@ def test_verify_phase_compatibility_accepts_route_map() -> None:
 
 @pytest.mark.unit()
 def test_route_worker_edges_cover_empty_timeout_and_worker_exception() -> None:
-    assert run_route_workers((), lambda _route: (), lambda: False, lambda: 1.0) == ()
-    assert run_route_workers(("route",), lambda _route: (), lambda: True, lambda: 1.0) == (
+    run_parallel_items = _run_parallel_items()
+    assert run_parallel_items((), lambda _route: (), lambda: False, lambda: 1.0) == ()
+    assert run_parallel_items(("route",), lambda _route: (), lambda: True, lambda: 1.0) == (
         "archive run timed out",
     )
 
     def fail_worker(_route: str) -> tuple[str, ...]:
         raise RuntimeError("route boom")
 
-    assert run_route_workers(("route",), fail_worker, lambda: False, lambda: 1.0) == (
-        "route: route boom",
+    assert run_parallel_items(("route",), fail_worker, lambda: False, lambda: 1.0) == (
+        "route boom",
     )
 
 
@@ -262,21 +235,28 @@ def _verify_route_phase(
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
 ) -> ArchivePhaseResult:
-    verify_phase = cast(
-        Callable[
-            [
-                tuple[ArchiveGroup, ...],
-                tuple[ManifestEntry, ...],
-                dict[str, ArchiveRoute],
-                Callable[[], bool],
-                Callable[[], float],
-            ],
-            ArchivePhaseResult,
-        ],
-        _private_attr(archive_module, "_verify_phase"),
-    )
     return verify_phase(groups, entries, routes, timed_out, time_remaining)
 
 
-def _private_attr(module: object, name: str) -> object:
-    return cast(object, getattr(module, name))
+def _run_parallel_items() -> Callable[
+    [
+        tuple[str, ...],
+        Callable[[str], tuple[str, ...]],
+        Callable[[], bool],
+        Callable[[], float],
+    ],
+    tuple[str, ...],
+]:
+    name = "_run_parallel_items"
+    return cast(
+        Callable[
+            [
+                tuple[str, ...],
+                Callable[[str], tuple[str, ...]],
+                Callable[[], bool],
+                Callable[[], float],
+            ],
+            tuple[str, ...],
+        ],
+        getattr(archive_copy_module, name),
+    )

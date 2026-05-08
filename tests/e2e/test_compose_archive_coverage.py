@@ -60,13 +60,11 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         import json
         import os
         import sys
-        from dataclasses import replace
         from datetime import UTC, datetime
         from pathlib import Path
 
         from botocore.exceptions import ClientError
-        from s3_archiver_core.archive import run_archive
-        from s3_archiver_core.archive_options import ArchiveOptions
+        from s3_archiver_core.archive import ArchiveRoute, run_archive
         from s3_archiver_core.archive_s3 import S3ArchiveBucket
         from s3_archiver_core.s3 import S3TransferCapabilities, build_s3_client
         from s3_archiver_core.settings import AppSettings
@@ -75,12 +73,12 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         temp_dir = Path("/tmp/s3-archiver-compose-temp-file")
         key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
         decisions = []
-        source_client = build_s3_client(settings.source)
-        destination_client = build_s3_client(settings.destination)
+        source_client = build_s3_client(settings.routes[0].source)
+        destination_client = build_s3_client(settings.routes[0].destination)
 
         for client, bucket in (
-            (source_client, settings.source.bucket),
-            (destination_client, settings.destination.bucket),
+            (source_client, settings.routes[0].source.bucket),
+            (destination_client, settings.routes[0].destination.bucket),
         ):
             try:
                 client.create_bucket(Bucket=bucket)
@@ -89,25 +87,36 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
                 if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                     raise
 
-        source_client.put_object(Bucket=settings.source.bucket, Key=key, Body=b"probe\\n")
+        source_client.put_object(Bucket=settings.routes[0].source.bucket, Key=key, Body=b"probe\\n")
         destination = S3ArchiveBucket(
             destination_client,
-            settings.destination.bucket,
+            settings.routes[0].destination.bucket,
             temp_dir,
         )
+        route = settings.routes[0]
+        source = S3ArchiveBucket(source_client, settings.routes[0].source.bucket, temp_dir)
         result = run_archive(
-            S3ArchiveBucket(source_client, settings.source.bucket, temp_dir),
-            destination,
-            replace(
-                ArchiveOptions.from_settings(settings),
-                transfer_capabilities=S3TransferCapabilities(
+            (
+                ArchiveRoute(
+                    route.name,
+                    source,
+                    destination,
+                    parser_kind=route.parser.value,
+                    copy_mode=route.copy_mode.value,
+                    source_path=route.source.path,
+                    destination_path=route.destination.path,
+                    source_identity=route.source.storage_identity(),
+                    destination_identity=route.destination.storage_identity(),
+                    transfer_capabilities=S3TransferCapabilities(
                     native_copy=False,
                     multipart_copy=False,
                     streaming_upload=True,
                     temp_file_backed=True,
                     streaming_limit_bytes=1,
                 ),
+                ),
             ),
+            run_timeout=settings.run_timeout,
             run_started_at_utc=datetime(2100, 1, 1, tzinfo=UTC),
             debug_logger=lambda _entry, strategy: decisions.append(strategy),
         )
