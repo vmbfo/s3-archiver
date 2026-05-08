@@ -96,6 +96,7 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     for group in groups:
         emit(
             "GROUP  "
+            + _route_fields(group)
             + f"target_day={group['target_day']} "
             + f"archive_root={group['archive_root']} "
             + f"destination_archive_key={group['destination_archive_key']} "
@@ -105,6 +106,7 @@ def emit_manifest(emit: Emitter, manifest: ArchiveManifest) -> None:
     for entry in direct_entries:
         emit(
             "DIRECT "
+            + _route_fields(entry)
             + f"destination_key={entry['destination_key']} "
             + f"source_object_count={entry['source_object_count']}"
         )
@@ -144,6 +146,7 @@ def emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
     for group in groups:
         emit(
             "GROUP  "
+            + _route_fields(group)
             + f"destination_archive_key={group['destination_archive_key']} "
             + f"source_object_count={group['source_object_count']} "
             + f"skipped_object_count={group['skipped_object_count']}"
@@ -151,6 +154,7 @@ def emit_archive_result(emit: Emitter, payload: dict[str, JsonValue]) -> None:
     for entry in direct_entries:
         emit(
             "DIRECT "
+            + _route_fields(entry)
             + f"destination_key={entry['destination_key']} "
             + f"source_object_count={entry['source_object_count']}"
         )
@@ -186,6 +190,14 @@ def _emit_archive_coverage(
             "source objects per archive: "
             + f"min={min(files_per_archive)} max={max(files_per_archive)}"
         )
+
+
+def _route_fields(row: dict[str, JsonValue]) -> str:
+    values = (row.get("route_name"), row.get("parser_kind"), row.get("copy_mode"))
+    if all(value is None for value in values):
+        return ""
+    route, parser, copy_mode = values
+    return f"route={route} parser={parser} copy_mode={copy_mode} "
 
 
 def _archive_days(groups: list[dict[str, JsonValue]]) -> list[str]:

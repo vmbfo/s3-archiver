@@ -61,3 +61,6 @@ def _as_utc(value: datetime) -> datetime:
 def _parent_prefix(key: str) -> str:
     parent, separator, _name = key.rpartition("/")
     return parent if separator else ""
+
+
+Parser = DirectParser

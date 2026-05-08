@@ -12,7 +12,6 @@ from s3_archiver_core._archive_manifest_models import (
     SkippedObject,
 )
 from s3_archiver_core._archive_manifest_paths import as_utc, relative_archive_root
-from s3_archiver_core.parsers.kinds import ParserKind as RegisteredParserKind
 from s3_archiver_core.parsers.protocol import ParserContext
 from s3_archiver_core.parsers.registry import parser_for_kind
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
@@ -25,9 +24,7 @@ def select_object(
     listed: S3ListedObject,
     source_path: str,
 ) -> SelectedObject | SkippedObject | ParserSkippedObject | None:
-    object_parser = (
-        None if parser is not None else parser_for_kind(RegisteredParserKind(str(parser_kind)))
-    )
+    object_parser = None if parser is not None else parser_for_kind(parser_kind)
     context = ParserContext(listed, listed.properties)
     try:
         if parser is not None:

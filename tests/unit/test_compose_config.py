@@ -29,25 +29,19 @@ def test_compose_file_uses_readable_archiver_config_block() -> None:
         "daily_tar_gz",
     )
     assert route["source"] == {
-        "provider": "$${S3_SOURCE_PROVIDER:-localstack}",
-        "endpoint_url": "$${S3_SOURCE_ENDPOINT_URL:-http://localstack:4566}",
-        "region": "$${S3_SOURCE_REGION:-us-east-1}",
         "bucket": "$${S3_SOURCE_BUCKET:-source-bucket}",
-        "path": "$${S3_SOURCE_PATH:-}",
-        "access_key_id": "$${S3_SOURCE_ACCESS_KEY_ID:-source-test}",
-        "secret_access_key": "$${S3_SOURCE_SECRET_ACCESS_KEY:-source-test}",
-        "addressing_style": "$${S3_SOURCE_ADDRESSING_STYLE:-path}",
+        "access_key_id": "$${S3_ACCESS_KEY_ID:-test}",
+        "secret_access_key": "$${S3_SECRET_ACCESS_KEY:-test}",
     }
     assert route["destination"] == {
-        "provider": "$${S3_DESTINATION_PROVIDER:-localstack}",
-        "endpoint_url": "$${S3_DESTINATION_ENDPOINT_URL:-http://localstack:4566}",
-        "region": "$${S3_DESTINATION_REGION:-us-east-1}",
         "bucket": "$${S3_DESTINATION_BUCKET:-destination-bucket}",
-        "path": "$${S3_DESTINATION_PATH:-}",
-        "access_key_id": "$${S3_DESTINATION_ACCESS_KEY_ID:-destination-test}",
-        "secret_access_key": "$${S3_DESTINATION_SECRET_ACCESS_KEY:-destination-test}",
-        "addressing_style": "$${S3_DESTINATION_ADDRESSING_STYLE:-path}",
+        "access_key_id": "$${S3_ACCESS_KEY_ID:-test}",
+        "secret_access_key": "$${S3_SECRET_ACCESS_KEY:-test}",
     }
+    for service_name in ("app", "scheduler"):
+        environment = _compose_environment(compose_text, service_name)
+        assert "S3_ACCESS_KEY_ID" not in environment
+        assert "S3_SECRET_ACCESS_KEY" not in environment
     assert "ARCHIVER_RETENTION_DAYS" not in compose_text
     assert "ARCHIVER_ENABLE_CLEANUP" not in compose_text
     assert "ARCHIVER_MAX_WORKERS" not in compose_text
@@ -56,8 +50,12 @@ def test_compose_file_uses_readable_archiver_config_block() -> None:
 
 
 def _compose_archiver_routes(compose_text: str, service_name: str) -> list[dict[str, object]]:
+    environment = _compose_environment(compose_text, service_name)
+    return cast(list[dict[str, object]], json.loads(cast(str, environment["ARCHIVER_CONFIG_JSON"])))
+
+
+def _compose_environment(compose_text: str, service_name: str) -> dict[str, object]:
     compose_config = cast(dict[str, object], yaml.safe_load(compose_text))
     services = cast(dict[str, object], compose_config["services"])
     service = cast(dict[str, object], services[service_name])
-    environment = cast(dict[str, object], service["environment"])
-    return cast(list[dict[str, object]], json.loads(cast(str, environment["ARCHIVER_CONFIG_JSON"])))
+    return cast(dict[str, object], service["environment"])

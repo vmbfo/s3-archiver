@@ -29,3 +29,6 @@ class FolderTimestampParser:
             return SkippedObject("no reliable folder timestamp")
         timestamp, timestamp_source = selected
         return SelectedObject(timestamp, timestamp_source, archive_root_for_key(listed.key))
+
+
+Parser = FolderTimestampParser

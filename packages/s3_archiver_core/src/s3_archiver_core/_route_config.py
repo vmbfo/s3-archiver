@@ -98,8 +98,10 @@ def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings 
     name = _required_string(decoder, route, "name", f"{field}.name")
     parser = _load_parser_kind(decoder, route, f"{field}.parser")
     copy_mode = _load_copy_mode(decoder, route, f"{field}.copy_mode")
-    source = _load_location(decoder, route.get("source"), f"{field}.source")
-    destination = _load_location(decoder, route.get("destination"), f"{field}.destination")
+    source = _load_location(decoder, route.get("source"), f"{field}.source", "SOURCE")
+    destination = _load_location(
+        decoder, route.get("destination"), f"{field}.destination", "DESTINATION"
+    )
     if name is None or parser is None or copy_mode is None or source is None or destination is None:
         return None
     _validate_localstack_endpoint_host(decoder, f"{field}.source.endpoint_url", source)
@@ -139,19 +141,39 @@ def _load_copy_mode(
     return CopyMode(value)
 
 
-def _load_location(decoder: EnvDecoder, item: object, field: str) -> S3LocationSettings | None:
+def _load_location(
+    decoder: EnvDecoder, item: object, field: str, side: str
+) -> S3LocationSettings | None:
     location = _object_config(decoder, item, field)
     if location is None:
         return None
-    provider_text = _required_string(decoder, location, "provider", f"{field}.provider")
+    provider_text = _location_string(
+        decoder, location, "provider", f"{field}.provider", side, default="localstack"
+    )
     if provider_text is None:
         return None
     provider = _provider(decoder, provider_text, f"{field}.provider")
-    addressing = _addressing_style(decoder, location, f"{field}.addressing_style")
+    addressing_text = _location_string(
+        decoder,
+        location,
+        "addressing_style",
+        f"{field}.addressing_style",
+        side,
+        default="path",
+    )
+    if addressing_text is None:
+        return None
+    addressing = _addressing_style(
+        decoder, {"addressing_style": addressing_text}, f"{field}.addressing_style"
+    )
     if provider is None or addressing is None:
         return None
-    namespace = _optional_string(decoder, location, "namespace", f"{field}.namespace")
-    iam_user_ocid = _optional_string(decoder, location, "iam_user_ocid", f"{field}.iam_user_ocid")
+    namespace = _location_string(
+        decoder, location, "namespace", f"{field}.namespace", side, required=False
+    )
+    iam_user_ocid = _location_string(
+        decoder, location, "iam_user_ocid", f"{field}.iam_user_ocid", side, required=False
+    )
     if provider is S3Provider.OCI and namespace is None:
         decoder.fail(f"{field}.namespace", f"{field}.namespace is required when provider=oci")
         return None
@@ -160,14 +182,34 @@ def _load_location(decoder: EnvDecoder, item: object, field: str) -> S3LocationS
             f"{field}.iam_user_ocid", f"{field}.iam_user_ocid is required when provider=oci"
         )
         return None
-    endpoint_url = _endpoint(decoder, location, f"{field}.endpoint_url")
-    access_key_id = _required_string(decoder, location, "access_key_id", f"{field}.access_key_id")
-    secret_access_key = _required_string(
-        decoder, location, "secret_access_key", f"{field}.secret_access_key"
+    endpoint_text = _location_string(
+        decoder, location, "endpoint_url", f"{field}.endpoint_url", side, required=False
     )
-    region = _required_string(decoder, location, "region", f"{field}.region")
-    bucket = _required_string(decoder, location, "bucket", f"{field}.bucket")
-    path = _optional_string(decoder, location, "path", f"{field}.path", default="")
+    endpoint_url = (
+        None
+        if endpoint_text is None
+        else _endpoint(decoder, {"endpoint_url": endpoint_text}, f"{field}.endpoint_url")
+    )
+    access_key_id = _location_string(
+        decoder, location, "access_key_id", f"{field}.access_key_id", side
+    )
+    secret_access_key = _location_string(
+        decoder, location, "secret_access_key", f"{field}.secret_access_key", side
+    )
+    region = _location_string(
+        decoder, location, "region", f"{field}.region", side, default="us-east-1"
+    )
+    bucket = _location_string(decoder, location, "bucket", f"{field}.bucket", side, shared=False)
+    path = _location_string(
+        decoder,
+        location,
+        "path",
+        f"{field}.path",
+        side,
+        required=False,
+        shared=False,
+        default="",
+    )
     if None in {access_key_id, secret_access_key, region, bucket, path}:
         return None
     assert access_key_id is not None and secret_access_key is not None
@@ -184,6 +226,40 @@ def _load_location(decoder: EnvDecoder, item: object, field: str) -> S3LocationS
         addressing,
         _normalize_s3_prefix(path),
     )
+
+
+def _location_string(
+    decoder: EnvDecoder,
+    location: Mapping[str, object],
+    key: str,
+    field: str,
+    side: str,
+    *,
+    required: bool = True,
+    shared: bool = True,
+    default: str | None = None,
+) -> str | None:
+    if key in location:
+        if required:
+            return _required_string(decoder, location, key, field)
+        return _optional_string(decoder, location, key, field, default=default)
+
+    for env_key in _location_env_keys(side, key, shared=shared):
+        env_value = decoder.env.get(env_key)
+        if env_value is not None and env_value.strip() != "":
+            return env_value.strip()
+    if default is not None or not required:
+        return default
+    decoder.fail(field, f"{field} is required")
+    return None
+
+
+def _location_env_keys(side: str, key: str, *, shared: bool) -> tuple[str, ...]:
+    suffix = key.upper()
+    side_key = f"S3_{side}_{suffix}"
+    if not shared:
+        return (side_key,)
+    return side_key, f"S3_{suffix}"
 
 
 def _validate_route_storage(decoder: EnvDecoder, routes: tuple[RouteSettings, ...]) -> None:

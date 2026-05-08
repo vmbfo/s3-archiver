@@ -99,7 +99,10 @@ def _run_visual_demo_once(
     archive_start_age_days: int,
     cli_command: str,
 ) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", "run", "--rm", "app", cli_command]
+    command = ["docker", "compose", "--profile", "test", "run", "--rm"]
+    if env.get("ARCHIVER_CONFIG_JSON"):
+        command.extend(("-e", "ARCHIVER_CONFIG_JSON"))
+    command.extend(("app", cli_command))
     process = subprocess.Popen(
         command,
         cwd=repo_root,
@@ -130,7 +133,7 @@ class _SampledDemoPrinter:
         self.tail: list[str] = []
 
     def print_line(self, line: str) -> None:
-        if line.startswith(("SOURCE ", "DEST   ", "COPY   ", "DELETE ", "GROUP  ")):
+        if line.startswith(("SOURCE ", "DEST   ", "COPY   ", "DELETE ", "GROUP  ", "DIRECT ")):
             formatted = _friendly_demo_line(line)
             self.object_count += 1
             if self.object_count <= 3:

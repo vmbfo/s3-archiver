@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.parsers.results import SelectedObject, SkippedObject
 
 
@@ -79,11 +78,6 @@ class ParserContext:
 
 class ObjectParser(Protocol):
     """Select or skip one listed S3 object."""
-
-    @property
-    def kind(self) -> ParserKind:
-        """Return the parser kind."""
-        ...
 
     def parse(
         self, listed: ParserListedObject, context: ParserContext | None = None

@@ -17,11 +17,14 @@ from tests.e2e.visual_demo_data import (
     DEMO_ARCHIVE_DAY_COUNT,
     DEMO_ARCHIVE_ROOT_COUNT,
     DEMO_ARCHIVE_START_AGE_DAYS,
+    DEMO_DIRECT_COPY_COUNT,
     DEMO_FILES_PER_PATH_DAY,
     DEMO_SEEDED_OBJECT_COUNT,
     archive_demo_days,
     archive_member_name,
+    demo_config_json,
     expected_archive_members,
+    expected_direct_destination_keys,
     expected_pax_headers,
     invalid_demo_keys,
     newer_demo_keys,
@@ -40,6 +43,7 @@ from tests.integration.localstack_harness import (
 from tests.integration.localstack_object_helpers import (
     listed_keys,
     localstack_s3_client,
+    read_object_text,
     read_tar_gz_member_pax_headers,
     read_tar_gz_members_text,
 )
@@ -73,14 +77,19 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     seed_now = datetime.now(tz=UTC)
     target_day = (seed_now.astimezone(UTC) - timedelta(days=DEMO_ARCHIVE_START_AGE_DAYS)).date()
     archive_days = archive_demo_days(seed_now)
-    archived_keys = {
-        key for day in archive_days for _, key in target_day_demo_cases(source_prefix, day)
-    }
+    demo_cases = [
+        case for day in archive_days for case in target_day_demo_cases(source_prefix, day)
+    ]
+    eligible_keys = {case.key for case in demo_cases}
     newer_keys = set(newer_demo_keys(source_prefix, target_day))
     invalid_keys = set(invalid_demo_keys(source_prefix, target_day))
-    source_keys = archived_keys | newer_keys | invalid_keys
+    source_keys = eligible_keys | newer_keys | invalid_keys
     archive_members = expected_archive_members(source_prefix, archive_days)
     archive_keys = set(archive_members)
+    direct_keys = expected_direct_destination_keys(source_prefix, archive_days)
+    direct_source_by_destination = {
+        case.destination_key: case.key for case in demo_cases if case.route.copy_mode == "direct"
+    }
     seed_daily_demo_objects(
         source_client,
         bucket_pair.source,
@@ -90,6 +99,7 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     env_file = write_demo_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
+    run_env["ARCHIVER_CONFIG_JSON"] = demo_config_json(bucket_pair, prefix=source_prefix)
 
     result = _run_visual_demo(run_env)
     payload = demo_payload(result.stdout)
@@ -101,27 +111,40 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
     assert f"archive day range: {min(archive_days)} through {max(archive_days)}" in result.stdout
     assert f"archive root count: {DEMO_ARCHIVE_ROOT_COUNT}" in result.stdout
     assert f"archive group count: {DEMO_ARCHIVE_COUNT}" in result.stdout
+    assert f"direct copy count: {DEMO_DIRECT_COPY_COUNT}" in result.stdout
     assert "source objects per archive: min=2 max=2" in result.stdout
+    for detail in (
+        "route=direct-daily parser=direct copy_mode=daily_tar_gz",
+        "route=direct-copy parser=direct copy_mode=direct",
+        "route=filename-daily parser=filename_timestamp copy_mode=daily_tar_gz",
+        "route=filename-copy parser=filename_timestamp copy_mode=direct",
+        "route=folder-daily parser=folder_timestamp copy_mode=daily_tar_gz",
+        "route=folder-copy parser=folder_timestamp copy_mode=direct",
+    ):
+        assert detail in result.stdout
     assert all(
         f"SKIP   key={key} reason=parser timestamp after run start" in result.stdout
         for key in newer_keys
     )
-    assert all(
-        f"SKIP   key={key} reason=no reliable key timestamp" in result.stdout
-        for key in invalid_keys
-    )
+    filename_skip = f"SKIP   key={source_prefix}/filename/daily/skips/no-timestamp-latest.txt"
+    folder_skip = f"SKIP   key={source_prefix}/folder/daily/skips/no-folder-timestamp.txt"
+    assert f"{filename_skip} reason=no reliable key timestamp" in result.stdout
+    assert f"{folder_skip} reason=no reliable folder timestamp" in result.stdout
     assert payload["status"] == "ok"
     archive_manifest = cast(dict[str, object], payload["archive_manifest"])
     archive_result = cast(dict[str, object], payload["archive_result"])
-    assert archive_manifest["object_count"] == len(archived_keys)
+    assert archive_manifest["object_count"] == len(eligible_keys)
     assert archive_manifest["archive_days"] == [day.isoformat() for day in sorted(archive_days)]
     assert archive_manifest["destination_archive_keys"] == sorted(archive_keys)
+    assert set(cast(list[str], archive_manifest["destination_keys"])) == archive_keys | direct_keys
     assert archive_manifest["archive_count"] == len(archive_keys)
+    assert archive_manifest["direct_copy_count"] == len(direct_keys)
     assert archive_manifest["skipped_object_count"] == len(newer_keys | invalid_keys)
+    assert archive_result["direct_copy_count"] == len(direct_keys)
     assert "cleanup_preview" not in payload
     assert all("cleanup_status" not in group for group in archive_groups(archive_result))
     assert group_source_counts(archive_result) == {DEMO_FILES_PER_PATH_DAY}
-    assert listed_keys(destination_client, bucket_pair.destination) == archive_keys
+    assert listed_keys(destination_client, bucket_pair.destination) == archive_keys | direct_keys
     for archive_key, members in sampled_archive_members(archive_members).items():
         assert read_tar_gz_members_text(
             destination_client, bucket_pair.destination, archive_key
@@ -131,6 +154,11 @@ def test_compose_demo_streams_real_bucket_story_and_finishes_with_json_summary(
         )
         assert {name: values for name, values in headers.items() if values} == expected_pax_headers(
             members
+        )
+    for destination_key in _sampled_keys(direct_keys):
+        source_key = direct_source_by_destination[destination_key]
+        assert read_object_text(destination_client, bucket_pair.destination, destination_key) == (
+            f"payload for {source_key}\n"
         )
     assert listed_keys(source_client, bucket_pair.source) == source_keys
 
@@ -144,6 +172,7 @@ def write_demo_env_file(
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
     )
+    env["ARCHIVER_CONFIG_JSON"] = demo_config_json(bucket_pair, prefix="compose-demo")
     env["LOG_LEVEL"] = "WARNING"
     env_file = tmp_path / "compose-demo.env"
     _ = env_file.write_text(
@@ -205,3 +234,8 @@ def archive_groups(payload: dict[str, object]) -> list[dict[str, object]]:
 
 def group_source_counts(payload: dict[str, object]) -> set[int]:
     return {int(cast(int, group["source_object_count"])) for group in archive_groups(payload)}
+
+
+def _sampled_keys(keys: set[str]) -> tuple[str, str, str]:
+    sorted_keys = sorted(keys)
+    return sorted_keys[0], sorted_keys[len(sorted_keys) // 2], sorted_keys[-1]

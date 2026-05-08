@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from s3_archiver_core._route_config_fields import (
     addressing_style,
+    endpoint,
     object_config,
     optional_string,
     required_string,
@@ -157,7 +158,13 @@ def test_route_config_field_helpers_cover_invalid_shapes() -> None:
     assert optional_string(decoder, {"path": 3}, "path", "ROUTE.path") is None
 
     decoder = EnvDecoder({})
+    assert optional_string(decoder, {}, "path", "ROUTE.path") is None
+
+    decoder = EnvDecoder({})
     assert optional_string(decoder, {"path": "${MISSING}"}, "path", "ROUTE.path") == "${MISSING}"
+
+    decoder = EnvDecoder({})
+    assert endpoint(decoder, {}, "ROUTE.endpoint_url") is None
 
     decoder = EnvDecoder({})
     assert addressing_style(decoder, {"addressing_style": 3}, "ROUTE.addressing_style") is None
