@@ -10,16 +10,26 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from mypy_boto3_s3.client import S3Client
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.health import run_health_check
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
 
 class SuccessfulClient:
     """Minimal client double for successful requests."""
 
     called_bucket: str | None = None
+    _versioning_status: str | None
+
+    def __init__(self, versioning_status: str | None = "Enabled") -> None:
+        self._versioning_status = versioning_status
 
     def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
         self.called_bucket = Bucket
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        self.called_bucket = Bucket
+        if self._versioning_status is None:
+            return {}
+        return {"Status": self._versioning_status}
 
 
 class AuthFailingClient:
@@ -29,6 +39,10 @@ class AuthFailingClient:
         _ = Bucket
         raise ClientError({"Error": {"Code": "403", "Message": "denied"}}, "HeadBucket")
 
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        _ = Bucket
+        return {"Status": "Enabled"}
+
 
 class ConnectivityFailingClient:
     """Minimal client double for connectivity failures."""
@@ -37,16 +51,31 @@ class ConnectivityFailingClient:
         _ = Bucket
         raise EndpointConnectionError(endpoint_url="http://localstack:4566")
 
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        _ = Bucket
+        return {"Status": "Enabled"}
+
+
+class VersioningFailingClient:
+    """Minimal client double for source versioning failures."""
+
+    def head_bucket(self, *, Bucket: str) -> None:  # noqa: N803
+        _ = Bucket
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:  # noqa: N803
+        _ = Bucket
+        raise ClientError({"Error": {"Code": "403", "Message": "denied"}}, "GetBucketVersioning")
+
 
 @pytest.mark.unit()
 def test_run_health_check_reports_success(
     monkeypatch: pytest.MonkeyPatch, base_env: dict[str, str]
 ) -> None:
     settings = AppSettings.from_env(base_env)
-    client = SuccessfulClient()
+    clients = [SuccessfulClient(), SuccessfulClient()]
 
-    def build_client(_: AppSettings) -> S3Client:
-        return cast(S3Client, cast(object, client))
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
 
     monkeypatch.setattr(
         "s3_archiver_core.health.build_s3_client",
@@ -55,8 +84,41 @@ def test_run_health_check_reports_success(
 
     report = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
 
-    assert client.called_bucket == "archive-bucket"
+    assert report.source_bucket == "archive-bucket"
+    assert report.destination_bucket == "destination-bucket"
+    assert report.source_versioning == "Enabled"
+    assert clients == []
     assert report.status == "ok"
+
+
+@pytest.mark.unit()
+@pytest.mark.parametrize(
+    ("raw_status", "expected_status"),
+    [
+        ("Suspended", "Suspended"),
+        (None, "Disabled"),
+    ],
+)
+def test_run_health_check_reports_non_enabled_source_versioning_states(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+    raw_status: str | None,
+    expected_status: str,
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    clients = [SuccessfulClient(raw_status), SuccessfulClient()]
+
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.health.build_s3_client",
+        build_client,
+    )
+
+    report = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
+
+    assert report.source_versioning == expected_status
 
 
 @pytest.mark.unit()
@@ -66,7 +128,7 @@ def test_run_health_check_raises_on_auth_error(
 ) -> None:
     settings = AppSettings.from_env(base_env)
 
-    def build_client(_: AppSettings) -> S3Client:
+    def build_client(_: S3LocationSettings) -> S3Client:
         return cast(S3Client, cast(object, AuthFailingClient()))
 
     monkeypatch.setattr(
@@ -85,7 +147,7 @@ def test_run_health_check_raises_on_connectivity_error(
 ) -> None:
     settings = AppSettings.from_env(base_env)
 
-    def build_client(_: AppSettings) -> S3Client:
+    def build_client(_: S3LocationSettings) -> S3Client:
         return cast(S3Client, cast(object, ConnectivityFailingClient()))
 
     monkeypatch.setattr(
@@ -94,4 +156,44 @@ def test_run_health_check_raises_on_connectivity_error(
     )
 
     with pytest.raises(HealthCheckError, match="Could not connect"):
+        _ = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
+
+
+@pytest.mark.unit()
+def test_run_health_check_raises_on_destination_access_error(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    clients = [SuccessfulClient(), AuthFailingClient()]
+
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.health.build_s3_client",
+        build_client,
+    )
+
+    with pytest.raises(HealthCheckError, match="destination bucket"):
+        _ = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")
+
+
+@pytest.mark.unit()
+def test_run_health_check_raises_on_source_versioning_error(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    settings = AppSettings.from_env(base_env)
+    clients = [VersioningFailingClient(), SuccessfulClient()]
+
+    def build_client(_: S3LocationSettings) -> S3Client:
+        return cast(S3Client, cast(object, clients.pop(0)))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.health.build_s3_client",
+        build_client,
+    )
+
+    with pytest.raises(HealthCheckError, match="source bucket versioning"):
         _ = run_health_check(settings, Path(base_env["LOG_DIR"]) / "s3-archiver.log")

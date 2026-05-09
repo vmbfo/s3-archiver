@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal, cast
 
 import pytest
 import s3_archiver_core.s3 as s3_module
 from botocore.response import StreamingBody
-from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.settings import AppSettings, S3AddressingStyle, S3LocationSettings, S3Provider
+
+from tests.unit.settings_fakes import dual_env
 
 
 class FakeS3Client:
@@ -66,15 +70,24 @@ class RecordingConfig:
 
     signature_version: str
     s3: dict[str, str]
+    connect_timeout: int | None
+    read_timeout: int | None
+    retries: dict[str, object] | None
 
     def __init__(
         self,
         *,
         signature_version: str,
         s3: dict[str, str],
+        connect_timeout: int | None = None,
+        read_timeout: int | None = None,
+        retries: dict[str, object] | None = None,
     ) -> None:
         self.signature_version = signature_version
         self.s3 = s3
+        self.connect_timeout = connect_timeout
+        self.read_timeout = read_timeout
+        self.retries = retries
 
 
 @pytest.mark.unit()
@@ -119,12 +132,30 @@ def test_build_s3_client_wires_derived_oci_endpoint(
 
 
 @pytest.mark.unit()
+def test_s3_object_properties_defaults_checksums_to_empty_mapping() -> None:
+    properties = s3_module.S3ObjectProperties(
+        size=1,
+        etag=None,
+        content_type=None,
+        content_encoding=None,
+        content_language=None,
+        content_disposition=None,
+        cache_control=None,
+        expires=None,
+        metadata={},
+        tags={},
+    )
+
+    assert properties.checksums == {}
+
+
+@pytest.mark.unit()
 def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch: pytest.MonkeyPatch,
     base_env: dict[str, str],
 ) -> None:
-    base_env["S3_ENDPOINT_URL"] = "https://override.example.invalid"
-    base_env["S3_ADDRESSING_STYLE"] = "virtual"
+    base_env["S3_SOURCE_ENDPOINT_URL"] = "https://override.example.invalid"
+    base_env["S3_SOURCE_ADDRESSING_STYLE"] = "virtual"
     settings = AppSettings.from_env(base_env)
     sessions: list[RecordingSession] = []
 
@@ -151,3 +182,114 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     config = cast(RecordingConfig, session.client_call["config"])
     assert session.client_call["endpoint_url"] == "https://override.example.invalid"
     assert config.s3 == {"addressing_style": "virtual"}
+
+
+@pytest.mark.unit()
+def test_build_s3_client_uses_short_localstack_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    base_env: dict[str, str],
+) -> None:
+    base_env["S3_SOURCE_PROVIDER"] = "localstack"
+    base_env["S3_SOURCE_REGION"] = "us-east-1"
+    base_env["S3_SOURCE_BUCKET"] = "source-bucket"
+    base_env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    settings = AppSettings.from_env(base_env)
+    sessions: list[RecordingSession] = []
+
+    def fake_session(
+        *,
+        aws_access_key_id: str,
+        aws_secret_access_key: str,
+        region_name: str,
+    ) -> RecordingSession:
+        session = RecordingSession(
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=region_name,
+        )
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(s3_module, "Session", fake_session)
+    monkeypatch.setattr(s3_module, "Config", RecordingConfig)
+
+    _ = s3_module.build_s3_client(settings)
+
+    config = cast(RecordingConfig, sessions[0].client_call["config"])
+    assert config.connect_timeout == s3_module.LOCALSTACK_CONNECT_TIMEOUT_SECONDS
+    assert config.read_timeout == s3_module.LOCALSTACK_READ_TIMEOUT_SECONDS
+    assert config.retries == {
+        "max_attempts": s3_module.LOCALSTACK_MAX_ATTEMPTS,
+        "mode": "standard",
+    }
+
+
+@pytest.mark.unit()
+def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
+    tmp_path: Path,
+) -> None:
+    settings = AppSettings.from_env(dual_env(tmp_path))
+
+    capabilities = s3_module.transfer_capabilities_for_locations(
+        settings.source,
+        settings.destination,
+    )
+
+    assert capabilities.native_copy is False
+    assert capabilities.multipart_copy is False
+    assert capabilities.streaming_upload is True
+    assert capabilities.temp_file_backed is True
+
+
+@pytest.mark.unit()
+def test_transfer_capabilities_honor_provider_profile_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env = dual_env(tmp_path)
+    env["S3_SOURCE_PROVIDER"] = "localstack"
+    env["S3_SOURCE_REGION"] = "us-east-1"
+    env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    env["S3_DESTINATION_PROVIDER"] = "localstack"
+    env["S3_DESTINATION_REGION"] = "us-east-1"
+    env["S3_DESTINATION_ENDPOINT_URL"] = "http://127.0.0.1:4566"
+    settings = AppSettings.from_env(env)
+    monkeypatch.setattr(
+        s3_module,
+        "_TRANSFER_PROFILES",
+        {
+            "localstack": s3_module.S3ProviderTransferProfile(native_copy=False),
+            "oci": s3_module.S3ProviderTransferProfile(),
+        },
+    )
+
+    capabilities = s3_module.transfer_capabilities_for_locations(
+        settings.source,
+        settings.destination,
+    )
+
+    assert capabilities.native_copy is False
+    assert capabilities.multipart_copy is False
+    assert capabilities.streaming_upload is True
+
+
+@pytest.mark.unit()
+def test_transfer_profile_for_location_rejects_unknown_provider() -> None:
+    fake_provider = cast(
+        S3Provider,
+        cast(object, SimpleNamespace(value="unsupported-provider")),
+    )
+    location = S3LocationSettings(
+        provider=fake_provider,
+        access_key_id="access",
+        secret_access_key="secret",
+        region="eu-frankfurt-1",
+        bucket="bucket",
+        namespace=None,
+        iam_user_ocid=None,
+        endpoint_url="http://localstack:4566",
+        addressing_style=S3AddressingStyle.PATH,
+    )
+
+    with pytest.raises(ValueError, match="unsupported provider"):
+        _ = s3_module.transfer_profile_for_location(location)

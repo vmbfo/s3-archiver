@@ -15,3 +15,7 @@ class LoggingError(S3ArchiverError):
 
 class HealthCheckError(S3ArchiverError):
     """Raised when the S3 health check fails."""
+
+
+class ArchiveRunError(S3ArchiverError):
+    """Raised when an archive run completes with failed phases."""
