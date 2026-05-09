@@ -11,6 +11,7 @@
 ### Pre-Push Process
 3. Before pushing to the git remote, spawn a fresh reviewer agent to review the current change set. Route every review finding back through the pipeline to a worker agent for fixes, then rerun a fresh reviewer. Repeat until the reviewer reports no findings and explicitly says `LGTM`, with a hard cap of 10 review/fix iterations.
 4. Before pushing to the git remote, ensure the full CI workflow has been run completely and let the normal git hooks run in full. Never use `git push --no-verify`. Do not skip, mock, fake, short-circuit, or otherwise alter any CI configuration, CI setup, git hook, or CI execution path to get a passing result.
+5. Before pushing to the git remote, spawn a dedicated refactor-review sub-agent to inspect the current change set for opportunities to reduce redundancy, keep code DRY, simplify implementation details, and preserve a clean, minimal design. Route actionable refactor findings through a worker agent for fixes before the final push validation completes.
 
 ## Repository-Specific Requirements
 
