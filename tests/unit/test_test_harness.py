@@ -91,18 +91,28 @@ def _base_localstack_settings() -> AppSettings:
             "S3_DESTINATION_PROVIDER": "localstack",
             "S3_DESTINATION_ACCESS_KEY_ID": "destination-test",
             "S3_DESTINATION_SECRET_ACCESS_KEY": "destination-test",
-            "ARCHIVER_RETENTION_DAYS": "60",
-            "ARCHIVER_ENABLE_CLEANUP": "false",
-            "ARCHIVER_MAX_WORKERS": "16",
             "ARCHIVER_RUN_TIMEOUT": "7d",
-            "S3_SOURCE_PATH_WHITELIST_ENABLED": "false",
-            "S3_SOURCE_PATH_BLACKLIST_ENABLED": "false",
-            "S3_SOURCE_PATH_WHITELIST": "[]",
-            "S3_SOURCE_PATH_BLACKLIST": "[]",
             "S3_DESTINATION_REGION": "us-east-1",
             "S3_DESTINATION_BUCKET": "s3-archiver-destination",
             "S3_DESTINATION_ENDPOINT_URL": "http://127.0.0.1:4566",
             "S3_DESTINATION_ADDRESSING_STYLE": "path",
+            "ARCHIVER_CONFIG_JSON": (
+                '[{"name":"localstack-daily","parser":"filename_timestamp",'
+                '"copy_mode":"daily_tar_gz",'
+                '"source":{"provider":"${S3_SOURCE_PROVIDER}",'
+                '"endpoint_url":"${S3_SOURCE_ENDPOINT_URL}",'
+                '"region":"${S3_SOURCE_REGION}","bucket":"${S3_SOURCE_BUCKET}",'
+                '"path":"","access_key_id":"${S3_SOURCE_ACCESS_KEY_ID}",'
+                '"secret_access_key":"${S3_SOURCE_SECRET_ACCESS_KEY}",'
+                '"addressing_style":"${S3_SOURCE_ADDRESSING_STYLE}"},'
+                '"destination":{"provider":"${S3_DESTINATION_PROVIDER}",'
+                '"endpoint_url":"${S3_DESTINATION_ENDPOINT_URL}",'
+                '"region":"${S3_DESTINATION_REGION}",'
+                '"bucket":"${S3_DESTINATION_BUCKET}","path":"",'
+                '"access_key_id":"${S3_DESTINATION_ACCESS_KEY_ID}",'
+                '"secret_access_key":"${S3_DESTINATION_SECRET_ACCESS_KEY}",'
+                '"addressing_style":"${S3_DESTINATION_ADDRESSING_STYLE}"}}]'
+            ),
             "LOG_LEVEL": "INFO",
             "LOG_DIR": "/tmp/s3-archiver-logs",
         }

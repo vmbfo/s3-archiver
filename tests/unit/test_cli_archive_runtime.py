@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
@@ -29,7 +30,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     built_locations: list[str] = []
     call_order: list[str] = []
     lock_paths: list[Path] = []
-    option_retention_days: list[int] = []
+    option_timeouts: list[object] = []
     health_checked: list[Path] = []
     expected_temp_dir = AppSettings.from_env(base_env).temp_dir
 
@@ -63,16 +64,15 @@ def test_archive_once_command_runs_core_workflow_with_lock(
             call_order.append("lock.release")
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, run_lock, _kwargs)
+        _ = (routes, run_started_at_utc, _kwargs)
         call_order.append("run_archive")
-        option_retention_days.append(options.retention_days)
+        option_timeouts.append(options.run_timeout)
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -80,7 +80,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -92,7 +92,7 @@ def test_archive_once_command_runs_core_workflow_with_lock(
     assert built_locations == ["archive-bucket", "destination-bucket"]
     assert health_checked == [Path("/tmp/s3-archiver.log")]
     assert lock_paths == [Path(base_env["LOG_DIR"]) / "archive.lock"]
-    assert option_retention_days == [60]
+    assert option_timeouts == [timedelta(days=7)]
     assert call_order == ["lock.acquire", "temp.prepare", "health", "run_archive", "lock.release"]
 
 
@@ -163,14 +163,13 @@ def test_archive_once_timeout_releases_lock_and_records_failed_run(
             released.append(run_id)
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, _kwargs)
+        _ = (routes, options, run_started_at_utc, _kwargs)
         return _archive_result(copy=ArchivePhaseResult("copy", ("archive run timed out",)))
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -178,7 +177,7 @@ def test_archive_once_timeout_releases_lock_and_records_failed_run(
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 

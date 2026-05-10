@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from s3_archiver_core._archive_protocols import ArchiveReadableBody
 from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
 from s3_archiver_core.temp_files import default_temp_dir
+
+from tests.unit.archive_workflow_fakes import daily_archive_options
 
 
 class EmptyBucket:
@@ -48,15 +49,12 @@ class EmptyBucket:
     def copy_from(self, *_args: object, **_kwargs: object) -> None:
         raise AssertionError("empty manifest must not copy")
 
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        raise AssertionError(f"empty manifest must not delete {key!r} {version_id!r}")
-
 
 @pytest.mark.unit()
 def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     first_started = datetime(2024, 4, 20, tzinfo=UTC)
     second_started = datetime(2024, 4, 21, tzinfo=UTC)
-    options = ArchiveOptions(retention_days=60, cleanup_enabled=False, max_workers=1)
+    options = daily_archive_options()
 
     first = run_archive(
         EmptyBucket(),
@@ -72,6 +70,4 @@ def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     )
 
     assert first.manifest.run_started_at_utc == first_started
-    assert first.manifest.retention_cutoff_utc == first_started - timedelta(days=60)
     assert second.manifest.run_started_at_utc == second_started
-    assert second.manifest.retention_cutoff_utc == second_started - timedelta(days=60)

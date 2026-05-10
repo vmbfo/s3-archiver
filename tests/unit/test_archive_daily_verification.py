@@ -1,4 +1,4 @@
-"""Daily archive verification and cleanup safety tests."""
+"""Daily archive verification safety tests."""
 
 from __future__ import annotations
 
@@ -12,10 +12,9 @@ from s3_archiver_core.archive import (
     group_metadata,
     run_archive,
 )
-from s3_archiver_core.archive_manifest import SourcePathFilter, build_archive_manifest
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_manifest import build_archive_manifest
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -23,15 +22,15 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 
 @pytest.mark.unit()
-def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
+def test_existing_archive_requires_archive_hash_before_reuse() -> None:
     listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     missing_hash = FakeBucket(
@@ -42,27 +41,63 @@ def test_existing_archive_requires_archive_hash_before_cleanup() -> None:
     result = run_archive(
         source,
         missing_hash,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
-    assert result.ok is True
-    assert result.skipped_archive_keys == (archive_key,)
-    assert source.deleted == []
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
 
 
 @pytest.mark.unit()
-def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
+def test_existing_archive_rejects_mismatched_source_identity() -> None:
+    listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
+    source = FakeBucket("source", (listed,))
+    destination_bucket = FakeBucket("destination")
+    other_manifest = build_archive_manifest(
+        source,
+        run_started_at_utc=STARTED,
+        versioning_state="Enabled",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
+        destination=destination_bucket,
+        source_identity=("other", "source"),
+    )
+    archive_key = other_manifest.archive_groups[0].destination_archive_key
+    payload = b"archive"
+    existing_metadata = dict(group_metadata(other_manifest.archive_groups[0])) | {
+        ARCHIVE_SHA256_METADATA_KEY: hashlib.sha256(payload).hexdigest()
+    }
+    destination = FakeBucket(
+        "destination",
+        destination={archive_key: _properties(metadata=existing_metadata)},
+        payloads={archive_key: payload},
+    )
+
+    result = run_archive(
+        source,
+        destination,
+        daily_archive_options(),
+        run_started_at_utc=STARTED,
+        clock=lambda: STARTED,
+    )
+
+    assert result.copy.failures == (f"{archive_key}: archive verification failed",)
+    assert result.verify.skipped is True
+
+
+@pytest.mark.unit()
+def test_mismatched_existing_archive_fails_only_that_group() -> None:
     good = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v-good")
     skipped = _listed("data/harmonie/2026-04-13T07-00-00.xml", 1, "v-skip")
     source = FakeBucket("source", (good, skipped))
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     good_group = next(
         group for group in manifest.archive_groups if group.archive_root == "data/fae"
@@ -88,12 +123,12 @@ def test_mismatched_existing_archive_skips_only_that_group_cleanup() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
-    assert result.ok is True
-    assert result.verified_archive_keys == (good_group.destination_archive_key,)
-    assert result.skipped_archive_keys == (skipped_group.destination_archive_key,)
-    assert source.deleted == [(good.key, "v-good")]
+    assert result.ok is False
+    assert result.copy.failures == (
+        f"{skipped_group.destination_archive_key}: archive verification failed",
+    )

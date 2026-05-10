@@ -175,10 +175,6 @@ class S3ArchiveBucket:
             self.temp_dir,
         )
 
-    def delete_source(self, key: str, version_id: str | None) -> None:
-        """Delete a source object or source object version."""
-        _ = self.client.delete_object(**versioned_kwargs(self.bucket, key, version_id))
-
     def _list_unversioned(self) -> Iterator[S3ListedObject]:
         start_after: str | None = None
         while True:

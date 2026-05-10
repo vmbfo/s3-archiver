@@ -58,21 +58,20 @@ def test_run_archive_keeps_matching_run_id_and_releases_lock(
         return object()
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: object,
         *,
         run_started_at_utc: datetime,
         debug_logger: object | None = None,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_started_at_utc, debug_logger)
+        _ = (routes, options, run_started_at_utc, debug_logger)
         return _archive_result(run_id="locked-run")
 
     monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     payload = _run_archive(settings, Path("/tmp/log"))
 
@@ -109,24 +108,20 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
         return object()
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: object,
         *,
         run_started_at_utc: datetime,
         debug_logger: object | None = None,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_started_at_utc, debug_logger)
+        _ = (routes, options, run_started_at_utc, debug_logger)
         result = _archive_result(run_id="core-run")
         return ArchiveRunResult(
             result.run_id,
             result.manifest,
             result.copy,
             result.verify,
-            result.cleanup,
             result.list,
-            ("verified.tar.gz",),
-            ("skipped.tar.gz",),
         )
 
     def archive_result_payload(
@@ -138,15 +133,13 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
         return {
             "status": status,
             "run_id": result.run_id,
-            "verified_archive_keys": list(result.verified_archive_keys),
-            "skipped_archive_keys": list(result.skipped_archive_keys),
         }
 
     monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
     monkeypatch.setattr(error_logging, "archive_result_payload", archive_result_payload)
 
     payload = _run_archive(settings, Path("/tmp/log"))
@@ -154,8 +147,6 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
     record = cast(dict[str, object], json.loads(record_path.read_text(encoding="utf-8")))
 
     assert payload["run_id"] == "locked-run"
-    assert payload["verified_archive_keys"] == ["verified.tar.gz"]
-    assert payload["skipped_archive_keys"] == ["skipped.tar.gz"]
     assert cast(dict[str, object], record["payload"])["run_id"] == "locked-run"
 
 
@@ -264,10 +255,8 @@ def _archive_result(*, run_id: str = "run-id") -> ArchiveRunResult:
         run_id=run_id,
         manifest=ArchiveManifest(
             run_started_at_utc=datetime.fromisoformat("2026-04-09T17:00:43+00:00"),
-            retention_cutoff_utc=datetime.fromisoformat("2026-02-08T17:00:43+00:00"),
             entries=(),
         ),
         copy=ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

@@ -40,7 +40,6 @@ __all__ = (
     "verify_destination",
     "verify_destination_checksum",
     "verify_destination_content",
-    "verify_source_unchanged",
 )
 
 
@@ -137,32 +136,6 @@ def verify_destination_checksum(
     for algorithm in shared_algorithms:
         if source.checksums[algorithm] != destination.checksums[algorithm]:
             return VerificationResult(False, "content mismatch")
-    return VerificationResult(True, "ok")
-
-
-def verify_source_unchanged(
-    entry: ManifestEntry, current: S3ObjectProperties | None
-) -> VerificationResult:
-    """Verify a key-only cleanup target still matches the manifest source object."""
-
-    if current is None:
-        return VerificationResult(False, "source missing before cleanup")
-    source_properties = entry.object.properties
-    if current.last_modified is not None and current.last_modified != entry.last_modified:
-        return VerificationResult(False, "source changed before cleanup")
-    if current.size != entry.size:
-        return VerificationResult(False, "source changed before cleanup")
-    if current.etag != entry.etag:
-        return VerificationResult(False, "source changed before cleanup")
-    checksum_verified = verify_destination_checksum(source_properties, current)
-    if checksum_verified is not None and not checksum_verified.ok:
-        return VerificationResult(False, "source changed before cleanup")
-    if not _headers_match(source_properties, current):
-        return VerificationResult(False, "source changed before cleanup")
-    if dict(source_properties.metadata) != dict(current.metadata):
-        return VerificationResult(False, "source changed before cleanup")
-    if dict(source_properties.tags) != dict(current.tags):
-        return VerificationResult(False, "source changed before cleanup")
     return VerificationResult(True, "ok")
 
 

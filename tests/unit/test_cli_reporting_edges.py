@@ -38,17 +38,16 @@ def test_archive_failure_payload_falls_back_when_no_phase_has_failures(
     stub_runtime(monkeypatch, base_env)
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, kwargs)
+        _ = (routes, options, run_started_at_utc, kwargs)
         return archive_result(copy=FailedWithoutFailures("copy"))
 
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -112,20 +111,19 @@ def test_debug_archive_run_logs_transfer_decision(
     contexts = capture_logger_context(monkeypatch)
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         debug_logger: Callable[[ManifestEntry, str], None] | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, kwargs)
+        _ = (routes, options, run_started_at_utc, kwargs)
         assert debug_logger is not None
         debug_logger(manifest_entry(), "streaming_upload")
         return archive_result()
 
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -169,18 +167,17 @@ def test_archive_lock_recovery_logger_adds_structured_context(
             _ = run_id
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (source, destination, options, run_lock, kwargs)
+        _ = (routes, options, run_started_at_utc, kwargs)
         return archive_result()
 
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecoveringLock)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -270,10 +267,8 @@ def archive_result(copy: ArchivePhaseResult | None = None) -> ArchiveRunResult:
         run_id="run-id",
         manifest=ArchiveManifest(
             run_started_at_utc=datetime.fromisoformat("2026-04-09T17:00:43+00:00"),
-            retention_cutoff_utc=datetime.fromisoformat("2026-02-08T17:00:43+00:00"),
             entries=(),
         ),
         copy=copy or ArchivePhaseResult("copy"),
         verify=ArchivePhaseResult("verify"),
-        cleanup=ArchivePhaseResult("cleanup"),
     )

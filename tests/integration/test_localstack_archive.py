@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from s3_archiver_core.settings import AppSettings
 from tests.integration.archive_cli_test_support import (
     FROZEN_ARCHIVE_RUN_STARTED_AT,
     ArchiveCommandPayload,
+    update_single_route_config,
 )
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
@@ -24,6 +24,7 @@ from tests.integration.localstack_harness import LocalstackBucketPair
 from tests.integration.localstack_object_helpers import (
     listed_keys,
     put_test_object,
+    read_object_text,
     read_tar_gz_members_text,
 )
 
@@ -32,18 +33,12 @@ TARGET_ARCHIVE_KEY = f"archive/{TARGET_DAY}.tar.gz"
 
 
 @pytest.mark.integration()
-@pytest.mark.parametrize("cleanup_value", [None, "false", "true"])
-def test_archive_command_archives_target_day_keys_and_honors_cleanup_gate(
+def test_archive_command_archives_target_day_keys_without_deleting_sources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
-    cleanup_value: str | None,
 ) -> None:
     env = _archive_env(tmp_path, localstack_bucket_pair)
-    if cleanup_value is None:
-        del env["ARCHIVER_ENABLE_CLEANUP"]
-    else:
-        env["ARCHIVER_ENABLE_CLEANUP"] = cleanup_value
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
     source_keys = {
@@ -59,12 +54,10 @@ def test_archive_command_archives_target_day_keys_and_honors_cleanup_gate(
     assert payload["source_bucket"] == localstack_bucket_pair.source
     assert payload["destination_bucket"] == localstack_bucket_pair.destination
     assert payload["manifest"]["object_count"] == len(source_keys)
-    expected_cleanup_status = "ok" if cleanup_value == "true" else "skipped"
     assert _phase_statuses(payload) == {
         "list": "ok",
         "copy": "ok",
         "verify": "ok",
-        "cleanup": expected_cleanup_status,
     }
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         TARGET_ARCHIVE_KEY
@@ -72,20 +65,17 @@ def test_archive_command_archives_target_day_keys_and_honors_cleanup_gate(
     assert read_tar_gz_members_text(
         destination_client, localstack_bucket_pair.destination, TARGET_ARCHIVE_KEY
     ) == {key: f"payload for {key}\n" for key in source_keys}
-    expected_source_keys: set[str] = set() if cleanup_value == "true" else source_keys
-    assert listed_keys(source_client, localstack_bucket_pair.source) == expected_source_keys
+    assert listed_keys(source_client, localstack_bucket_pair.source) == source_keys
 
 
 @pytest.mark.integration()
-def test_archive_command_whitelist_filter_controls_copy_and_cleanup_scope(
+def test_archive_command_route_source_and_destination_paths_control_daily_archives(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _archive_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_ENABLE_CLEANUP"] = "true"
-    env["S3_SOURCE_PATH_WHITELIST_ENABLED"] = "true"
-    env["S3_SOURCE_PATH_WHITELIST"] = json.dumps(["include/"])
+    update_single_route_config(env, source_path="include/", destination_path="routed/")
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
     included_keys = {
@@ -101,13 +91,13 @@ def test_archive_command_whitelist_filter_controls_copy_and_cleanup_scope(
     assert payload["status"] == "ok"
     assert payload["manifest"]["object_count"] == 2
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
-        f"include/{TARGET_DAY}.tar.gz",
-        f"include/nested/{TARGET_DAY}.tar.gz",
+        f"routed/{TARGET_DAY}.tar.gz",
+        f"routed/nested/{TARGET_DAY}.tar.gz",
     }
     assert read_tar_gz_members_text(
         destination_client,
         localstack_bucket_pair.destination,
-        f"include/{TARGET_DAY}.tar.gz",
+        f"routed/{TARGET_DAY}.tar.gz",
     ) == {
         f"include/{TARGET_DAY}T00-00-00-a.txt": (
             f"payload for include/{TARGET_DAY}T00-00-00-a.txt\n"
@@ -116,86 +106,98 @@ def test_archive_command_whitelist_filter_controls_copy_and_cleanup_scope(
     assert read_tar_gz_members_text(
         destination_client,
         localstack_bucket_pair.destination,
-        f"include/nested/{TARGET_DAY}.tar.gz",
+        f"routed/nested/{TARGET_DAY}.tar.gz",
     ) == {
         f"include/nested/{TARGET_DAY}T01-00-00-b.txt": (
             f"payload for include/nested/{TARGET_DAY}T01-00-00-b.txt\n"
         )
     }
-    assert listed_keys(source_client, localstack_bucket_pair.source) == {excluded_key}
+    assert listed_keys(source_client, localstack_bucket_pair.source) == included_keys | {
+        excluded_key
+    }
 
 
 @pytest.mark.integration()
-def test_archive_command_blacklist_filter_controls_copy_and_cleanup_scope(
+def test_archive_command_direct_route_copies_source_path_without_deleting_sources(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _archive_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_ENABLE_CLEANUP"] = "true"
-    env["S3_SOURCE_PATH_BLACKLIST_ENABLED"] = "true"
-    env["S3_SOURCE_PATH_BLACKLIST"] = json.dumps(["blocked/"])
+    update_single_route_config(
+        env,
+        name="localstack-direct",
+        parser="direct",
+        copy_mode="direct",
+        source_path="raw/",
+        destination_path="mirror/",
+    )
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    allowed_key = f"allowed/{TARGET_DAY}T00-00-00-a.txt"
-    blocked_keys = {
-        f"blocked/{TARGET_DAY}T01-00-00-b.txt",
-        f"blocked/nested/{TARGET_DAY}T02-00-00-c.txt",
+    copied_keys = {
+        "raw/live-a.txt",
+        "raw/nested/live-b.txt",
     }
-    for key in {allowed_key} | blocked_keys:
+    skipped_key = "other/live-c.txt"
+    for key in copied_keys | {skipped_key}:
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 1
+    assert payload["manifest"]["object_count"] == len(copied_keys)
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
-        f"allowed/{TARGET_DAY}.tar.gz"
+        f"mirror/{key}" for key in copied_keys
     }
-    assert read_tar_gz_members_text(
-        destination_client,
-        localstack_bucket_pair.destination,
-        f"allowed/{TARGET_DAY}.tar.gz",
-    ) == {allowed_key: f"payload for {allowed_key}\n"}
-    assert listed_keys(source_client, localstack_bucket_pair.source) == blocked_keys
+    for key in copied_keys:
+        assert (
+            read_object_text(
+                destination_client, localstack_bucket_pair.destination, f"mirror/{key}"
+            )
+            == f"payload for {key}\n"
+        )
+    assert listed_keys(source_client, localstack_bucket_pair.source) == copied_keys | {skipped_key}
 
 
 @pytest.mark.integration()
-@pytest.mark.parametrize(
-    ("retention_days", "expected_days"),
-    [(1, ("2099-12-31", "2099-11-02", "2099-11-01")), (60, ("2099-11-02", "2099-11-01"))],
-)
-def test_archive_command_retention_matrix_selects_each_eligible_day(
+def test_archive_command_filename_parser_skips_timestamps_after_frozen_run_start(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     localstack_bucket_pair: LocalstackBucketPair,
-    retention_days: int,
-    expected_days: tuple[str, ...],
 ) -> None:
-    prefix = "retention-boundary"
+    prefix = "timestamp-boundary"
     env = _archive_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_RETENTION_DAYS"] = str(retention_days)
     source_client = _client(env, "source")
     destination_client = _client(env, "destination")
-    seed_keys = {
-        f"{prefix}/2099-12-31T00-00-00.txt",
-        f"{prefix}/2099-11-02T00-00-00.txt",
-        f"{prefix}/2099-11-01T00-00-00.txt",
+    eligible_keys = {
+        f"{prefix}/2099-12-31T11-59-59-before.txt",
+        f"{prefix}/2099-12-31T12-00-00-equal.txt",
     }
+    future_key = f"{prefix}/2099-12-31T12-00-01-future.txt"
+    seed_keys = eligible_keys | {future_key}
     for key in seed_keys:
         _ = put_test_object(source_client, localstack_bucket_pair.source, key)
 
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == len(expected_days)
-    archive_keys = {f"{prefix}/{day}.tar.gz" for day in expected_days}
+    assert payload["manifest"]["object_count"] == len(eligible_keys)
+    archive_keys = {
+        f"{prefix}/2099-12-31.tar.gz",
+    }
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == archive_keys
-    for day in expected_days:
-        source_key = f"{prefix}/{day}T00-00-00.txt"
-        assert read_tar_gz_members_text(
-            destination_client, localstack_bucket_pair.destination, f"{prefix}/{day}.tar.gz"
-        ) == {source_key: f"payload for {source_key}\n"}
+    assert read_tar_gz_members_text(
+        destination_client,
+        localstack_bucket_pair.destination,
+        f"{prefix}/2099-12-31.tar.gz",
+    ) == {
+        f"{prefix}/2099-12-31T11-59-59-before.txt": (
+            f"payload for {prefix}/2099-12-31T11-59-59-before.txt\n"
+        ),
+        f"{prefix}/2099-12-31T12-00-00-equal.txt": (
+            f"payload for {prefix}/2099-12-31T12-00-00-equal.txt\n"
+        ),
+    }
     assert listed_keys(source_client, localstack_bucket_pair.source) == seed_keys
 
 
@@ -246,5 +248,5 @@ def _phase_statuses(payload: ArchiveCommandPayload) -> dict[str, str]:
     return {
         name: phase["status"]
         for name, phase in payload["phases"].items()
-        if name in {"list", "copy", "verify", "cleanup"}
+        if name in {"list", "copy", "verify"}
     }

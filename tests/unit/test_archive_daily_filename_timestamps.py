@@ -14,15 +14,10 @@ from s3_archiver_core.archive import (
     group_metadata,
     run_archive,
 )
-from s3_archiver_core.archive_manifest import (
-    SourcePathFilter,
-    archive_root_for_key,
-    build_archive_manifest,
-    select_key_timestamp,
-)
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive_manifest import build_archive_manifest
+from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -32,15 +27,9 @@ TARGET_DAY = datetime(2026, 4, 13, tzinfo=UTC).date()
 
 @pytest.mark.unit()
 def test_timestamp_selection_prefers_basename_and_uses_path_fallback() -> None:
-    basename = select_key_timestamp(
-        "data/2026/04/12/2026-04-13T07-00-00Z.xml",
-        datetime(2026, 4, 12, 7, tzinfo=UTC),
-    )
+    basename = select_key_timestamp("data/2026/04/12/2026-04-13T07-00-00Z.xml")
     path_only = select_key_timestamp("data/fae/2026/04/13/07/no-stamp.xml")
-    tied = select_key_timestamp(
-        "a/2026/04/13/file_2026-04-13T010000Z_2026-04-13T020000Z.txt",
-        datetime(2026, 4, 13, 2, 1, tzinfo=UTC),
-    )
+    tied = select_key_timestamp("a/2026/04/13/file_2026-04-13T010000Z_2026-04-13T020000Z.txt")
 
     assert basename == (datetime(2026, 4, 13, 7, tzinfo=UTC), "basename")
     assert path_only == (datetime(2026, 4, 13, 7, tzinfo=UTC), "path")
@@ -64,9 +53,9 @@ def test_malformed_filename_time_is_not_used_as_date_only_fallback() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
@@ -91,12 +80,12 @@ def test_filename_timestamp_offset_is_converted_to_utc_target_day() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
-    assert manifest.target_day == TARGET_DAY
+    assert [group.target_day for group in manifest.archive_groups] == [TARGET_DAY]
     assert [entry.key for entry in manifest.entries] == [
         "data/fae/2026-04-14T00:30:00+01:00.xml",
         "data/fae/2026-04-14T00:30:00+0100.xml",
@@ -115,7 +104,7 @@ def test_filename_timestamp_offset_must_be_valid() -> None:
 
 
 @pytest.mark.unit()
-def test_manifest_selects_retained_utc_days_and_records_skips() -> None:
+def test_manifest_selects_parser_timestamp_days_and_records_skips() -> None:
     source = FakeBucket(
         "source",
         (
@@ -129,18 +118,18 @@ def test_manifest_selects_retained_utc_days_and_records_skips() -> None:
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
-    assert manifest.target_day == TARGET_DAY
+    assert manifest.target_day is None
     assert [entry.key for entry in manifest.entries] == [
         "data/fae/2026/04/13/07/2026-04-13T07-00-00.xml",
         "data/fae/2026/04/12/23/2026-04-12T23-59-59.xml",
+        "data/fae/2026/04/14/00/2026-04-14T00-00-00.xml",
     ]
     assert [(skip.key, skip.reason) for skip in manifest.skipped_objects] == [
-        ("data/fae/2026/04/14/00/2026-04-14T00-00-00.xml", "outside retention window"),
         ("data/fae/no-stamp.xml", "no reliable key timestamp"),
     ]
 
@@ -159,9 +148,9 @@ def test_invalid_date_like_timestamp_is_skipped_instead_of_failing_manifest() ->
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
 
     assert [entry.key for entry in manifest.entries] == ["data/fae/2026-04-13T00-00-00Z.xml"]
@@ -196,7 +185,7 @@ def test_run_archive_uploads_deterministic_tar_with_manifest_metadata() -> None:
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -225,15 +214,15 @@ def test_run_archive_uploads_deterministic_tar_with_manifest_metadata() -> None:
 
 
 @pytest.mark.unit()
-def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_it() -> None:
+def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> None:
     listed = _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, "v1")
     source = FakeBucket("source", (listed,))
     manifest = build_archive_manifest(
         source,
         run_started_at_utc=STARTED,
-        retention_days=14,
         versioning_state="Enabled",
-        source_filter=SourcePathFilter(),
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
     )
     archive_key = manifest.archive_groups[0].destination_archive_key
     existing_payload = b"archive"
@@ -249,16 +238,13 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
     result = run_archive(
         source,
         matching,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
     assert result.ok is True
     assert matching.uploaded == []
-    assert source.deleted == [(listed.key, "v1")]
-
-    source.deleted.clear()
     mismatched = FakeBucket(
         "destination",
         destination={
@@ -268,19 +254,17 @@ def test_existing_archive_matching_manifest_allows_cleanup_and_mismatch_blocks_i
     failed = run_archive(
         source,
         mismatched,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
-    assert failed.ok is True
-    assert failed.skipped_archive_keys == (archive_key,)
-    assert failed.cleanup.skipped is False
-    assert source.deleted == []
+    assert failed.ok is False
+    assert failed.copy.failures == (f"{archive_key}: archive verification failed",)
 
 
 @pytest.mark.unit()
-def test_cleanup_deletes_manifest_versions_without_source_last_modified_recheck() -> None:
+def test_archive_does_not_delete_manifest_versions() -> None:
     listed = replace(
         _listed("data/fae/2026/04/13/07/2026-04-13T07-00-00.xml", 1, None),
         properties=_properties(last_modified=datetime(2026, 4, 14, tzinfo=UTC)),
@@ -291,10 +275,9 @@ def test_cleanup_deletes_manifest_versions_without_source_last_modified_recheck(
     result = run_archive(
         source,
         destination,
-        ArchiveOptions(retention_days=14, cleanup_enabled=True, max_workers=1),
+        daily_archive_options(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
 
     assert result.ok is True
-    assert source.deleted == [(listed.key, None)]

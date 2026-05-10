@@ -7,10 +7,9 @@ import os
 import socket
 import subprocess
 import sys
-import textwrap
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Protocol, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
@@ -29,6 +28,7 @@ from tests.integration.localstack_object_helpers import (
     put_test_object,
     read_tar_gz_members_text,
 )
+from tests.integration.scheduler_timeout_probe import timeout_probe_script
 
 
 class SchedulerErrorPayload(TypedDict):
@@ -37,6 +37,12 @@ class SchedulerErrorPayload(TypedDict):
     field: str
     reason: str
     timed_out: bool
+
+
+class _DeleteObjectClient(Protocol):
+    def delete_object(self, **kwargs: object) -> object:
+        """Delete one object."""
+        ...
 
 
 @pytest.mark.integration()
@@ -121,41 +127,34 @@ def test_schedule_retries_after_timeout_on_next_tick(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     env = _integration_env(tmp_path, localstack_bucket_pair)
-    env["ARCHIVER_MAX_WORKERS"] = "1"
-    env["ARCHIVER_RUN_TIMEOUT"] = "1s"
+    env["ARCHIVER_RUN_TIMEOUT"] = "3s"
     settings = AppSettings.from_env(env)
     source_client = localstack_s3_client(env, "source")
     destination_client = localstack_s3_client(env, "destination")
     prefix = "schedule-timeout"
     target_day = (datetime.now(tz=UTC) - timedelta(days=60)).date()
-    key = f"{prefix}/{target_day}T00-00-00-retry.txt"
-    archive_key = f"{prefix}/{target_day}.tar.gz"
-    _ = put_test_object(source_client, localstack_bucket_pair.source, key)
+    timeout_key = f"{prefix}/timed-out/{target_day}T00-00-00-timeout.txt"
+    retry_key = f"{prefix}/retry/{target_day}T00-00-00-retry.txt"
+    timeout_archive_key = f"{prefix}/timed-out/{target_day}.tar.gz"
+    retry_archive_key = f"{prefix}/retry/{target_day}.tar.gz"
+    timeout_payload = "timed-out child payload\n"
+    retry_payload = "successful retry payload\n"
+    _ = put_test_object(
+        source_client,
+        localstack_bucket_pair.source,
+        timeout_key,
+        body=timeout_payload.encode(),
+    )
+    env["S3_ARCHIVER_TIMEOUT_ARCHIVE_KEY"] = timeout_archive_key
+    env["S3_ARCHIVER_TIMEOUT_MEMBER_KEY"] = timeout_key
+    env["S3_ARCHIVER_TIMEOUT_MEMBER_PAYLOAD"] = timeout_payload
     lock_path = settings.log_dir / "archive.lock"
     sleep_calls = 0
     command_calls = 0
+    retry_seeded = False
+    max_sleep_calls = 6
     archive_command = scheduled_archive_module.scheduled_archive_command
-    timeout_probe = textwrap.dedent(
-        """
-        import json
-        import os
-        import time
-        from datetime import UTC, datetime, timedelta
-        from pathlib import Path
-
-        from s3_archiver_core.archive_lock import FileArchiveRunLock
-
-        lock = FileArchiveRunLock(Path(os.environ["LOG_DIR"]) / "archive.lock")
-        if not lock.acquire(
-            run_id="timed-out-run",
-            run_started_at_utc=datetime.now(tz=UTC),
-            timeout=timedelta(seconds=1),
-        ):
-            raise SystemExit("failed to acquire archive lock")
-        print(json.dumps({"lock_acquired": True}), flush=True)
-        time.sleep(10)
-        """
-    ).strip()
+    timeout_probe = timeout_probe_script()
 
     def fake_scheduled_archive_command() -> list[str]:
         nonlocal command_calls
@@ -165,15 +164,42 @@ def test_schedule_retries_after_timeout_on_next_tick(
         return archive_command()
 
     def fake_sleep_until_tick(hour: int, minute: int) -> None:
-        nonlocal sleep_calls
+        nonlocal retry_seeded, sleep_calls
         _ = (hour, minute)
         sleep_calls += 1
         if sleep_calls == 1:
             return
         if sleep_calls == 2:
             assert not lock_path.exists()
+            assert read_tar_gz_members_text(
+                destination_client,
+                localstack_bucket_pair.destination,
+                timeout_archive_key,
+            ) == {timeout_key: timeout_payload}
+            _ = cast(_DeleteObjectClient, cast(object, source_client)).delete_object(
+                Bucket=localstack_bucket_pair.source,
+                Key=timeout_key,
+            )
+            _ = put_test_object(
+                source_client,
+                localstack_bucket_pair.source,
+                retry_key,
+                body=retry_payload.encode(),
+            )
+            retry_seeded = True
             return
-        raise RuntimeError("stop scheduler integration test")
+        if retry_archive_key in listed_keys(destination_client, localstack_bucket_pair.destination):
+            assert retry_seeded
+            assert read_tar_gz_members_text(
+                destination_client,
+                localstack_bucket_pair.destination,
+                retry_archive_key,
+            ) == {retry_key: retry_payload}
+            raise RuntimeError("stop scheduler integration test")
+        if sleep_calls >= max_sleep_calls:
+            raise AssertionError(
+                "scheduled archive retry loop did not write successful retry archive"
+            )
 
     monkeypatch.setattr(os, "environ", env)
     monkeypatch.setattr(cli_module, "_sleep_until_next_daily_tick", fake_sleep_until_tick)
@@ -186,18 +212,37 @@ def test_schedule_retries_after_timeout_on_next_tick(
 
     captured = capsys.readouterr()
     error_payload = _last_error_payload(captured.err)
-    assert '"lock_acquired": true' in captured.out
+    stdout_payloads = _json_payloads(captured.out)
+    success_payload = next(
+        (payload for payload in stdout_payloads if payload.get("status") == "ok"),
+        None,
+    )
+    assert any(
+        payload.get("timeout_child_archive_key") == timeout_archive_key
+        for payload in stdout_payloads
+    )
+    assert success_payload is not None
+    destination_archive_keys = success_payload.get("destination_archive_keys")
+    assert isinstance(destination_archive_keys, list)
+    assert retry_archive_key in destination_archive_keys
+    assert timeout_archive_key not in destination_archive_keys
     assert error_payload["phase"] == "archive.run"
     assert error_payload["field"] == "ARCHIVER_RUN_TIMEOUT"
     assert error_payload["message"] == "archive run timed out"
     assert error_payload["reason"] == "archive_run_timeout"
     assert error_payload["timed_out"] is True
-    assert command_calls == 2
-    assert key in listed_keys(source_client, localstack_bucket_pair.source)
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {archive_key}
+    assert command_calls >= 2
+    assert retry_key in listed_keys(source_client, localstack_bucket_pair.source)
+    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+        timeout_archive_key,
+        retry_archive_key,
+    }
     assert read_tar_gz_members_text(
-        destination_client, localstack_bucket_pair.destination, archive_key
-    ) == {key: f"payload for {key}\n"}
+        destination_client, localstack_bucket_pair.destination, timeout_archive_key
+    ) == {timeout_key: timeout_payload}
+    assert read_tar_gz_members_text(
+        destination_client, localstack_bucket_pair.destination, retry_archive_key
+    ) == {retry_key: retry_payload}
     assert not lock_path.exists()
 
 
@@ -225,6 +270,14 @@ def _start_active_lock(lock_path: Path) -> subprocess.Popen[bytes]:
 def _last_json(output: str) -> dict[str, object]:
     json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
     return cast(dict[str, object], json.loads(json_line))
+
+
+def _json_payloads(output: str) -> list[dict[str, object]]:
+    return [
+        cast(dict[str, object], json.loads(line))
+        for line in output.splitlines()
+        if line.startswith("{")
+    ]
 
 
 def _last_error_payload(output: str) -> SchedulerErrorPayload:

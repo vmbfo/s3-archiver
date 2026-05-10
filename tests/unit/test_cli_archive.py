@@ -117,14 +117,13 @@ def test_archive_command_reports_phase_failure_on_stderr(
         return Path("/tmp/s3-archiver.log")
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _unused = (source, destination, options, run_lock, _kwargs)
+        _unused = (routes, options, run_started_at_utc, _kwargs)
         return _archive_result(copy=ArchivePhaseResult("copy", ("old.txt: denied",)))
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -138,7 +137,7 @@ def test_archive_command_reports_phase_failure_on_stderr(
         return object()
 
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -173,19 +172,18 @@ def test_archive_command_wires_debug_transfer_logger(
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
 
     def run_core_archive(
-        source: object,
-        destination: object,
+        routes: tuple[object, ...],
         options: ArchiveOptions,
         *,
-        run_lock: object | None = None,
+        run_started_at_utc: object | None = None,
         debug_logger: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _unused = (source, destination, options, run_lock, _kwargs)
+        _unused = (routes, options, run_started_at_utc, _kwargs)
         debug_loggers.append(debug_logger)
         return _archive_result()
 
-    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 

@@ -12,9 +12,9 @@ from typing import Literal, TypedDict, cast
 
 import pytest
 import s3_archiver_cli.main as cli_module
-from s3_archiver_core._archive_protocols import ArchiveBucket, ArchiveRunLock
-from s3_archiver_core.archive import ArchiveRunResult
-from s3_archiver_core.archive import run_archive as run_core_archive
+from s3_archiver_core._archive_protocols import ArchiveRunLock
+from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult
+from s3_archiver_core.archive import run_archive_routes as run_core_archive_routes
 from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.s3 import S3Client
 from typer.testing import CliRunner
@@ -27,7 +27,7 @@ from tests.integration.localstack_harness import (
 from tests.integration.localstack_object_helpers import localstack_s3_client
 
 RUNNER = CliRunner()
-FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2100, 1, 1, tzinfo=UTC)
+FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2099, 12, 31, 12, tzinfo=UTC)
 _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",
     "Could not connect to the endpoint URL",
@@ -36,6 +36,7 @@ _RETRYABLE_LOCALSTACK_ERRORS = (
 )
 type ArchiveSide = Literal["source", "destination"]
 type DebugLogger = Callable[[object, str], None]
+type JsonObject = dict[str, object]
 
 
 class ArchiveManifestPayload(TypedDict):
@@ -55,14 +56,37 @@ class ArchiveCommandPayload(TypedDict):
 
 
 def archive_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
-    env = localstack_test_env(
+    return localstack_test_env(
         bucket_pair,
         endpoint=os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
         log_dir=str(tmp_path / "logs"),
     )
-    env["ARCHIVER_RETENTION_DAYS"] = "1"
-    env["ARCHIVER_MAX_WORKERS"] = "1"
-    return env
+
+
+def update_single_route_config(
+    env: dict[str, str],
+    *,
+    name: str | None = None,
+    parser: str | None = None,
+    copy_mode: str | None = None,
+    source_path: str | None = None,
+    destination_path: str | None = None,
+) -> None:
+    routes = cast(list[JsonObject], json.loads(env["ARCHIVER_CONFIG_JSON"]))
+    route = routes[0]
+    if name is not None:
+        route["name"] = name
+    if parser is not None:
+        route["parser"] = parser
+    if copy_mode is not None:
+        route["copy_mode"] = copy_mode
+    source = cast(JsonObject, route["source"])
+    destination = cast(JsonObject, route["destination"])
+    if source_path is not None:
+        source["path"] = source_path
+    if destination_path is not None:
+        destination["path"] = destination_path
+    env["ARCHIVER_CONFIG_JSON"] = json.dumps(routes)
 
 
 def archive_client(env: Mapping[str, str], side: ArchiveSide) -> S3Client:
@@ -76,11 +100,10 @@ def run_archive_command(
     attempts: int = 3,
 ) -> ArchiveCommandPayload:
     monkeypatch.setattr(os, "environ", env)
-    core_run_archive = run_core_archive
+    core_run_archive_routes = run_core_archive_routes
 
-    def run_archive_with_frozen_timestamp(
-        source: ArchiveBucket,
-        destination: ArchiveBucket,
+    def run_archive_routes_with_frozen_timestamp(
+        routes: tuple[ArchiveRoute, ...],
         options: ArchiveOptions,
         *,
         run_started_at_utc: datetime | None = None,
@@ -88,18 +111,16 @@ def run_archive_command(
         debug_logger: DebugLogger | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> ArchiveRunResult:
-        _ = run_started_at_utc
-        return core_run_archive(
-            source,
-            destination,
+        _ = (run_started_at_utc, run_lock)
+        return core_run_archive_routes(
+            routes,
             options,
             run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
-            run_lock=run_lock,
             debug_logger=debug_logger,
             clock=clock,
         )
 
-    monkeypatch.setattr(cli_module, "run_archive", run_archive_with_frozen_timestamp)
+    monkeypatch.setattr(cli_module, "run_archive_routes", run_archive_routes_with_frozen_timestamp)
     for attempt in range(attempts):
         result = RUNNER.invoke(cli_module.app, ["archive-once"])
         if result.exit_code == 0 and result.stderr == "":

@@ -54,33 +54,22 @@ class ArchivePayload(TypedDict):
 
 
 @pytest.mark.e2e()
-@pytest.mark.parametrize(
-    ("cleanup_value", "expected_cleanup_status", "source_should_remain"),
-    [
-        (None, "skipped", True),
-        ("false", "skipped", True),
-        ("true", "ok", False),
-    ],
-)
-def test_compose_archive_writes_daily_archives_and_honors_cleanup_gate(
+def test_compose_archive_writes_daily_archives_without_cleanup_payload(
     tmp_path: Path,
     compose_env: dict[str, str],
     localstack_bucket_pair: LocalstackBucketPair,
-    cleanup_value: str | None,
-    expected_cleanup_status: str,
-    source_should_remain: bool,
 ) -> None:
     bucket_pair = localstack_bucket_pair
     source_client = _client(tmp_path, bucket_pair, "source")
     destination_client = _client(tmp_path, bucket_pair, "destination")
-    source_prefix = _case_source_prefix(cleanup_value)
+    source_prefix = "compose-archive/default"
     target_day = _target_day()
     archive_key = f"{source_prefix}/{target_day}.tar.gz"
     source_keys = _case_source_keys(source_prefix, target_day)
     for key in source_keys:
         _ = put_test_object(source_client, bucket_pair.source, key)
     assert listed_keys(source_client, bucket_pair.source) == source_keys
-    env_file = _write_archive_env_file(tmp_path, bucket_pair, cleanup_value)
+    env_file = _write_archive_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
 
@@ -95,15 +84,13 @@ def test_compose_archive_writes_daily_archives_and_honors_cleanup_gate(
         "list": "ok",
         "copy": "ok",
         "verify": "ok",
-        "cleanup": expected_cleanup_status,
     }
     assert payload["destination_archive_keys"] == [archive_key]
     assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
     assert read_tar_gz_members_text(destination_client, bucket_pair.destination, archive_key) == {
         key: f"payload for {key}\n" for key in source_keys
     }
-    expected_source_keys = source_keys if source_should_remain else set[str]()
-    assert listed_keys(source_client, bucket_pair.source) == expected_source_keys
+    assert listed_keys(source_client, bucket_pair.source) == source_keys
 
 
 @pytest.mark.e2e()
@@ -132,7 +119,7 @@ def test_compose_archive_debug_logs_deterministic_tar_archive_metadata(
         key,
         body=b"strategy\n",
     )
-    env_file = _write_archive_env_file(tmp_path, bucket_pair, None)
+    env_file = _write_archive_env_file(tmp_path, bucket_pair)
     env_text = env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG")
     env_text = env_text.replace(
         f"S3_DESTINATION_ENDPOINT_URL={LOCALSTACK_COMPOSE_ENDPOINT}",
@@ -220,11 +207,6 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
     assert payload["strategy"] == "multipart_streaming"
 
 
-def _case_source_prefix(cleanup_value: str | None) -> str:
-    name = "unset" if cleanup_value is None else cleanup_value
-    return f"compose-archive/{name}"
-
-
 def _case_source_keys(prefix: str, target_day: date) -> set[str]:
     return {
         f"{prefix}/{target_day}T00-00-00-a.txt",
@@ -233,25 +215,18 @@ def _case_source_keys(prefix: str, target_day: date) -> set[str]:
 
 
 def _target_day() -> date:
-    return datetime.now(tz=UTC).date() - timedelta(days=1)
+    return datetime.now(tz=UTC).date() - timedelta(days=60)
 
 
 def _write_archive_env_file(
     tmp_path: Path,
     bucket_pair: LocalstackBucketPair,
-    cleanup_value: str | None,
 ) -> Path:
     env = localstack_test_env(
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
     )
-    env["ARCHIVER_RETENTION_DAYS"] = "1"
-    env["ARCHIVER_MAX_WORKERS"] = "1"
-    if cleanup_value is None:
-        del env["ARCHIVER_ENABLE_CLEANUP"]
-    else:
-        env["ARCHIVER_ENABLE_CLEANUP"] = cleanup_value
     env_file = tmp_path / "compose-archive.env"
     _ = env_file.write_text(
         "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
@@ -289,7 +264,7 @@ def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
     return {
         name: phase["status"]
         for name, phase in payload["phases"].items()
-        if name in {"list", "copy", "verify", "cleanup"}
+        if name in {"list", "copy", "verify"}
     }
 
 

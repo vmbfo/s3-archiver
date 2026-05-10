@@ -19,7 +19,7 @@ _RETRYABLE_LOCALSTACK_ERRORS = (
     "Connection was closed before we received a valid response",
     "Could not connect to the endpoint URL",
 )
-CANONICAL_RETENTION_DATASET_DAYS = tuple(range(366))
+CANONICAL_ROUTE_DATASET_DAYS = tuple(range(366))
 _WRITE_RETRY_ATTEMPTS = 20
 _WRITE_RETRY_DELAY_SECONDS = 1.0
 
@@ -158,7 +158,7 @@ def seed_timestamped_objects(
         )
 
 
-def seed_canonical_retention_dataset(
+def seed_canonical_route_dataset(
     client: S3Client,
     bucket: str,
     *,
@@ -169,23 +169,23 @@ def seed_canonical_retention_dataset(
         client,
         bucket,
         prefix=prefix,
-        days=CANONICAL_RETENTION_DATASET_DAYS,
+        days=CANONICAL_ROUTE_DATASET_DAYS,
         seed_now=seed_now,
     )
 
 
-def retention_dataset_keys(
-    prefix: str, *, days: tuple[int, ...] = CANONICAL_RETENTION_DATASET_DAYS
+def route_dataset_keys(
+    prefix: str, *, days: tuple[int, ...] = CANONICAL_ROUTE_DATASET_DAYS
 ) -> set[str]:
     return {f"{prefix}/age-{day}-days.txt" for day in days}
 
 
-def eligible_retention_days(
-    retention_days: int,
+def archive_eligible_days(
+    minimum_age_days: int,
     *,
-    days: tuple[int, ...] = CANONICAL_RETENTION_DATASET_DAYS,
+    days: tuple[int, ...] = CANONICAL_ROUTE_DATASET_DAYS,
 ) -> set[int]:
-    return {day for day in days if day > retention_days}
+    return {day for day in days if day > minimum_age_days}
 
 
 def _object_entries(value: object) -> list[dict[str, object]]:
