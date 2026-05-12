@@ -10,6 +10,7 @@ from pathlib import Path
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_payloads import (
     archive_group_payloads,
+    archive_manifest_payload,
     destination_archive_keys,
     direct_entry_payloads,
     manifest_target_day,
@@ -73,21 +74,7 @@ def archive_result_payload(
     skipped_objects = skipped_object_payloads(result.manifest)
     archive_group_values = json_list(archive_groups)
     direct_entry_values = json_list(direct_entries)
-    skipped_object_values = json_list(skipped_objects)
-    manifest_payload: dict[str, JsonValue] = {
-        "object_count": len(result.manifest.entries),
-        "target_day": target_day,
-        "archive_count": len(archive_groups),
-        "direct_copy_count": len(direct_entries),
-        "source_object_count": len(result.manifest.entries),
-        "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": archive_keys,
-        "destination_keys": destination_keys,
-        "skipped_objects": skipped_object_values,
-        "archive_groups": archive_group_values,
-        "direct_entries": direct_entry_values,
-        "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
-    }
+    manifest_payload = archive_manifest_payload(result.manifest, include_run_started_at_utc=True)
     return {
         "status": status,
         "run_id": result.run_id,

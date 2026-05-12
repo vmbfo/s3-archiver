@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from s3_archiver_cli.archive_payload_utils import JsonValue
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_visual_demo.output import emit_archive_result, emit_intro
 

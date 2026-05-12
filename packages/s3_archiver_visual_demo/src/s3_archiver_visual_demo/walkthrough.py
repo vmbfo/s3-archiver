@@ -10,16 +10,11 @@ from typing import cast
 
 from s3_archiver_core.archive_manifest import build_route_archive_manifest
 from s3_archiver_core.archive_payloads import (
-    archive_group_payloads,
-    destination_archive_keys,
-    destination_keys,
-    direct_entry_payloads,
-    manifest_target_day,
-    skipped_object_payloads,
+    archive_manifest_payload,
 )
 from s3_archiver_core.archive_routes import archive_routes_from_settings
 from s3_archiver_core.health import run_health_check
-from s3_archiver_core.payload_utils import JsonValue, json_list
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.route_payloads import route_summary_payload
 from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
@@ -29,7 +24,6 @@ from s3_archiver_visual_demo import output as _output
 from s3_archiver_visual_demo.snapshots import (
     manifest_destination_key_map as _manifest_destination_key_map,
 )
-from s3_archiver_visual_demo.snapshots import manifest_entry_payload as _manifest_entry_payload
 from s3_archiver_visual_demo.snapshots import manifest_key_set as _manifest_key_set
 from s3_archiver_visual_demo.snapshots import snapshot_payload as _snapshot_payload
 
@@ -74,28 +68,11 @@ def run_visual_demo(
         planned_destinations=planned_destinations,
     )
     _output.emit_snapshot(emit, "After archive", after_archive_snapshot)
-    archive_groups = archive_group_payloads(manifest)
-    direct_entries = direct_entry_payloads(manifest)
-    skipped_objects = skipped_object_payloads(manifest)
-    archive_days = sorted({str(group["target_day"]) for group in archive_groups})
-    archive_days_payload = [cast(JsonValue, day) for day in archive_days]
-    archive_keys = destination_archive_keys(archive_groups)
-    all_destination_keys = destination_keys(archive_groups, direct_entries)
-    archive_manifest: dict[str, JsonValue] = {
-        "object_count": len(manifest.entries),
-        "target_day": manifest_target_day(manifest),
-        "archive_days": archive_days_payload,
-        "archive_count": len(archive_groups),
-        "direct_copy_count": len(direct_entries),
-        "source_object_count": len(manifest.entries),
-        "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": archive_keys,
-        "destination_keys": all_destination_keys,
-        "archive_groups": json_list(archive_groups),
-        "direct_entries": json_list(direct_entries),
-        "skipped_objects": json_list(skipped_objects),
-        "entries": json_list([_manifest_entry_payload(entry) for entry in manifest.entries]),
-    }
+    archive_manifest = archive_manifest_payload(
+        manifest,
+        include_archive_days=True,
+        include_entries=True,
+    )
 
     snapshots: dict[str, JsonValue] = {
         "before_archive": before_snapshot,

@@ -7,7 +7,7 @@ from typing import cast
 
 from s3_archiver_core.archive import ArchiveRoute
 from s3_archiver_core.archive_fingerprint import fingerprint_from_metadata
-from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry
+from s3_archiver_core.archive_manifest import ArchiveManifest
 from s3_archiver_core.payload_utils import JsonValue, json_list
 from s3_archiver_core.s3 import S3ListedObject
 
@@ -48,27 +48,6 @@ def snapshot_payload(
         "destination_object_count": len(destination_objects),
         "source_objects": json_list(source_objects),
         "destination_objects": json_list(destination_objects),
-    }
-
-
-def manifest_entry_payload(entry: ManifestEntry) -> dict[str, JsonValue]:
-    """Return a JSON-ready payload for one archive manifest entry."""
-
-    return {
-        "key": entry.key,
-        "size": entry.size,
-        "last_modified_utc": entry.last_modified.isoformat(),
-        "version_id": entry.version_id,
-        "etag": entry.etag,
-        "source_bucket": entry.source_bucket,
-        "destination_bucket": entry.destination_bucket,
-        "destination_key": entry.destination_key,
-        "destination_archive_key": entry.destination_archive_key,
-        "route_name": entry.route_name,
-        "parser_kind": entry.parser_kind,
-        "copy_mode": entry.copy_mode,
-        "source_identity": str(entry.source_identity),
-        "destination_identity": str(entry.destination_identity),
     }
 
 

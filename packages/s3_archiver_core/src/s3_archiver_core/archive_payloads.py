@@ -125,6 +125,64 @@ def skipped_object_payload(item: object) -> dict[str, JsonValue]:
     }
 
 
+def archive_manifest_payload(
+    manifest: object,
+    *,
+    include_archive_days: bool = False,
+    include_entries: bool = False,
+    include_run_started_at_utc: bool = False,
+) -> dict[str, JsonValue]:
+    """Return the shared JSON-ready archive manifest summary."""
+
+    archive_groups = archive_group_payloads(manifest)
+    direct_entries = direct_entry_payloads(manifest)
+    skipped_objects = skipped_object_payloads(manifest)
+    archive_keys = destination_archive_keys(archive_groups)
+    all_destination_keys = destination_keys(archive_groups, direct_entries)
+    payload: dict[str, JsonValue] = {
+        "object_count": len(object_list(attr(manifest, "entries"))),
+        "target_day": manifest_target_day(manifest),
+        "archive_count": len(archive_groups),
+        "direct_copy_count": len(direct_entries),
+        "source_object_count": len(object_list(attr(manifest, "entries"))),
+        "skipped_object_count": len(skipped_objects),
+        "destination_archive_keys": archive_keys,
+        "destination_keys": all_destination_keys,
+        "archive_groups": json_list(archive_groups),
+        "direct_entries": json_list(direct_entries),
+        "skipped_objects": json_list(skipped_objects),
+    }
+    if include_archive_days:
+        payload["archive_days"] = _archive_days_payload(archive_groups)
+    if include_entries:
+        entries = object_list(attr(manifest, "entries"))
+        payload["entries"] = json_list([manifest_entry_payload(entry) for entry in entries])
+    if include_run_started_at_utc:
+        payload["run_started_at_utc"] = datetime_text(attr(manifest, "run_started_at_utc"))
+    return payload
+
+
+def manifest_entry_payload(entry: object) -> dict[str, JsonValue]:
+    """Return a JSON-ready payload for one archive manifest entry."""
+
+    return {
+        "key": string_or_none(attr(entry, "key")),
+        "size": int_or_none(attr(entry, "size")),
+        "last_modified_utc": datetime_text(attr(entry, "last_modified")),
+        "version_id": string_or_none(attr(entry, "version_id")),
+        "etag": string_or_none(attr(entry, "etag")),
+        "source_bucket": string_or_none(attr(entry, "source_bucket")),
+        "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
+        "destination_key": string_or_none(attr(entry, "destination_key")),
+        "destination_archive_key": entry_archive_key_payload(entry),
+        "route_name": string_or_none(attr(entry, "route_name")),
+        "parser_kind": string_or_none(attr(entry, "parser_kind")),
+        "copy_mode": string_or_none(attr(entry, "copy_mode")),
+        "source_identity": string_or_none(attr(entry, "source_identity")),
+        "destination_identity": string_or_none(attr(entry, "destination_identity")),
+    }
+
+
 def entry_reference_payload(entry: object) -> dict[str, JsonValue]:
     """Return a compact source entry reference."""
 
@@ -194,3 +252,10 @@ def entry_value(entries: list[object], name: str) -> str | None:
         if value is not None:
             return value
     return None
+
+
+def _archive_days_payload(archive_groups: list[dict[str, JsonValue]]) -> list[JsonValue]:
+    archive_days: list[JsonValue] = []
+    for day in sorted({str(group["target_day"]) for group in archive_groups}):
+        archive_days.append(day)
+    return archive_days
