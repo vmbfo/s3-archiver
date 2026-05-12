@@ -110,6 +110,7 @@ def test_verify_demo_result_accepts_expected_payload(monkeypatch: pytest.MonkeyP
         direct_keys=direct_keys,
         source_by_destination=source_by_destination,
         source_keys=source_keys,
+        skipped_count=4,
     )
 
 
@@ -134,6 +135,7 @@ def test_verify_demo_result_reports_output_errors(monkeypatch: pytest.MonkeyPatc
             direct_keys=direct_keys,
             source_by_destination=source_by_destination,
             source_keys=source_keys,
+            skipped_count=4,
         )
 
     bad_payload = {**payload, "cleanup_preview": {}}
@@ -148,6 +150,7 @@ def test_verify_demo_result_reports_output_errors(monkeypatch: pytest.MonkeyPatc
             direct_keys=direct_keys,
             source_by_destination=source_by_destination,
             source_keys=source_keys,
+            skipped_count=4,
         )
 
     bad_result = dict(cast(dict[str, object], payload["archive_result"]))
@@ -163,6 +166,7 @@ def test_verify_demo_result_reports_output_errors(monkeypatch: pytest.MonkeyPatc
             direct_keys=direct_keys,
             source_by_destination=source_by_destination,
             source_keys=source_keys,
+            skipped_count=4,
         )
 
 
@@ -184,6 +188,7 @@ def test_verify_demo_result_reports_archive_mismatch(monkeypatch: pytest.MonkeyP
             direct_keys=direct_keys,
             source_by_destination=source_by_destination,
             source_keys=source_keys,
+            skipped_count=4,
         )
 
 

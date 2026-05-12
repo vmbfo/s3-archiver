@@ -134,6 +134,17 @@ def test_compose_wrappers_and_find_repo_root(monkeypatch: pytest.MonkeyPatch) ->
     assert second_kwargs["retryable_returncodes"] == (137, 42)
 
 
+def test_compose_command_run_build_option_is_explicit() -> None:
+    base_command = ["docker", "compose", "--profile", "test", "run"]
+    assert compose_module.compose_command("run", "--rm", "app") == [*base_command, "--rm", "app"]
+    assert compose_module.compose_command("run", "--rm", "app", build_run=True) == [
+        *base_command,
+        "--build",
+        "--rm",
+        "app",
+    ]
+
+
 def test_readiness_timeout() -> None:
     with pytest.raises(RuntimeError, match="Timed out"):
         readiness_module.wait_for_localstack_readiness(

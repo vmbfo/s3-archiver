@@ -7,19 +7,15 @@ import time
 from collections.abc import Collection, Sequence
 from pathlib import Path
 
-from s3_archiver_localstack_support._common import is_retryable_localstack_message
+from s3_archiver_localstack_support._common import (
+    RETRYABLE_LOCALSTACK_COMPOSE_MESSAGES,
+    is_retryable_localstack_message,
+)
 
 _COMPOSE_RETRY_DELAY_SECONDS = 2.0
 _COMPOSE_RUN_RETRIES = 4
-_DEFAULT_RETRYABLE_MESSAGES = (
-    "No such container",
-    "marked for removal",
-    'Could not connect to the endpoint URL: "http://localstack:4566/',
-    'Could not connect to the endpoint URL: "http://localhost:4566/',
-)
+_DEFAULT_RETRYABLE_MESSAGES = RETRYABLE_LOCALSTACK_COMPOSE_MESSAGES
 APP_RETRYABLE_MESSAGES = (
-    "HeadBucket operation: Not Found",
-    "Connection was closed before we received a valid response",
     'optional dependency "localstack" failed to start',
     "exited (137)",
     "unable to upgrade to tcp, received 404",
@@ -29,7 +25,7 @@ APP_RETRYABLE_MESSAGES = (
     'container name "/s3-archiver-localstack-1" is already in use',
 )
 APP_RETRYABLE_RETURNCODES = (4, 137)
-STACK_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
+STACK_RETRYABLE_MESSAGES = ()
 STACK_RETRYABLE_RETURNCODES = (137,)
 
 
@@ -122,7 +118,7 @@ def run_stack_compose(
 def compose_command(
     *args: str,
     run_options: Sequence[str] = (),
-    build_run: bool = True,
+    build_run: bool = False,
 ) -> list[str]:
     """Return the Docker Compose command used by LocalStack validation tooling."""
 

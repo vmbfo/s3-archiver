@@ -23,6 +23,18 @@ def test_json_objects_extracts_object_lines_only() -> None:
     assert last_json_object(output) == {"status": "ok", "count": 2}
 
 
+def test_json_objects_extracts_json_line_from_mixed_stdout() -> None:
+    assert json_objects('plain\n{"status":"ok"}\n') == [{"status": "ok"}]
+
+
+def test_json_objects_accepts_whole_output_json_payloads() -> None:
+    assert json_objects('{"status": "ok"}') == [{"status": "ok"}]
+    assert json_objects('[{"status": "starting"}, {"status": "ok"}]') == [
+        {"status": "starting"},
+        {"status": "ok"},
+    ]
+
+
 def test_last_json_object_rejects_output_without_object_lines() -> None:
     with pytest.raises(ValueError, match="did not contain"):
         _ = last_json_object("plain\n[1, 2]\n")

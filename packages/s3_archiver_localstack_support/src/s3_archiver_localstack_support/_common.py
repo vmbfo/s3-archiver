@@ -10,6 +10,12 @@ RETRYABLE_LOCALSTACK_ERRORS = (
     "Could not connect to the endpoint URL",
 )
 
+RETRYABLE_LOCALSTACK_COMPOSE_MESSAGES = (
+    "No such container",
+    "marked for removal",
+    "HeadBucket operation: Not Found",
+)
+
 
 def object_entries(value: object) -> list[dict[str, object]]:
     """Return dictionary entries from an S3 list response section."""

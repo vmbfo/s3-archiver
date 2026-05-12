@@ -10,12 +10,16 @@ def json_objects(output: str) -> list[dict[str, object]]:
     """Return JSON objects emitted as object-shaped lines in output."""
 
     stripped_output = output.strip()
-    if stripped_output:
-        payload = json.loads(stripped_output)
+    if stripped_output.startswith(("{", "[")):
+        try:
+            payload: object | None = cast(object, json.loads(stripped_output))
+        except json.JSONDecodeError:
+            payload = None
         if isinstance(payload, dict):
             return [cast(dict[str, object], payload)]
-        if not isinstance(payload, list):
-            return []
+        if isinstance(payload, list):
+            items = cast(list[object], payload)
+            return [cast(dict[str, object], item) for item in items if isinstance(item, dict)]
 
     objects: list[dict[str, object]] = []
     for line in output.splitlines():
@@ -23,7 +27,7 @@ def json_objects(output: str) -> list[dict[str, object]]:
         if not candidate.startswith("{"):
             continue
         try:
-            payload = json.loads(candidate)
+            payload = cast(object, json.loads(candidate))
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict):

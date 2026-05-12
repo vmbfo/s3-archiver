@@ -38,7 +38,7 @@ def test_run_orchestrates_compose_and_cleanup(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setitem(
         compose_module.__dict__,
         "_compose_env",
-        lambda _tmp_path, _bucket_pair: {"LOCALSTACK_S3_URL": "http://127.0.0.1:4566"},
+        lambda _bucket_pair, _app_env_file: {"LOCALSTACK_S3_URL": "http://127.0.0.1:4566"},
     )
     monkeypatch.setattr(compose_module, "run_demo_compose", fake_run_demo_compose)
     monkeypatch.setattr(compose_module, "wait_for_localstack_readiness", lambda **_kwargs: None)
@@ -62,7 +62,7 @@ def test_run_surfaces_cleanup_error_unless_demo_failed(monkeypatch: pytest.Monke
     monkeypatch.setitem(
         compose_module.__dict__,
         "_compose_env",
-        lambda _tmp_path, _bucket_pair: {"LOCALSTACK_S3_URL": "http://127.0.0.1:4566"},
+        lambda _bucket_pair, _app_env_file: {"LOCALSTACK_S3_URL": "http://127.0.0.1:4566"},
     )
     monkeypatch.setattr(
         compose_module,
@@ -96,7 +96,8 @@ def test_compose_env_writes_demo_file_and_custom_port(
     pair = LocalstackBucketPair("source", "destination")
     monkeypatch.setenv("LOCALSTACK_S3_URL", "http://127.0.0.1:4666")
 
-    env = compose_module.__dict__["_compose_env"](tmp_path, pair)
+    context = compose_module.__dict__["_demo_compose_context"](tmp_path, pair)
+    env = context.compose_env
 
     assert env["LOCALSTACK_S3_URL"] == "http://127.0.0.1:4666"
     assert env["LOCALSTACK_HOST_PORT"] == "4666"
@@ -104,7 +105,7 @@ def test_compose_env_writes_demo_file_and_custom_port(
     assert Path(cast(dict[str, str], env)["APP_ENV_FILE"]).name == "compose-demo.env"
 
     monkeypatch.setenv("LOCALSTACK_S3_URL", "http://localstack")
-    env_without_port = compose_module.__dict__["_compose_env"](tmp_path, pair)
+    env_without_port = compose_module.__dict__["_demo_compose_context"](tmp_path, pair).compose_env
     assert "LOCALSTACK_HOST_PORT" not in cast(dict[str, str], env_without_port)
 
 
@@ -134,11 +135,18 @@ def test_demo_client_and_bucket_helpers(monkeypatch: pytest.MonkeyPatch, tmp_pat
         lambda client, bucket_pair, *, context: delete_calls.append((client, bucket_pair, context)),
     )
 
-    assert compose_module.__dict__["_demo_client"](
-        tmp_path, pair, "source", "http://127.0.0.1:4566"
+    context = compose_module.__dict__["_DemoComposeContext"](
+        tmp_path=tmp_path,
+        bucket_pair=pair,
+        config_json=compose_module.demo_config_json(pair, prefix="compose-demo"),
+        app_env_file=tmp_path / "compose-demo.env",
+        compose_env={},
+        localstack_endpoint="http://127.0.0.1:4566",
     )
-    compose_module.__dict__["_ensure_bucket_pair"](tmp_path, pair, "http://127.0.0.1:4566")
-    compose_module.__dict__["_delete_bucket_pair"](tmp_path, pair, "http://127.0.0.1:4566")
+
+    assert compose_module.__dict__["_demo_client"](context, "source")
+    compose_module.__dict__["_ensure_bucket_pair"](context)
+    compose_module.__dict__["_delete_bucket_pair"](context)
 
     assert clients == [("http://127.0.0.1:4566", "source")]
     assert ensure_calls == [("admin", pair)]
@@ -150,8 +158,6 @@ def test_seed_run_and_verify_success_and_source_mismatch(
 ) -> None:
     pair = LocalstackBucketPair("source", "destination")
     archive_day = date(2026, 2, 23)
-    route = compose_module.target_day_demo_cases("compose-demo", archive_day)[0].route
-    direct_route = compose_module.target_day_demo_cases("compose-demo", archive_day)[4].route
     cases = (
         compose_module.target_day_demo_cases("compose-demo", archive_day)[0],
         compose_module.target_day_demo_cases("compose-demo", archive_day)[4],
@@ -161,8 +167,7 @@ def test_seed_run_and_verify_success_and_source_mismatch(
     monkeypatch.setitem(compose_module.__dict__, "_demo_client", lambda *_args: object())
     monkeypatch.setattr(compose_module, "archive_demo_days", lambda _seed_now: (archive_day,))
     monkeypatch.setattr(compose_module, "target_day_demo_cases", lambda *_args: cases)
-    monkeypatch.setattr(compose_module, "newer_demo_keys", lambda *_args: ("newer",))
-    monkeypatch.setattr(compose_module, "invalid_demo_keys", lambda *_args: ("invalid",))
+    monkeypatch.setattr(compose_module, "skipped_demo_keys", lambda *_args: ("newer", "invalid"))
     monkeypatch.setattr(
         compose_module, "expected_archive_members", lambda *_args: {"archive": {"a"}}
     )
@@ -220,20 +225,24 @@ def test_seed_run_and_verify_success_and_source_mismatch(
         lambda payload, **kwargs: summaries.append({"payload": payload, **kwargs}),
     )
 
-    compose_module.__dict__["_seed_run_and_verify"](
-        tmp_path, Path.cwd(), {}, pair, "http://127.0.0.1:4566"
+    context = compose_module.__dict__["_DemoComposeContext"](
+        tmp_path=tmp_path,
+        bucket_pair=pair,
+        config_json=compose_module.demo_config_json(pair, prefix="compose-demo"),
+        app_env_file=tmp_path / "compose-demo.env",
+        compose_env={},
+        localstack_endpoint="http://127.0.0.1:4566",
     )
 
+    compose_module.__dict__["_seed_run_and_verify"](Path.cwd(), context)
+
     assert cast(dict[str, object], verify_calls[0])["source_keys"] == source_keys
+    assert cast(dict[str, object], verify_calls[0])["skipped_count"] == 2
     assert summaries[0]["copied_count"] == 2
-    assert route.copy_mode == "daily_tar_gz"
-    assert direct_route.copy_mode == "direct"
 
     monkeypatch.setattr(compose_module, "listed_keys", lambda *_args: {"wrong"})
     with pytest.raises(RuntimeError, match="unexpected source keys"):
-        compose_module.__dict__["_seed_run_and_verify"](
-            tmp_path, Path.cwd(), {}, pair, "http://127.0.0.1:4566"
-        )
+        compose_module.__dict__["_seed_run_and_verify"](Path.cwd(), context)
 
 
 def test_run_demo_compose_and_payload(monkeypatch: pytest.MonkeyPatch) -> None:

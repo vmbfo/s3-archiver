@@ -14,14 +14,12 @@ from s3_archiver_localstack_support.objects import listed_keys, put_test_object
 DEMO_ARCHIVE_START_AGE_DAYS = 60
 DEMO_ARCHIVE_DAY_COUNT = 365
 DEMO_FILES_PER_PATH_DAY = 2
-DEMO_SKIPPED_OBJECT_COUNT = 4
 DEMO_ARCHIVE_ROOT_COUNT = 6
 DEMO_ARCHIVE_COUNT = DEMO_ARCHIVE_DAY_COUNT * DEMO_ARCHIVE_ROOT_COUNT
 DEMO_DIRECT_COPY_COUNT = DEMO_ARCHIVE_DAY_COUNT * 3 * DEMO_FILES_PER_PATH_DAY
 DEMO_ARCHIVED_OBJECT_COUNT = DEMO_ARCHIVE_COUNT * DEMO_FILES_PER_PATH_DAY
 DEMO_DIRECT_OBJECT_COUNT = DEMO_DIRECT_COPY_COUNT
 DEMO_ELIGIBLE_OBJECT_COUNT = DEMO_ARCHIVED_OBJECT_COUNT + DEMO_DIRECT_OBJECT_COUNT
-DEMO_SEEDED_OBJECT_COUNT = DEMO_ELIGIBLE_OBJECT_COUNT + DEMO_SKIPPED_OBJECT_COUNT
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +142,15 @@ def invalid_demo_keys(prefix: str, target_day: date) -> tuple[str, str]:
         f"{prefix}/filename/daily/skips/no-timestamp-latest.txt",
         f"{prefix}/folder/daily/skips/no-folder-timestamp.txt",
     )
+
+
+def skipped_demo_keys(prefix: str, target_day: date) -> tuple[str, ...]:
+    """Return all demo keys expected to be skipped."""
+    return (*newer_demo_keys(prefix, target_day), *invalid_demo_keys(prefix, target_day))
+
+
+DEMO_SKIPPED_OBJECT_COUNT = len(skipped_demo_keys("demo", date.min))
+DEMO_SEEDED_OBJECT_COUNT = DEMO_ELIGIBLE_OBJECT_COUNT + DEMO_SKIPPED_OBJECT_COUNT
 
 
 def expected_archive_members(prefix: str, archive_days: tuple[date, ...]) -> dict[str, set[str]]:

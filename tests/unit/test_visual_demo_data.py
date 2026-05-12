@@ -45,6 +45,9 @@ def test_demo_routes_config_and_expected_keys() -> None:
         "demo/filename/daily/skips/no-timestamp-latest.txt",
         "demo/folder/daily/skips/no-folder-timestamp.txt",
     )
+    assert len(data_module.skipped_demo_keys("demo", target_day)) == (
+        data_module.DEMO_SKIPPED_OBJECT_COUNT
+    )
     assert data_module.archive_demo_days(datetime(2026, 4, 24, tzinfo=UTC))[0] == target_day
     direct_case = next(case for case in cases if case.route.name == "direct-copy")
     assert direct_case.destination_key == f"mirror/direct/{direct_case.key}"

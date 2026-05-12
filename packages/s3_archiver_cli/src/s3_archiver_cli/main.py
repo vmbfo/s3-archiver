@@ -16,6 +16,7 @@ import typer
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
+from s3_archiver_core.archive_routes import archive_routes_from_settings
 from s3_archiver_core.errors import (
     ArchiveRunError,
     ConfigError,
@@ -25,6 +26,7 @@ from s3_archiver_core.errors import (
 )
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
 from s3_archiver_core.temp_files import prepare_runtime_temp_dir
@@ -32,10 +34,8 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
-from s3_archiver_cli._archive_routes import archive_routes_from_settings
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.archive_paths import archive_lock_path
-from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
 
 type ReconcileArchiveLock = Callable[..., bool]

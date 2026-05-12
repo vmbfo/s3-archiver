@@ -39,11 +39,20 @@ def verify_demo_result(
     direct_keys: set[str],
     source_by_destination: dict[str, str],
     source_keys: set[str],
+    skipped_count: int,
 ) -> None:
     """Verify the visual demo output and sampled destination objects."""
 
     archive_keys = set(archive_members)
-    _verify_output(output, payload, archive_days, archive_keys, direct_keys, source_keys)
+    _verify_output(
+        output,
+        payload,
+        archive_days,
+        archive_keys,
+        direct_keys,
+        source_keys,
+        skipped_count,
+    )
     _verify_archives(
         destination_client,
         bucket_pair,
@@ -60,6 +69,7 @@ def _verify_output(
     archive_keys: set[str],
     direct_keys: set[str],
     source_keys: set[str],
+    skipped_count: int,
 ) -> None:
     required_fragments = (
         "== S3 Archiver Visual Demo ==",
@@ -77,7 +87,11 @@ def _verify_output(
     _assert_equal(payload.get("status"), "ok", "payload status")
     archive_manifest = cast(dict[str, object], payload["archive_manifest"])
     archive_result = cast(dict[str, object], payload["archive_result"])
-    _assert_equal(archive_manifest["object_count"], len(source_keys) - 4, "manifest object count")
+    _assert_equal(
+        archive_manifest["object_count"],
+        len(source_keys) - skipped_count,
+        "manifest object count",
+    )
     _assert_equal(
         archive_manifest["destination_archive_keys"],
         sorted(archive_keys),
@@ -90,7 +104,11 @@ def _verify_output(
     )
     _assert_equal(archive_manifest["archive_count"], len(archive_keys), "archive count")
     _assert_equal(archive_manifest["direct_copy_count"], len(direct_keys), "direct copy count")
-    _assert_equal(archive_manifest["skipped_object_count"], 4, "skipped object count")
+    _assert_equal(
+        archive_manifest["skipped_object_count"],
+        skipped_count,
+        "skipped object count",
+    )
     _assert_equal(archive_result["direct_copy_count"], len(direct_keys), "result direct copy count")
     if "cleanup_preview" in payload:
         raise RuntimeError("visual demo unexpectedly emitted cleanup_preview")

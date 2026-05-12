@@ -5,7 +5,6 @@ description = "Manual compose-backed visual demo for s3-archiver."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "s3-archiver-cli",
   "s3-archiver-core",
   "s3-archiver-localstack-support",
 ]
@@ -21,6 +20,5 @@ build-backend = "uv_build"
 package = true
 
 [tool.uv.sources]
-s3-archiver-cli = { workspace = true }
 s3-archiver-core = { workspace = true }
 s3-archiver-localstack-support = { workspace = true }

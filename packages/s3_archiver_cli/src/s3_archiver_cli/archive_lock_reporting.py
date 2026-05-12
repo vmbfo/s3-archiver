@@ -7,8 +7,8 @@ import logging
 from collections.abc import Mapping
 
 import typer
+from s3_archiver_core.payload_utils import JsonScalar, JsonValue
 
-from s3_archiver_cli.archive_payload_utils import JsonScalar, JsonValue
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
 
 

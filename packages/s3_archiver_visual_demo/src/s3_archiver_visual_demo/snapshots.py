@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import cast
 
-from s3_archiver_cli.archive_payload_utils import JsonValue, json_list
 from s3_archiver_core.archive import ArchiveRoute
 from s3_archiver_core.archive_fingerprint import fingerprint_from_metadata
 from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry
+from s3_archiver_core.payload_utils import JsonValue, json_list
 from s3_archiver_core.s3 import S3ListedObject
 
 
