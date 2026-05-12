@@ -46,12 +46,12 @@ def timeout_probe_script() -> str:
         ):
             raise SystemExit("failed to acquire archive lock")
         settings = AppSettings.from_env(os.environ)
-        destination = build_s3_client(settings.destination)
+        destination = build_s3_client(settings.routes[0].destination)
         timeout_archive_key = os.environ["S3_ARCHIVER_TIMEOUT_ARCHIVE_KEY"]
         member_key = os.environ["S3_ARCHIVER_TIMEOUT_MEMBER_KEY"]
         member_payload = os.environ["S3_ARCHIVER_TIMEOUT_MEMBER_PAYLOAD"]
         destination.put_object(
-            Bucket=settings.destination.bucket,
+            Bucket=settings.routes[0].destination.bucket,
             Key=timeout_archive_key,
             Body=archive_payload(member_key, member_payload),
         )

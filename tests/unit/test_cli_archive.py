@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
@@ -38,7 +37,7 @@ def test_archive_command_uses_timeout_enforced_wrapper(
         return True
 
     def run_archive_command(settings: AppSettings, log_file: Path) -> int:
-        assert settings.source.bucket == "archive-bucket"
+        assert settings.routes[0].source.bucket == "archive-bucket"
         recorded_logs.append(log_file)
         return 0
 
@@ -74,7 +73,7 @@ def test_archive_command_exits_with_wrapper_failure_without_lock_reconcile(
         raise AssertionError("lock reconciliation should not run without an existing lock")
 
     def run_subprocess(settings: AppSettings, log_file: Path, **_kwargs: object) -> int:
-        subprocess_calls.append((settings.source.bucket, log_file))
+        subprocess_calls.append((settings.routes[0].source.bucket, log_file))
         return 1
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -118,12 +117,12 @@ def test_archive_command_reports_phase_failure_on_stderr(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _unused = (routes, options, run_started_at_utc, _kwargs)
+        _unused = (routes, run_timeout, run_started_at_utc, _kwargs)
         return _archive_result(copy=ArchivePhaseResult("copy", ("old.txt: denied",)))
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
@@ -137,7 +136,7 @@ def test_archive_command_reports_phase_failure_on_stderr(
         return object()
 
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -173,17 +172,17 @@ def test_archive_command_wires_debug_transfer_logger(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         debug_logger: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _unused = (routes, options, run_started_at_utc, _kwargs)
+        _unused = (routes, run_timeout, run_started_at_utc, _kwargs)
         debug_loggers.append(debug_logger)
         return _archive_result()
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 

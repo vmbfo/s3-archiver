@@ -6,13 +6,12 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TypeVar, cast
+from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.errors import ConfigError
 
-T = TypeVar("T")
 LOCALSTACK_ENDPOINT_HOSTS = frozenset(
     {"127.0.0.1", "localhost", "localstack", "localstack-alt", "localhost.localstack.cloud"}
 )
@@ -61,22 +60,6 @@ class EnvDecoder:
     def finish(self) -> None:
         if self._issue is not None:
             raise ConfigError(self._issue.message)
-
-
-def parse_bool(env: Mapping[str, str], key: str, *, default: bool) -> bool:
-    return unwrap(parse_bool_result(env, key, default=default))
-
-
-def parse_int(env: Mapping[str, str], key: str, *, default: int, minimum: int) -> int:
-    return unwrap(parse_int_result(env, key, default=default, minimum=minimum))
-
-
-def parse_runtime_duration(raw: str, key: str) -> timedelta:
-    return unwrap(parse_runtime_duration_result(raw, key))
-
-
-def parse_string_array(env: Mapping[str, str], key: str) -> tuple[str, ...]:
-    return unwrap(parse_string_array_result(env, key))
 
 
 def parse_bool_result(env: Mapping[str, str], key: str, *, default: bool) -> ParseResult[bool]:
@@ -135,7 +118,10 @@ def parse_string_array_result(env: Mapping[str, str], key: str) -> ParseResult[t
 
 
 def normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT_URL") -> str:
-    return unwrap(normalize_endpoint_url_result(raw, field=field))
+    result = normalize_endpoint_url_result(raw, field=field)
+    if result.issue is not None:
+        raise ConfigError(result.issue.message)
+    return cast(str, result.value)
 
 
 def normalize_endpoint_url_result(raw: str, *, field: str = "S3_ENDPOINT_URL") -> ParseResult[str]:
@@ -167,14 +153,6 @@ def normalize_endpoint_url_result(raw: str, *, field: str = "S3_ENDPOINT_URL") -
     return ParseResult(urlunsplit((scheme, netloc, path, "", "")))
 
 
-def require_env(env: Mapping[str, str], key: str) -> str:
-    return unwrap(require_env_result(env, key))
-
-
-def optional_env(env: Mapping[str, str], key: str) -> str | None:
-    return unwrap(optional_env_result(env, key))
-
-
 def require_env_result(env: Mapping[str, str], key: str) -> ParseResult[str]:
     value = env.get(key)
     if value is None or value.strip() == "":
@@ -187,11 +165,3 @@ def optional_env_result(env: Mapping[str, str], key: str) -> ParseResult[str | N
     if value is None or value.strip() == "":
         return ParseResult(None)
     return ParseResult(value.strip())
-
-
-def unwrap[T](result: ParseResult[T]) -> T:
-    """Raise ``ConfigError`` at the settings boundary when a result failed."""
-
-    if result.issue is not None:
-        raise ConfigError(result.issue.message)
-    return cast(T, result.value)

@@ -13,7 +13,7 @@ from s3_archiver_core.archive_manifest import (
 )
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes, daily_run_timeout
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 STARTED = datetime(2024, 4, 20, tzinfo=UTC)
@@ -56,18 +56,16 @@ def _target_key(name: str = "2024-02-20T00-00-00.txt") -> str:
 def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
     with pytest.raises(RuntimeError, match="lock is already held"):
         _ = run_archive(
-            FakeBucket("source"),
-            FakeBucket("destination"),
-            daily_archive_options(),
+            archive_routes(FakeBucket("source"), FakeBucket("destination")),
+            run_timeout=daily_run_timeout(),
             run_started_at_utc=STARTED,
             run_lock=FakeRunLock(acquired=False),
             clock=lambda: STARTED,
         )
     lock = FakeRunLock()
     result = run_archive(
-        FakeBucket("source"),
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(FakeBucket("source"), FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         run_lock=lock,
         clock=lambda: STARTED,
@@ -80,27 +78,24 @@ def test_run_archive_rejects_held_lock_and_releases_acquired_lock() -> None:
 def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     batch_timeout = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=1),
     )
     assert batch_timeout.copy.failures == ("archive run timed out",)
     assert batch_timeout.verify.skipped is True
     copy_timeout = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=2),
     )
     assert copy_timeout.copy.failures == ("archive run timed out",)
     assert copy_timeout.verify.skipped is True
     verify_timeout = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=4),
     )
@@ -112,9 +107,8 @@ def test_run_archive_reports_timeout_after_copy_and_verify_phases() -> None:
 def test_run_archive_completes_after_verify_phase() -> None:
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=SequenceClock(expire_after_calls=7),
     )
@@ -140,9 +134,8 @@ def test_verify_failure_after_copy_fails_run() -> None:
 
     source = FakeBucket("source", (_listed(_target_key(), 90),))
     result = run_archive(
-        source,
-        VanishingDestination("destination"),
-        daily_archive_options(),
+        archive_routes(source, VanishingDestination("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -160,9 +153,8 @@ def test_archive_uses_manifest_version_for_current_archive_group() -> None:
         version_payloads={(current.key, "v2"): b"current000"},
     )
     result = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -194,9 +186,8 @@ def test_existing_archive_with_different_manifest_metadata_fails_verification() 
     )
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -213,9 +204,8 @@ def test_list_failure_with_lock_still_releases_lock() -> None:
 
     lock = FakeRunLock()
     result = run_archive(
-        BrokenListBucket("source"),
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(BrokenListBucket("source"), FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         run_lock=lock,
     )

@@ -40,14 +40,14 @@ def _shared_env(tmp_path: Path, routes: list[dict[str, object]]) -> dict[str, st
 def test_from_env_decodes_minimal_route_with_shared_s3_defaults(tmp_path: Path) -> None:
     settings = AppSettings.from_env(_shared_env(tmp_path, [_minimal_route()]))
 
-    assert settings.source.provider is S3Provider.LOCALSTACK
-    assert settings.source.region == "us-east-1"
-    assert settings.source.bucket == "source-bucket"
-    assert settings.source.path == ""
-    assert settings.source.access_key_id == "shared-access"
-    assert settings.destination.bucket == "archive-bucket"
-    assert settings.destination.path == ""
-    assert settings.destination.secret_access_key == "shared-secret"
+    assert settings.routes[0].source.provider is S3Provider.LOCALSTACK
+    assert settings.routes[0].source.region == "us-east-1"
+    assert settings.routes[0].source.bucket == "source-bucket"
+    assert settings.routes[0].source.path == ""
+    assert settings.routes[0].source.access_key_id == "shared-access"
+    assert settings.routes[0].destination.bucket == "archive-bucket"
+    assert settings.routes[0].destination.path == ""
+    assert settings.routes[0].destination.secret_access_key == "shared-secret"
 
 
 @pytest.mark.unit()
@@ -59,10 +59,10 @@ def test_from_env_prefers_side_specific_defaults_over_shared_defaults(tmp_path: 
 
     settings = AppSettings.from_env(env)
 
-    assert settings.source.access_key_id == "source-access"
-    assert settings.source.secret_access_key == "shared-secret"
-    assert settings.destination.secret_access_key == "destination-secret"
-    assert settings.destination.region == "eu-frankfurt-1"
+    assert settings.routes[0].source.access_key_id == "source-access"
+    assert settings.routes[0].source.secret_access_key == "shared-secret"
+    assert settings.routes[0].destination.secret_access_key == "destination-secret"
+    assert settings.routes[0].destination.region == "eu-frankfurt-1"
 
 
 @pytest.mark.unit()
@@ -79,9 +79,9 @@ def test_from_env_prefers_explicit_route_location_over_env_defaults(tmp_path: Pa
 
     settings = AppSettings.from_env(env)
 
-    assert settings.source.region == "explicit-region"
-    assert settings.source.access_key_id == "explicit-access"
-    assert settings.source.endpoint_url == "http://localstack-alt:4566"
+    assert settings.routes[0].source.region == "explicit-region"
+    assert settings.routes[0].source.access_key_id == "explicit-access"
+    assert settings.routes[0].source.endpoint_url == "http://localstack-alt:4566"
 
 
 @pytest.mark.unit()

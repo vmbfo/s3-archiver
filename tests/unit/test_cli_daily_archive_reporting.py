@@ -9,10 +9,10 @@ from typing import cast
 
 import pytest
 import s3_archiver_cli.error_logging as error_logging
-import s3_archiver_cli.visual_demo as demo_module
-import s3_archiver_cli.visual_demo_output as visual_demo_output
+import s3_archiver_visual_demo.output as visual_demo_output
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.settings import AppSettings
 
 
@@ -46,7 +46,11 @@ def test_archive_result_payload_reports_daily_archive_groups(
         archive_root="data/fae",
         destination_archive_key="data/fae/2026-04-13.tar.gz",
         entries=(entry,),
-        skipped_objects=(skipped,),
+        route_name="fae",
+        parser_kind="filename_timestamp",
+        copy_mode="daily_tar_gz",
+        source_bucket="source-bucket",
+        destination_bucket="destination-bucket",
     )
     manifest = SimpleNamespace(
         run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
@@ -79,13 +83,13 @@ def test_archive_result_payload_reports_daily_archive_groups(
     groups = cast(list[dict[str, object]], payload["archive_groups"])
     assert "cleanup_status" not in groups[0]
     assert groups[0]["source_object_count"] == 1
-    assert groups[0]["skipped_object_count"] == 1
+    assert groups[0]["skipped_object_count"] == 0
     assert groups[0]["route_name"] == "fae"
     assert groups[0]["parser_kind"] == "filename_timestamp"
     assert groups[0]["copy_mode"] == "daily_tar_gz"
     source_objects = cast(list[dict[str, object]], groups[0]["source_objects"])
     assert source_objects[0]["route_name"] == "fae"
-    skipped_objects = cast(list[dict[str, object]], groups[0]["skipped_objects"])
+    skipped_objects = cast(list[dict[str, object]], payload["skipped_objects"])
     assert skipped_objects[0]["route_name"] == "fae"
     assert cast(list[dict[str, object]], payload["routes"])[0]["copy_mode"] == "daily_tar_gz"
 
@@ -220,7 +224,7 @@ def test_visual_demo_describes_daily_candidates_and_result_groups() -> None:
         entries=(entry,),
         skipped_objects=(SimpleNamespace(key="bad.txt", reason="no timestamp"),),
     )
-    archive_payload: dict[str, demo_module.JsonValue] = {
+    archive_payload: dict[str, JsonValue] = {
         "status": "ok",
         "target_day": "2026-04-13",
         "archive_count": 1,

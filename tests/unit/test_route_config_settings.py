@@ -75,8 +75,8 @@ def test_from_env_decodes_route_config_json(tmp_path: Path) -> None:
     assert route.source.endpoint_url == "http://localstack:4566"
     assert route.source.path == "data/fae/"
     assert route.source.access_key_id == "source-access"
-    assert settings.source is route.source
-    assert settings.destination is route.destination
+    assert settings.routes[0].source is route.source
+    assert settings.routes[0].destination is route.destination
 
 
 @pytest.mark.unit()
@@ -90,9 +90,9 @@ def test_from_env_expands_route_env_refs_with_defaults(tmp_path: Path) -> None:
 
     settings = AppSettings.from_env(_env(tmp_path, [route]))
 
-    assert settings.source.provider is S3Provider.LOCALSTACK
-    assert settings.source.bucket == "source-default"
-    assert settings.source.path == ""
+    assert settings.routes[0].source.provider is S3Provider.LOCALSTACK
+    assert settings.routes[0].source.bucket == "source-default"
+    assert settings.routes[0].source.path == ""
 
 
 @pytest.mark.unit()
@@ -212,7 +212,7 @@ def test_from_env_uses_default_provider_when_route_source_omits_provider(tmp_pat
 
     settings = AppSettings.from_env(_env(tmp_path, [route]))
 
-    assert settings.source.provider is S3Provider.LOCALSTACK
+    assert settings.routes[0].source.provider is S3Provider.LOCALSTACK
 
 
 @pytest.mark.unit()

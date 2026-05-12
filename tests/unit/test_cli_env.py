@@ -38,7 +38,7 @@ def test_check_command_loads_default_dotenv_file(
     monkeypatch.setattr(os, "environ", {})
 
     def configure(settings: AppSettings) -> Path:
-        assert settings.bucket == "archive-bucket"
+        assert settings.routes[0].source.bucket == "archive-bucket"
         assert settings.log_dir == tmp_path / "logs"
         return tmp_path / "s3-archiver.log"
 
@@ -73,7 +73,7 @@ def test_check_command_prefers_process_env_over_env_file(
     )
 
     def configure(settings: AppSettings) -> Path:
-        assert settings.bucket == "bucket-from-process-env"
+        assert settings.routes[0].source.bucket == "bucket-from-process-env"
         return tmp_path / "s3-archiver.log"
 
     def run_check(settings: AppSettings, log_file: Path) -> HealthReport:
@@ -86,7 +86,7 @@ def test_check_command_prefers_process_env_over_env_file(
 
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
-    assert payload.get("bucket") == "bucket-from-process-env"
+    assert payload.get("source_bucket") == "bucket-from-process-env"
 
 
 @pytest.mark.unit()
@@ -211,13 +211,13 @@ def _load_payload(output: str) -> HealthPayload:
 def _health_report(settings: AppSettings, log_file: Path) -> HealthReport:
     return HealthReport(
         status="ok",
-        source_provider=settings.source.provider.value,
-        source_bucket=settings.source.bucket,
-        source_endpoint_url=settings.source.resolved_endpoint_url(),
+        source_provider=settings.routes[0].source.provider.value,
+        source_bucket=settings.routes[0].source.bucket,
+        source_endpoint_url=settings.routes[0].source.resolved_endpoint_url(),
         source_versioning="Enabled",
-        destination_provider=settings.destination.provider.value,
-        destination_bucket=settings.destination.bucket,
-        destination_endpoint_url=settings.destination.resolved_endpoint_url(),
+        destination_provider=settings.routes[0].destination.provider.value,
+        destination_bucket=settings.routes[0].destination.bucket,
+        destination_endpoint_url=settings.routes[0].destination.resolved_endpoint_url(),
         log_file=str(log_file),
         checked_at="2026-04-09T17:00:43+00:00",
         route_count=len(settings.routes),

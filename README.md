@@ -190,21 +190,14 @@ ENV_FILE=".local/e2e-${suffix}.env" \
   uv run s3-archiver archive
 ```
 
-Run the visual demos directly:
-
-```bash
-ENV_FILE=".local/e2e-${suffix}.env" uv run s3-archiver demo
-```
-
-`demo` streams the real archive walkthrough and ends with a summary JSON payload.
-
-Run the compose-backed visual demo scripts:
+Run the manual compose-backed visual demo:
 
 ```bash
 ./scripts/run_visual_demo.sh
 ```
 
-These scripts seed 365 eligible data days across all parser and copy-mode combinations:
+The manual demo lives in the separate `s3-archiver-visual-demo` package and is not part of
+the regular e2e suite. It seeds 365 eligible data days across all parser and copy-mode combinations:
 `direct`, `filename_timestamp`, and `folder_timestamp`, each with `daily_tar_gz` and
 `direct` routes. The demo writes 2,190 tar.gz archives, 2,190 direct-copy destination
 objects, and leaves the source bucket unchanged.

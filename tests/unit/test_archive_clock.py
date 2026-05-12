@@ -12,7 +12,7 @@ from s3_archiver_core.archive import run_archive
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
 from s3_archiver_core.temp_files import default_temp_dir
 
-from tests.unit.archive_workflow_fakes import daily_archive_options
+from tests.unit.archive_workflow_fakes import archive_routes, daily_run_timeout
 
 
 class EmptyBucket:
@@ -54,18 +54,17 @@ class EmptyBucket:
 def test_run_archive_uses_fresh_clock_timestamp_per_run() -> None:
     first_started = datetime(2024, 4, 20, tzinfo=UTC)
     second_started = datetime(2024, 4, 21, tzinfo=UTC)
-    options = daily_archive_options()
+    source = EmptyBucket()
+    destination = EmptyBucket()
 
     first = run_archive(
-        EmptyBucket(),
-        EmptyBucket(),
-        options,
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         clock=lambda: first_started,
     )
     second = run_archive(
-        EmptyBucket(),
-        EmptyBucket(),
-        options,
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         clock=lambda: second_started,
     )
 

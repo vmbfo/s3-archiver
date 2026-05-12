@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import textwrap
-from typing import cast
 
 import pytest
-
-from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.compose import run_compose
+from s3_archiver_localstack_support.harness import bucket_pair_from_env, compose_runtime_log_dir
 
 
 @pytest.mark.e2e()
@@ -115,5 +113,4 @@ def _run_compose(
 
 
 def _payload(output: str) -> dict[str, object]:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(dict[str, object], json.loads(json_line))
+    return last_json_object(output)

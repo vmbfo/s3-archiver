@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
 
 from s3_archiver_core.archive_fingerprint import (
     FINGERPRINT_METADATA_KEY,
@@ -20,17 +19,12 @@ from s3_archiver_core.archive_manifest import ManifestEntry
 from s3_archiver_core.s3 import (
     S3ObjectProperties,
     S3TransferCapabilities,
+    TransferStrategy,
 )
-
-TransferStrategy = Literal[
-    "simple_native_copy",
-    "multipart_native_copy",
-    "multipart_streaming",
-    "temp_file_backed",
-]
 
 __all__ = (
     "FINGERPRINT_METADATA_KEY",
+    "TransferStrategy",
     "VerificationResult",
     "archive_metadata",
     "fingerprint_from_metadata",

@@ -6,7 +6,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -14,33 +14,29 @@ import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult
-from s3_archiver_core.archive import run_archive_routes as run_core_archive_routes
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive import run_archive as run_core_archive
 from s3_archiver_core.s3 import S3Client
-from typer.testing import CliRunner
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import (
+    is_retryable_localstack_message,
+    last_json_object,
+)
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import localstack_s3_client
+from s3_archiver_localstack_support.objects import localstack_s3_client
+from typer.testing import CliRunner
 
 RUNNER = CliRunner()
 FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2099, 12, 31, 12, tzinfo=UTC)
 _RETRYABLE_LOCALSTACK_ERRORS = (
-    "Connection was closed before we received a valid response",
-    "Could not connect to the endpoint URL",
     "when calling the HeadBucket operation: Not Found",
     "when calling the ListObjectVersions operation: The specified bucket does not exist",
 )
 type ArchiveSide = Literal["source", "destination"]
 type DebugLogger = Callable[[object, str], None]
 type JsonObject = dict[str, object]
-
-
-class ArchiveManifestPayload(TypedDict):
-    object_count: int
 
 
 class ArchivePhasePayload(TypedDict):
@@ -51,7 +47,7 @@ class ArchiveCommandPayload(TypedDict):
     status: str
     source_bucket: str
     destination_bucket: str
-    manifest: ArchiveManifestPayload
+    source_object_count: int
     phases: dict[str, ArchivePhasePayload]
 
 
@@ -100,34 +96,31 @@ def run_archive_command(
     attempts: int = 3,
 ) -> ArchiveCommandPayload:
     monkeypatch.setattr(os, "environ", env)
-    core_run_archive_routes = run_core_archive_routes
+    core_run_archive = run_core_archive
 
-    def run_archive_routes_with_frozen_timestamp(
+    def run_archive_with_frozen_timestamp(
         routes: tuple[ArchiveRoute, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: timedelta,
         run_started_at_utc: datetime | None = None,
         run_lock: ArchiveRunLock | None = None,
         debug_logger: DebugLogger | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> ArchiveRunResult:
         _ = (run_started_at_utc, run_lock)
-        return core_run_archive_routes(
+        return core_run_archive(
             routes,
-            options,
+            run_timeout=run_timeout,
             run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
             debug_logger=debug_logger,
             clock=clock,
         )
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_archive_routes_with_frozen_timestamp)
+    monkeypatch.setattr(cli_module, "run_archive", run_archive_with_frozen_timestamp)
     for attempt in range(attempts):
         result = RUNNER.invoke(cli_module.app, ["archive-once"])
         if result.exit_code == 0 and result.stderr == "":
-            json_line = next(
-                line for line in reversed(result.stdout.splitlines()) if line.startswith("{")
-            )
-            return cast(ArchiveCommandPayload, json.loads(json_line))
+            return cast(ArchiveCommandPayload, cast(object, last_json_object(result.stdout)))
         if attempt == attempts - 1 or not _is_retryable_archive_failure(result.stderr):
             assert result.exit_code == 0, result.stderr
         time.sleep(0.5)
@@ -135,4 +128,7 @@ def run_archive_command(
 
 
 def _is_retryable_archive_failure(stderr: str) -> bool:
-    return any(message in stderr for message in _RETRYABLE_LOCALSTACK_ERRORS)
+    return is_retryable_localstack_message(
+        stderr,
+        extra_fragments=_RETRYABLE_LOCALSTACK_ERRORS,
+    )

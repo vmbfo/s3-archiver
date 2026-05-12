@@ -5,21 +5,23 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import cast
 
 from botocore.exceptions import ClientError
 
 from s3_archiver_core._archive_s3_helpers import (
+    ReadableBody,
+    close_body,
     is_not_found_error,
     object_list,
     optional_string,
+    parse_versioning_state,
     properties_from_head,
     required_int,
     supports_checksum_mode,
     version_id,
     versioned_kwargs,
 )
-from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
     S3_CHUNK_BYTES,
@@ -36,19 +38,14 @@ from s3_archiver_core.temp_files import default_temp_dir
 class S3ArchiveBucket:
     """Archive bucket adapter backed by an S3-compatible client."""
 
-    client: ArchiveS3Client
+    client: S3Client
     bucket: str
     temp_dir: Path = field(default_factory=default_temp_dir)
 
     def versioning_state(self) -> VersioningState:
         """Return the bucket versioning state."""
         response = self.client.get_bucket_versioning(Bucket=self.bucket)
-        status = response.get("Status")
-        if status == "Enabled":
-            return "Enabled"
-        if status == "Suspended":
-            return "Suspended"
-        return "Disabled"
+        return parse_versioning_state(response.get("Status"))
 
     def list_source_objects(self, versioning_state: VersioningState) -> Iterator[S3ListedObject]:
         """List current source objects for the supplied versioning mode."""
@@ -87,7 +84,7 @@ class S3ArchiveBucket:
             while chunk := body.read(S3_CHUNK_BYTES):
                 digest.update(chunk)
         finally:
-            body.close()
+            close_body(body)
         return digest.hexdigest()
 
     def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
@@ -98,7 +95,7 @@ class S3ArchiveBucket:
             while chunk := body.read(S3_CHUNK_BYTES):
                 chunks.append(chunk)
         finally:
-            body.close()
+            close_body(body)
         return b"".join(chunks)
 
     def read_source_stream(self, key: str, version_id: str | None = None) -> ReadableBody:
@@ -116,7 +113,7 @@ class S3ArchiveBucket:
     ) -> None:
         """Upload an archive file with deterministic metadata."""
         upload_s3_file(
-            cast(S3Client, self.client),
+            self.client,
             self.bucket,
             destination_key,
             archive_path,
@@ -162,8 +159,8 @@ class S3ArchiveBucket:
         if not isinstance(source, S3ArchiveBucket):
             raise TypeError("S3ArchiveBucket copy requires an S3ArchiveBucket source")
         copy_s3_object(
-            cast(S3Client, self.client),
-            cast(S3Client, source.client),
+            self.client,
+            source.client,
             source_bucket,
             source_key,
             source_version_id,
@@ -219,15 +216,3 @@ class S3ArchiveBucket:
         etag = optional_string(item.get("ETag"))
         properties = self._source_properties(key, version_id)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
-
-
-class ReadableBody(Protocol):
-    """Readable streaming body returned by S3 get-object calls."""
-
-    def read(self, amt: int = -1) -> bytes:
-        """Read up to ``amt`` bytes."""
-        ...
-
-    def close(self) -> None:
-        """Close the body."""
-        ...

@@ -8,7 +8,6 @@ from threading import Lock, Thread
 
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ArchiveManifest, ManifestEntry
 from s3_archiver_core._archive_protocols import ArchiveBucket
-from s3_archiver_core._archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
     existing_archive_verified,
@@ -16,12 +15,14 @@ from s3_archiver_core.archive_group_metadata import (
     uploaded_archive_verified,
 )
 from s3_archiver_core.archive_result import ArchivePhaseResult
+from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
     VerificationResult,
     archive_metadata,
     select_transfer_strategy,
     verify_destination,
+    verify_destination_checksum,
     verify_destination_content,
 )
 from s3_archiver_core.s3 import S3ObjectProperties
@@ -67,7 +68,7 @@ def copy_phase(
         return tuple(failures)
 
     phase = ArchivePhaseResult(
-        "copy", run_route_workers(route_names, worker, timed_out, time_remaining)
+        "copy", _run_parallel_items(route_names, worker, timed_out, time_remaining)
     )
     with result_lock:
         verified_keys = frozenset(verified)
@@ -122,6 +123,10 @@ def verify_direct_entry(
     verified = verify_destination(entry, destination)
     if not verified.ok:
         return verified
+    assert destination is not None
+    checksum_verified = verify_destination_checksum(entry.object.properties, destination)
+    if checksum_verified is not None:
+        return checksum_verified
     return verify_destination_content(
         route.source.content_sha256(entry.key, entry.version_id),
         route.destination.content_sha256(entry.destination_key),
@@ -198,28 +203,26 @@ def verify_phase(
         return tuple(failures)
 
     return ArchivePhaseResult(
-        "verify", run_route_workers(route_names, worker, timed_out, time_remaining)
+        "verify", _run_parallel_items(route_names, worker, timed_out, time_remaining)
     )
 
 
-def run_route_workers(
-    route_names: tuple[str, ...],
-    worker: Callable[[str], tuple[str, ...]],
+def _run_parallel_items[T](
+    items: tuple[T, ...],
+    worker: Callable[[T], tuple[str, ...]],
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
 ) -> tuple[str, ...]:
-    if not route_names:
+    if not items:
         return ()
     if timed_out():
         return ("archive run timed out",)
     results: Queue[tuple[str, ...]] = Queue()
-    for route_name in route_names:
-        thread = Thread(
-            target=_put_route_worker_result, args=(results, worker, route_name), daemon=True
-        )
+    for item in items:
+        thread = Thread(target=_put_worker_result, args=(results, worker, item), daemon=True)
         thread.start()
     failures: list[str] = []
-    pending = len(route_names)
+    pending = len(items)
     while pending:
         try:
             route_failures = results.get(timeout=time_remaining())
@@ -256,13 +259,13 @@ def _route_archive_groups(manifest: ArchiveManifest, route_name: str) -> tuple[A
     return tuple(group for group in manifest.archive_groups if group.route_name == route_name)
 
 
-def _put_route_worker_result(
+def _put_worker_result[T](
     results: Queue[tuple[str, ...]],
-    worker: Callable[[str], tuple[str, ...]],
-    route_name: str,
+    worker: Callable[[T], tuple[str, ...]],
+    item: T,
 ) -> None:
     try:
-        failures = worker(route_name)
+        failures = worker(item)
     except Exception as exc:
-        failures = (f"{route_name}: {exc}",)
+        failures = (f"{item}: {exc}",)
     results.put(failures)

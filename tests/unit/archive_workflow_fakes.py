@@ -10,7 +10,9 @@ from datetime import UTC, datetime, timedelta
 from itertools import chain
 from pathlib import Path
 
-from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
+from s3_archiver_core._archive_protocols import ArchiveBucket
+from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core.archive_manifest import CopyMode, ParserKind
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import S3ListedObject, S3ObjectProperties, VersioningState
 from s3_archiver_core.temp_files import default_temp_dir
@@ -31,17 +33,36 @@ class FakeReadableBody:
         self._body.close()
 
 
-def daily_archive_options(*, run_timeout: timedelta | None = None) -> ArchiveOptions:
-    """Build explicit daily archive route options for legacy workflow tests."""
+DEFAULT_RUN_TIMEOUT = timedelta(days=7)
 
-    return ArchiveOptions(
-        run_timeout=timedelta(days=7) if run_timeout is None else run_timeout,
-        routes=(
-            ArchiveRouteOptions(
-                "default",
-                parser_kind="filename_timestamp",
-                copy_mode="daily_tar_gz",
-            ),
+
+def daily_run_timeout(*, run_timeout: timedelta | None = None) -> timedelta:
+    """Return the default archive test timeout with optional override."""
+
+    return DEFAULT_RUN_TIMEOUT if run_timeout is None else run_timeout
+
+
+def archive_routes(
+    source: ArchiveBucket,
+    destination: ArchiveBucket,
+    *,
+    name: str = "default",
+    parser_kind: ParserKind = "filename_timestamp",
+    copy_mode: CopyMode = "daily_tar_gz",
+    source_path: str = "",
+    destination_path: str = "",
+) -> tuple[ArchiveRoute, ...]:
+    """Build one runtime archive route for workflow tests."""
+
+    return (
+        ArchiveRoute(
+            name,
+            source,
+            destination,
+            parser_kind=parser_kind,
+            copy_mode=copy_mode,
+            source_path=source_path,
+            destination_path=destination_path,
         ),
     )
 

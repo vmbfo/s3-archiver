@@ -14,7 +14,7 @@ from s3_archiver_core.archive import (
 )
 from s3_archiver_core.archive_manifest import build_archive_manifest
 
-from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes, daily_run_timeout
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -39,9 +39,8 @@ def test_existing_archive_requires_archive_hash_before_reuse() -> None:
     )
 
     result = run_archive(
-        source,
-        missing_hash,
-        daily_archive_options(),
+        archive_routes(source, missing_hash),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -76,9 +75,8 @@ def test_existing_archive_rejects_mismatched_source_identity() -> None:
     )
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -121,9 +119,8 @@ def test_mismatched_existing_archive_fails_only_that_group() -> None:
     )
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

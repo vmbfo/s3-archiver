@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError
+from s3_archiver_core.s3 import transfer_capabilities_for_locations
 from s3_archiver_core.settings import AppSettings, S3Provider
 from s3_archiver_core.temp_files import default_temp_dir
 
@@ -74,39 +74,30 @@ def test_from_env_rejects_invalid_log_level(tmp_path: Path) -> None:
 @pytest.mark.unit()
 def test_from_env_builds_route_settings(tmp_path: Path) -> None:
     settings = AppSettings.from_env(_dual_env(tmp_path))
+    route = settings.routes[0]
 
-    assert settings.source.provider is S3Provider.OCI
-    assert settings.destination.provider is S3Provider.LOCALSTACK
-    assert settings.source.access_key_id == "source-access"
-    assert settings.destination.access_key_id == "destination-access"
-    assert settings.source.resolved_endpoint_url() == (
+    assert route.source.provider is S3Provider.OCI
+    assert route.destination.provider is S3Provider.LOCALSTACK
+    assert route.source.access_key_id == "source-access"
+    assert route.destination.access_key_id == "destination-access"
+    assert route.source.resolved_endpoint_url() == (
         "https://tenant.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
     )
-    assert settings.destination.resolved_endpoint_url() == "http://localstack:4566"
+    assert route.destination.resolved_endpoint_url() == "http://localstack:4566"
     assert settings.run_timeout.days == 7
     assert settings.temp_dir == default_temp_dir()
 
 
 @pytest.mark.unit()
-def test_archive_options_disable_native_copy_for_mixed_endpoints(tmp_path: Path) -> None:
+def test_route_transfer_capabilities_disable_native_copy_for_mixed_endpoints(
+    tmp_path: Path,
+) -> None:
     settings = AppSettings.from_env(_dual_env(tmp_path))
-    options = ArchiveOptions.from_settings(settings)
+    route = settings.routes[0]
+    capabilities = transfer_capabilities_for_locations(route.source, route.destination)
 
-    assert options.transfer_capabilities.native_copy is False
-    assert options.transfer_capabilities.multipart_copy is False
-    assert options.transfer_capabilities.streaming_upload is True
-    assert options.transfer_capabilities.temp_file_backed is True
-    assert options.transfer_capabilities.streaming_limit_bytes > 1
-
-
-@pytest.mark.unit()
-def test_legacy_source_properties_proxy_source_location(tmp_path: Path) -> None:
-    settings = AppSettings.from_env(_dual_env(tmp_path))
-
-    assert settings.provider is settings.source.provider
-    assert settings.access_key_id == settings.source.access_key_id
-    assert settings.secret_access_key == settings.source.secret_access_key
-    assert settings.region == settings.source.region
-    assert settings.bucket == settings.source.bucket
-    assert settings.addressing_style is settings.source.addressing_style
-    assert settings.resolved_endpoint_url() == settings.source.resolved_endpoint_url()
+    assert capabilities.native_copy is False
+    assert capabilities.multipart_copy is False
+    assert capabilities.streaming_upload is True
+    assert capabilities.temp_file_backed is True
+    assert capabilities.streaming_limit_bytes > 1

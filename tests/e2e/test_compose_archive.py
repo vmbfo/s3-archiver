@@ -2,42 +2,28 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import textwrap
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import TypedDict, cast
 
 import pytest
-from s3_archiver_core.s3 import S3Client
-
-from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_COMPOSE_ENDPOINT,
-    LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
-    compose_runtime_log_dir,
-    localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import (
+from s3_archiver_localstack_support.objects import (
     listed_keys,
-    localstack_s3_client,
     put_test_object,
     read_tar_gz_members_text,
 )
 
-_COMPOSE_RETRYABLE_MESSAGES = (
-    "HeadBucket operation: Not Found",
-    "Connection was closed before we received a valid response",
-    'optional dependency "localstack" failed to start',
-    "exited (137)",
-    "unable to upgrade to tcp, received 409",
-    "app is missing dependency localstack",
-    "network s3-archiver_default not found",
-    'container name "/s3-archiver-localstack-1" is already in use',
+from tests.e2e.archive_compose_support import (
+    compose_archive_client,
+    run_archive_compose,
+    write_archive_env_file,
 )
-_COMPOSE_RETRYABLE_RETURNCODES = (4, 137)
 
 
 class ArchivePhasePayload(TypedDict):
@@ -49,7 +35,7 @@ class ArchivePayload(TypedDict):
     source_bucket: str
     destination_bucket: str
     destination_archive_keys: list[str]
-    manifest: dict[str, object]
+    source_object_count: int
     phases: dict[str, ArchivePhasePayload]
 
 
@@ -60,8 +46,8 @@ def test_compose_archive_writes_daily_archives_without_cleanup_payload(
     localstack_bucket_pair: LocalstackBucketPair,
 ) -> None:
     bucket_pair = localstack_bucket_pair
-    source_client = _client(tmp_path, bucket_pair, "source")
-    destination_client = _client(tmp_path, bucket_pair, "destination")
+    source_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "source")
+    destination_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "destination")
     source_prefix = "compose-archive/default"
     target_day = _target_day()
     archive_key = f"{source_prefix}/{target_day}.tar.gz"
@@ -69,17 +55,17 @@ def test_compose_archive_writes_daily_archives_without_cleanup_payload(
     for key in source_keys:
         _ = put_test_object(source_client, bucket_pair.source, key)
     assert listed_keys(source_client, bucket_pair.source) == source_keys
-    env_file = _write_archive_env_file(tmp_path, bucket_pair)
+    env_file = write_archive_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
 
-    result = _run_compose(run_env, "run", "--rm", "app", "archive")
+    result = run_archive_compose(run_env, "run", "--rm", "app", "archive")
     payload = cast(ArchivePayload, cast(object, _payload(result.stdout)))
 
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == bucket_pair.source
     assert payload["destination_bucket"] == bucket_pair.destination
-    assert payload["manifest"]["object_count"] == len(source_keys)
+    assert payload["source_object_count"] == len(source_keys)
     assert _phase_statuses(payload) == {
         "list": "ok",
         "copy": "ok",
@@ -108,8 +94,8 @@ def test_compose_archive_debug_logs_deterministic_tar_archive_metadata(
     destination_endpoint: str,
 ) -> None:
     bucket_pair = localstack_bucket_pair
-    source_client = _client(tmp_path, bucket_pair, "source")
-    destination_client = _client(tmp_path, bucket_pair, "destination")
+    source_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "source")
+    destination_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "destination")
     target_day = _target_day()
     key = f"compose-debug/{target_day}T00-00-00-strategy.txt"
     archive_key = f"compose-debug/{target_day}.tar.gz"
@@ -119,17 +105,18 @@ def test_compose_archive_debug_logs_deterministic_tar_archive_metadata(
         key,
         body=b"strategy\n",
     )
-    env_file = _write_archive_env_file(tmp_path, bucket_pair)
-    env_text = env_file.read_text(encoding="utf-8").replace("LOG_LEVEL=INFO", "LOG_LEVEL=DEBUG")
-    env_text = env_text.replace(
-        f"S3_DESTINATION_ENDPOINT_URL={LOCALSTACK_COMPOSE_ENDPOINT}",
-        f"S3_DESTINATION_ENDPOINT_URL={destination_endpoint}",
+    env_file = write_archive_env_file(
+        tmp_path,
+        bucket_pair,
+        overrides={
+            "LOG_LEVEL": "DEBUG",
+            "S3_DESTINATION_ENDPOINT_URL": destination_endpoint,
+        },
     )
-    _ = env_file.write_text(env_text, encoding="utf-8")
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
 
-    result = _run_compose(run_env, "run", "--rm", "app", "archive")
+    result = run_archive_compose(run_env, "run", "--rm", "app", "archive")
     destination_head = destination_client.head_object(
         Bucket=bucket_pair.destination, Key=archive_key
     )
@@ -156,19 +143,20 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         import json
 
         from s3_archiver_cli import main as cli
-        from s3_archiver_core.archive_options import ArchiveOptions
         from s3_archiver_core.archive_transfer import select_transfer_strategy
+        from s3_archiver_core.s3 import transfer_capabilities_for_locations
         from s3_archiver_core.settings import AppSettings
 
         settings = AppSettings.from_env(cli._load_runtime_env())
-        capabilities = ArchiveOptions.from_settings(settings).transfer_capabilities
+        route = settings.routes[0]
+        capabilities = transfer_capabilities_for_locations(route.source, route.destination)
         print(
             json.dumps(
                 {
                     "multipart_copy": capabilities.multipart_copy,
                     "native_copy": capabilities.native_copy,
-                    "source_endpoint": settings.source.resolved_endpoint_url(),
-                    "destination_endpoint": settings.destination.resolved_endpoint_url(),
+                    "source_endpoint": settings.routes[0].source.resolved_endpoint_url(),
+                    "destination_endpoint": settings.routes[0].destination.resolved_endpoint_url(),
                     "strategy": select_transfer_strategy(
                         11,
                         capabilities,
@@ -181,7 +169,7 @@ def test_compose_archive_runtime_probe_uses_streaming_for_cross_endpoint_setting
         PY
         """
     ).strip()
-    result = _run_compose(
+    result = run_archive_compose(
         compose_env,
         "run",
         "--rm",
@@ -218,48 +206,6 @@ def _target_day() -> date:
     return datetime.now(tz=UTC).date() - timedelta(days=60)
 
 
-def _write_archive_env_file(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-) -> Path:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir=compose_runtime_log_dir(bucket_pair),
-    )
-    env_file = tmp_path / "compose-archive.env"
-    _ = env_file.write_text(
-        "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
-        encoding="utf-8",
-    )
-    return env_file
-
-
-def _client(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-    side: Literal["source", "destination"],
-) -> S3Client:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_HOST_ENDPOINT,
-        log_dir=str(tmp_path / "host-logs"),
-    )
-    return localstack_s3_client(env, side)
-
-
-def _run_compose(
-    env: dict[str, str], *args: str, check: bool = True
-) -> subprocess.CompletedProcess[str]:
-    return run_compose(
-        env,
-        *args,
-        check=check,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
-    )
-
-
 def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
     return {
         name: phase["status"]
@@ -269,5 +215,4 @@ def _phase_statuses(payload: ArchivePayload) -> dict[str, str]:
 
 
 def _payload(output: str) -> dict[str, object]:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(dict[str, object], json.loads(json_line))
+    return last_json_object(output)

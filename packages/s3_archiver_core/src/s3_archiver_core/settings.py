@@ -40,6 +40,12 @@ class AppSettings:
     log_dir: Path
     routes: tuple[RouteSettings, ...]
 
+    @property
+    def archive_lock_path(self) -> Path:
+        """Return the path to the archive run lock file."""
+
+        return self.log_dir / "archive.lock"
+
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
         """Parse and validate application settings from environment values."""
@@ -57,40 +63,3 @@ class AppSettings:
 
             return load_app_settings_from_config_json(cls, decoder, config_json, log_level)
         raise ConfigError("ARCHIVER_CONFIG_JSON is required")
-
-    @property
-    def source(self) -> S3LocationSettings:
-        return self.routes[0].source
-
-    @property
-    def destination(self) -> S3LocationSettings:
-        return self.routes[0].destination
-
-    @property
-    def provider(self) -> S3Provider:
-        return self.source.provider
-
-    @property
-    def access_key_id(self) -> str:
-        return self.source.access_key_id
-
-    @property
-    def secret_access_key(self) -> str:
-        return self.source.secret_access_key
-
-    @property
-    def region(self) -> str:
-        return self.source.region
-
-    @property
-    def bucket(self) -> str:
-        return self.source.bucket
-
-    @property
-    def addressing_style(self) -> S3AddressingStyle:
-        return self.source.addressing_style
-
-    def resolved_endpoint_url(self) -> str:
-        """Return the source endpoint URL for legacy callers."""
-
-        return self.source.resolved_endpoint_url()
