@@ -101,7 +101,7 @@ def test_run_visual_demo_reports_bucket_story(
 
     assert summary["status"] == "ok"
     manifest = cast(dict[str, object], summary["archive_manifest"])
-    assert manifest["object_count"] == 1
+    assert manifest["source_object_count"] == 1
     snapshots = cast(dict[str, object], summary["snapshots"])
     before_archive = cast(dict[str, object], snapshots["before_archive"])
     after_archive = cast(dict[str, object], snapshots["after_archive"])

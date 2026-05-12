@@ -221,7 +221,7 @@ def _payload(
     return {
         "status": "ok",
         "archive_manifest": {
-            "object_count": len(source_keys) - 4,
+            "source_object_count": len(source_keys) - 4,
             "archive_days": [day.isoformat() for day in archive_days],
             "destination_archive_keys": sorted(archive_members),
             "destination_keys": sorted(set(archive_members) | direct_keys),

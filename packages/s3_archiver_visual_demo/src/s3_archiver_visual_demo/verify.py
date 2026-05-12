@@ -88,7 +88,7 @@ def _verify_output(
     archive_manifest = cast(dict[str, object], payload["archive_manifest"])
     archive_result = cast(dict[str, object], payload["archive_result"])
     _assert_equal(
-        archive_manifest["object_count"],
+        archive_manifest["source_object_count"],
         len(source_keys) - skipped_count,
         "manifest object count",
     )

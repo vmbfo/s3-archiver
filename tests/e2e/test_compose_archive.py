@@ -35,7 +35,7 @@ class ArchivePayload(TypedDict):
     source_bucket: str
     destination_bucket: str
     destination_archive_keys: list[str]
-    manifest: dict[str, object]
+    source_object_count: int
     phases: dict[str, ArchivePhasePayload]
 
 
@@ -65,7 +65,7 @@ def test_compose_archive_writes_daily_archives_without_cleanup_payload(
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == bucket_pair.source
     assert payload["destination_bucket"] == bucket_pair.destination
-    assert payload["manifest"]["object_count"] == len(source_keys)
+    assert payload["source_object_count"] == len(source_keys)
     assert _phase_statuses(payload) == {
         "list": "ok",
         "copy": "ok",

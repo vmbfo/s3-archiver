@@ -53,16 +53,8 @@ def archive_group_payload(group: object) -> dict[str, JsonValue]:
     """Return one archive group payload."""
 
     entries = object_list(attr(group, "entries"))
-    payload: dict[str, JsonValue] = {
-        "route_name": string_or_none(attr(group, "route_name")),
-        "parser_kind": string_or_none(attr(group, "parser_kind")),
-        "copy_mode": string_or_none(attr(group, "copy_mode")),
-        "source_bucket": string_or_none(attr(group, "source_bucket")),
-        "source_identity": string_or_none(attr(group, "source_identity"))
-        or entry_value(entries, "source_identity"),
-        "destination_bucket": string_or_none(attr(group, "destination_bucket")),
-        "destination_identity": string_or_none(attr(group, "destination_identity"))
-        or entry_value(entries, "destination_identity"),
+    return {
+        **_route_identity_fields(group, entries),
         "target_day": date_text(attr(group, "target_day")),
         "archive_root": string_or_none(attr(group, "archive_root")),
         "destination_archive_key": group_destination_archive_key(group, entries),
@@ -70,26 +62,39 @@ def archive_group_payload(group: object) -> dict[str, JsonValue]:
         "skipped_object_count": 0,
         "source_objects": json_list([entry_reference_payload(entry) for entry in entries]),
     }
-    return payload
 
 
 def direct_entry_payload(entry: object) -> dict[str, JsonValue]:
     """Build a destination payload for one direct-copy manifest entry."""
 
+    target_day = attr(entry, "target_day")
     return {
-        "route_name": string_or_none(attr(entry, "route_name")),
-        "parser_kind": string_or_none(attr(entry, "parser_kind")),
-        "copy_mode": string_or_none(attr(entry, "copy_mode")),
-        "source_bucket": string_or_none(attr(entry, "source_bucket")),
-        "source_identity": string_or_none(attr(entry, "source_identity")),
-        "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
-        "destination_identity": string_or_none(attr(entry, "destination_identity")),
-        "target_day": date_text(attr(entry, "target_day")) if attr(entry, "target_day") else "",
+        **_route_identity_fields(entry),
+        "target_day": date_text(target_day) if target_day is not None else "",
         "archive_root": string_or_none(attr(entry, "archive_root")),
         "destination_key": string_or_none(attr(entry, "destination_key")),
         "source_object_count": 1,
         "skipped_object_count": 0,
         "source_objects": json_list([entry_reference_payload(entry)]),
+    }
+
+
+def _route_identity_fields(
+    obj: object, entries: list[object] | None = None
+) -> dict[str, JsonValue]:
+    """Return the route/bucket/identity fields shared by group and direct entry payloads."""
+
+    fallback = entries or []
+    return {
+        "route_name": string_or_none(attr(obj, "route_name")),
+        "parser_kind": string_or_none(attr(obj, "parser_kind")),
+        "copy_mode": string_or_none(attr(obj, "copy_mode")),
+        "source_bucket": string_or_none(attr(obj, "source_bucket")),
+        "source_identity": string_or_none(attr(obj, "source_identity"))
+        or entry_value(fallback, "source_identity"),
+        "destination_bucket": string_or_none(attr(obj, "destination_bucket")),
+        "destination_identity": string_or_none(attr(obj, "destination_identity"))
+        or entry_value(fallback, "destination_identity"),
     }
 
 
@@ -140,7 +145,6 @@ def archive_manifest_payload(
     archive_keys = destination_archive_keys(archive_groups)
     all_destination_keys = destination_keys(archive_groups, direct_entries)
     payload: dict[str, JsonValue] = {
-        "object_count": len(object_list(attr(manifest, "entries"))),
         "target_day": manifest_target_day(manifest),
         "archive_count": len(archive_groups),
         "direct_copy_count": len(direct_entries),
@@ -166,20 +170,9 @@ def manifest_entry_payload(entry: object) -> dict[str, JsonValue]:
     """Return a JSON-ready payload for one archive manifest entry."""
 
     return {
-        "key": string_or_none(attr(entry, "key")),
-        "size": int_or_none(attr(entry, "size")),
+        **entry_reference_payload(entry),
         "last_modified_utc": datetime_text(attr(entry, "last_modified")),
-        "version_id": string_or_none(attr(entry, "version_id")),
         "etag": string_or_none(attr(entry, "etag")),
-        "source_bucket": string_or_none(attr(entry, "source_bucket")),
-        "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
-        "destination_key": string_or_none(attr(entry, "destination_key")),
-        "destination_archive_key": entry_archive_key_payload(entry),
-        "route_name": string_or_none(attr(entry, "route_name")),
-        "parser_kind": string_or_none(attr(entry, "parser_kind")),
-        "copy_mode": string_or_none(attr(entry, "copy_mode")),
-        "source_identity": string_or_none(attr(entry, "source_identity")),
-        "destination_identity": string_or_none(attr(entry, "destination_identity")),
     }
 
 

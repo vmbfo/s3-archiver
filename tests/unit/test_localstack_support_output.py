@@ -41,6 +41,10 @@ def test_last_json_object_rejects_output_without_object_lines() -> None:
         _ = last_json_object("plain\n[1, 2]\n")
 
 
+def test_json_objects_falls_through_when_whole_output_json_is_malformed() -> None:
+    assert json_objects('{malformed\n{"status":"ok"}\n') == [{"status": "ok"}]
+
+
 def test_retryable_localstack_message_accepts_common_and_extra_fragments() -> None:
     assert is_retryable_localstack_message("Could not connect to the endpoint URL")
     assert is_retryable_localstack_message(

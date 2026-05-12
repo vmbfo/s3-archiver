@@ -89,8 +89,7 @@ def test_archive_result_payload_reports_daily_archive_groups(
     assert groups[0]["copy_mode"] == "daily_tar_gz"
     source_objects = cast(list[dict[str, object]], groups[0]["source_objects"])
     assert source_objects[0]["route_name"] == "fae"
-    manifest_payload = cast(dict[str, object], payload["manifest"])
-    skipped_objects = cast(list[dict[str, object]], manifest_payload["skipped_objects"])
+    skipped_objects = cast(list[dict[str, object]], payload["skipped_objects"])
     assert skipped_objects[0]["route_name"] == "fae"
     assert cast(list[dict[str, object]], payload["routes"])[0]["copy_mode"] == "daily_tar_gz"
 

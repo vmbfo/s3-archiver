@@ -39,10 +39,6 @@ type DebugLogger = Callable[[object, str], None]
 type JsonObject = dict[str, object]
 
 
-class ArchiveManifestPayload(TypedDict):
-    object_count: int
-
-
 class ArchivePhasePayload(TypedDict):
     status: str
 
@@ -51,7 +47,7 @@ class ArchiveCommandPayload(TypedDict):
     status: str
     source_bucket: str
     destination_bucket: str
-    manifest: ArchiveManifestPayload
+    source_object_count: int
     phases: dict[str, ArchivePhasePayload]
 
 

@@ -8,9 +8,10 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from s3_archiver_cli import archive_payloads, error_logging
-from s3_archiver_cli.archive_payload_utils import datetime_text, object_list
+from s3_archiver_cli import error_logging
+from s3_archiver_core import archive_payloads
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
+from s3_archiver_core.payload_utils import datetime_text, object_list
 from s3_archiver_core.settings import AppSettings
 
 
@@ -125,10 +126,9 @@ def test_archive_result_payload_omits_retention_cutoff_for_route_manifest(
     )
 
     payload = error_logging.archive_result_payload("ok", result, settings, Path("/tmp/log"))
-    manifest_payload = cast(dict[str, object], payload["manifest"])
 
     assert payload["target_day"] == ""
-    assert "retention_cutoff_utc" not in manifest_payload
+    assert "retention_cutoff_utc" not in payload
 
 
 def _group(destination_archive_key: str) -> SimpleNamespace:

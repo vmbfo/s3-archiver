@@ -51,7 +51,7 @@ def test_archive_command_archives_target_day_keys_without_deleting_sources(
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == localstack_bucket_pair.source
     assert payload["destination_bucket"] == localstack_bucket_pair.destination
-    assert payload["manifest"]["object_count"] == len(source_keys)
+    assert payload["source_object_count"] == len(source_keys)
     assert _phase_statuses(payload) == {
         "list": "ok",
         "copy": "ok",
@@ -87,7 +87,7 @@ def test_archive_command_route_source_and_destination_paths_control_daily_archiv
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 2
+    assert payload["source_object_count"] == 2
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         f"routed/{TARGET_DAY}.tar.gz",
         f"routed/nested/{TARGET_DAY}.tar.gz",
@@ -143,7 +143,7 @@ def test_archive_command_direct_route_copies_source_path_without_deleting_source
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == len(copied_keys)
+    assert payload["source_object_count"] == len(copied_keys)
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         f"mirror/{key}" for key in copied_keys
     }
@@ -179,7 +179,7 @@ def test_archive_command_filename_parser_skips_timestamps_after_frozen_run_start
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == len(eligible_keys)
+    assert payload["source_object_count"] == len(eligible_keys)
     archive_keys = {
         f"{prefix}/2099-12-31.tar.gz",
     }

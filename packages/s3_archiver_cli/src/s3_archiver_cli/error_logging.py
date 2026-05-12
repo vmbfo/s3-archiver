@@ -64,6 +64,7 @@ def archive_result_payload(
         "run_id": result.run_id,
         **route_summary_payload(settings),
         "log_file": str(log_file),
+        "run_started_at_utc": manifest_payload["run_started_at_utc"],
         "target_day": manifest_payload["target_day"],
         "archive_count": manifest_payload["archive_count"],
         "direct_copy_count": manifest_payload["direct_copy_count"],
@@ -73,7 +74,7 @@ def archive_result_payload(
         "destination_keys": manifest_payload["destination_keys"],
         "archive_groups": manifest_payload["archive_groups"],
         "direct_entries": manifest_payload["direct_entries"],
-        "manifest": manifest_payload,
+        "skipped_objects": manifest_payload["skipped_objects"],
         "phases": {
             "list": _phase_payload(result.list),
             "copy": _phase_payload(result.copy),

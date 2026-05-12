@@ -40,6 +40,12 @@ class AppSettings:
     log_dir: Path
     routes: tuple[RouteSettings, ...]
 
+    @property
+    def archive_lock_path(self) -> Path:
+        """Return the path to the archive run lock file."""
+
+        return self.log_dir / "archive.lock"
+
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AppSettings:
         """Parse and validate application settings from environment values."""

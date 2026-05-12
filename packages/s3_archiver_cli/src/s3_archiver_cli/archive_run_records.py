@@ -13,8 +13,6 @@ from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.route_payloads import route_summary_payload as _route_summary_payload
 from s3_archiver_core.settings import AppSettings
 
-from s3_archiver_cli.archive_paths import archive_lock_path
-
 
 def record_started(
     settings: AppSettings,
@@ -96,7 +94,7 @@ def record_subprocess_timeout(
     """Persist a failed run record when the parent times out a child process."""
 
     lock = (
-        lock_payload if lock_payload is not None else read_lock_payload(archive_lock_path(settings))
+        lock_payload if lock_payload is not None else read_lock_payload(settings.archive_lock_path)
     )
     run_id = _string(lock.get("run_id")) or f"unknown-{datetime.now(tz=UTC).timestamp():.0f}"
     started = _string(lock.get("run_started_at_utc"))
