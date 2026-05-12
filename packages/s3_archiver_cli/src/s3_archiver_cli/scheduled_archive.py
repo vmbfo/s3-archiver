@@ -18,10 +18,10 @@ from s3_archiver_core.archive_lock import FileArchiveRunLock, LockRecoveryLogger
 from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli import archive_run_records as _run_records
+from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
+from s3_archiver_cli.route_payloads import route_summary_payload
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 type Echo = Callable[[str], None]
 
@@ -161,15 +161,13 @@ def run_scheduled_archive(
 
 
 def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
-    first_route = settings.routes[0]
     return {
         "status": "error",
         "phase": "archive.run",
         "field": "ARCHIVER_RUN_TIMEOUT",
         "message": "archive run timed out",
         "details": "archive run timed out",
-        "source_bucket": first_route.source.bucket,
-        "destination_bucket": first_route.destination.bucket,
+        **route_summary_payload(settings),
         "key": None,
         "mismatch": None,
         "reason": "archive_run_timeout",

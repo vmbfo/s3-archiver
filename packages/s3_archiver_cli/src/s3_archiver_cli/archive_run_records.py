@@ -11,8 +11,8 @@ from typing import cast
 from s3_archiver_core.archive import ArchiveRunResult
 from s3_archiver_core.settings import AppSettings
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+from s3_archiver_cli.archive_payload_utils import JsonValue
+from s3_archiver_cli.route_payloads import route_summary_payload as _route_summary_payload
 
 
 def record_started(
@@ -24,20 +24,16 @@ def record_started(
 ) -> None:
     """Persist an active run record after lock acquisition."""
 
-    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
-        {
-            "schema_version": 1,
-            "status": "active",
-            "run_id": run_id,
-            "run_started_at_utc": run_started_at_utc.isoformat(),
-            "updated_at_utc": _now(),
-            "source_bucket": route.source.bucket,
-            "destination_bucket": route.destination.bucket,
-            "log_file": str(log_file),
-        },
+        _record_payload(
+            settings,
+            "active",
+            run_id=run_id,
+            run_started_at_utc=run_started_at_utc,
+            log_file=log_file,
+        ),
     )
 
 
@@ -51,21 +47,17 @@ def record_result(
     """Persist a terminal archive run record."""
 
     status = "succeeded" if payload.get("status") == "ok" else "failed"
-    route = settings.routes[0]
     _write_record(
         settings,
         result.run_id,
-        {
-            "schema_version": 1,
-            "status": status,
-            "run_id": result.run_id,
-            "run_started_at_utc": result.manifest.run_started_at_utc.isoformat(),
-            "updated_at_utc": _now(),
-            "source_bucket": route.source.bucket,
-            "destination_bucket": route.destination.bucket,
-            "log_file": str(log_file),
-            "payload": dict(payload),
-        },
+        _record_payload(
+            settings,
+            status,
+            run_id=result.run_id,
+            run_started_at_utc=result.manifest.run_started_at_utc,
+            log_file=log_file,
+            payload=payload,
+        ),
     )
 
 
@@ -79,21 +71,17 @@ def record_failure(
 ) -> None:
     """Persist a terminal failed run record for setup/runtime exceptions."""
 
-    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
-        {
-            "schema_version": 1,
-            "status": "failed",
-            "run_id": run_id,
-            "run_started_at_utc": run_started_at_utc.isoformat(),
-            "updated_at_utc": _now(),
-            "source_bucket": route.source.bucket,
-            "destination_bucket": route.destination.bucket,
-            "log_file": str(log_file),
-            "payload": dict(payload),
-        },
+        _record_payload(
+            settings,
+            "failed",
+            run_id=run_id,
+            run_started_at_utc=run_started_at_utc,
+            log_file=log_file,
+            payload=payload,
+        ),
     )
 
 
@@ -113,21 +101,17 @@ def record_subprocess_timeout(
     )
     run_id = _string(lock.get("run_id")) or f"unknown-{datetime.now(tz=UTC).timestamp():.0f}"
     started = _string(lock.get("run_started_at_utc"))
-    route = settings.routes[0]
     _write_record(
         settings,
         run_id,
-        {
-            "schema_version": 1,
-            "status": "failed",
-            "run_id": run_id,
-            "run_started_at_utc": started,
-            "updated_at_utc": _now(),
-            "source_bucket": route.source.bucket,
-            "destination_bucket": route.destination.bucket,
-            "log_file": str(log_file),
-            "payload": dict(payload),
-        },
+        _record_payload(
+            settings,
+            "failed",
+            run_id=run_id,
+            run_started_at_utc=started,
+            log_file=log_file,
+            payload=payload,
+        ),
     )
 
 
@@ -136,6 +120,29 @@ def _write_record(settings: AppSettings, run_id: str, payload: Mapping[str, Json
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{run_id}.json"
     _ = path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _record_payload(
+    settings: AppSettings,
+    status: str,
+    *,
+    run_id: str,
+    run_started_at_utc: datetime | str | None,
+    log_file: Path,
+    payload: Mapping[str, JsonValue] | None = None,
+) -> dict[str, JsonValue]:
+    record: dict[str, JsonValue] = {
+        "schema_version": 1,
+        "status": status,
+        "run_id": run_id,
+        "run_started_at_utc": _timestamp(run_started_at_utc),
+        "updated_at_utc": _now(),
+        **_route_summary_payload(settings),
+        "log_file": str(log_file),
+    }
+    if payload is not None:
+        record["payload"] = dict(payload)
+    return record
 
 
 def read_lock_payload(path: Path) -> Mapping[str, object]:
@@ -150,6 +157,10 @@ def read_lock_payload(path: Path) -> Mapping[str, object]:
 
 def _string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _timestamp(value: datetime | str | None) -> str | None:
+    return value.isoformat() if isinstance(value, datetime) else value
 
 
 def _now() -> str:
