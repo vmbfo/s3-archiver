@@ -38,6 +38,21 @@ class DestinationLocator(Protocol):
         ...
 
 
+class ArchiveManifestRouteSpec(Protocol):
+    """Route shape accepted by route manifest construction."""
+
+    name: str
+    source: SourceLister
+    destination: DestinationLocator
+    parser_kind: ParserKind
+    copy_mode: CopyMode
+    source_path: str
+    destination_path: str
+    versioning_state: VersioningState | None
+    source_identity: object | None
+    destination_identity: object | None
+
+
 @dataclass(frozen=True, slots=True)
 class SelectedObject:
     """Parser-selected source object eligibility details."""

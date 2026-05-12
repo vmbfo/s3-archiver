@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from s3_archiver_core.archive_manifest import ArchiveManifestRoute, build_route_archive_manifest
+from s3_archiver_core.archive_manifest import build_route_archive_manifest
 from s3_archiver_core.health import run_health_check
 from s3_archiver_core.s3 import build_s3_client
 from s3_archiver_core.settings import AppSettings
@@ -16,7 +16,7 @@ from s3_archiver_core.temp_files import prepare_runtime_temp_dir
 
 from s3_archiver_cli import visual_demo_output as _output
 from s3_archiver_cli._archive_routes import archive_routes_from_settings
-from s3_archiver_cli.archive_payload_utils import json_list
+from s3_archiver_cli.archive_payload_utils import JsonValue, json_list
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
     destination_archive_keys,
@@ -32,8 +32,6 @@ from s3_archiver_cli.visual_demo_snapshots import manifest_entry_payload as _man
 from s3_archiver_cli.visual_demo_snapshots import manifest_key_set as _manifest_key_set
 from s3_archiver_cli.visual_demo_snapshots import snapshot_payload as _snapshot_payload
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type ArchiveRunner = Callable[[AppSettings, Path], dict[str, JsonValue]]
 type Emitter = Callable[[str], None]
 
@@ -53,23 +51,7 @@ def run_visual_demo(
     prepare_runtime_temp_dir(settings.temp_dir)
     health = cast(dict[str, JsonValue], run_health_check(settings, log_file).as_dict())
     routes = archive_routes_from_settings(settings, build_s3_client)
-    manifest = build_route_archive_manifest(
-        tuple(
-            ArchiveManifestRoute(
-                route.name,
-                route.source,
-                route.destination,
-                parser_kind=route.parser_kind,
-                copy_mode=route.copy_mode,
-                source_path=route.source_path,
-                destination_path=route.destination_path,
-                source_identity=route.source_identity,
-                destination_identity=route.destination_identity,
-            )
-            for route in routes
-        ),
-        run_started_at_utc=started,
-    )
+    manifest = build_route_archive_manifest(routes, run_started_at_utc=started)
     eligible_keys = _manifest_key_set(manifest)
     planned_destinations = _manifest_destination_key_map(manifest)
     before_snapshot = _snapshot_payload(

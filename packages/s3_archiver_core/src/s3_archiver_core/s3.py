@@ -86,6 +86,12 @@ class S3Client(Protocol):
 
 
 VersioningState = Literal["Disabled", "Enabled", "Suspended"]
+TransferStrategy = Literal[
+    "simple_native_copy",
+    "multipart_native_copy",
+    "multipart_streaming",
+    "temp_file_backed",
+]
 S3_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_SIMPLE_COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
 DEFAULT_STREAMING_LIMIT_BYTES = 50 * 1024 * 1024 * 1024
@@ -141,16 +147,7 @@ class S3TransferCapabilities:
     streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
 
 
-@dataclass(frozen=True, slots=True)
-class S3ProviderTransferProfile:
-    """Provider-level transfer primitives and thresholds."""
-
-    native_copy: bool = True
-    multipart_copy: bool = True
-    streaming_upload: bool = True
-    temp_file_backed: bool = True
-    simple_copy_limit_bytes: int = DEFAULT_SIMPLE_COPY_LIMIT_BYTES
-    streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
+S3ProviderTransferProfile = S3TransferCapabilities
 
 
 _TRANSFER_PROFILES: Mapping[str, S3ProviderTransferProfile] = {

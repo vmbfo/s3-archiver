@@ -11,19 +11,20 @@ from s3_archiver_core._archive_manifest_builder import (
 from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
     ArchiveManifest,
-    ArchiveManifestRoute,
+    ArchiveManifestRouteSpec,
     ManifestEntry,
     SkippedObject,
 )
 from s3_archiver_core._archive_manifest_paths import (
     as_utc,
-    route_path_prefix,
+    route_paths_overlap,
     storage_identity,
 )
+from s3_archiver_core.s3 import VersioningState
 
 
 def build_route_archive_manifest(
-    routes: Iterable[ArchiveManifestRoute],
+    routes: Iterable[ArchiveManifestRouteSpec],
     *,
     run_started_at_utc: datetime,
 ) -> ArchiveManifest:
@@ -38,11 +39,7 @@ def build_route_archive_manifest(
         manifest = build_archive_manifest(
             route.source,
             run_started_at_utc=run_started,
-            versioning_state=(
-                route.versioning_state
-                if route.versioning_state is not None
-                else route.source.versioning_state()
-            ),
+            versioning_state=_route_versioning_state(route),
             route_name=route.name,
             parser_kind=route.parser_kind,
             copy_mode=route.copy_mode,
@@ -61,7 +58,7 @@ def build_route_archive_manifest(
     return ArchiveManifest(run_started, entry_tuple, None, grouped, tuple(skipped))
 
 
-def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRoute, ...]) -> None:
+def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...]) -> None:
     seen: dict[str, list[tuple[str, str]]] = {}
     for route in routes:
         identity = repr(
@@ -69,13 +66,17 @@ def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRoute, ...]) -
         )
         path = route.source_path
         for other_name, other_path in seen.setdefault(identity, []):
-            if _prefixes_overlap(path, other_path):
+            if route_paths_overlap(path, other_path):
                 message = (
                     f"overlapping source paths for storage location: {other_name!r} "
                     f"and {route.name!r}"
                 )
                 raise ValueError(message)
         seen[identity].append((route.name, path))
+
+
+def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
+    return route.versioning_state or route.source.versioning_state()
 
 
 def _reject_duplicate_sources(entries: tuple[ManifestEntry, ...]) -> None:
@@ -118,9 +119,3 @@ def _reject_duplicate_identities(keys: Iterable[object], message: str) -> None:
         if stable_key in seen:
             raise ValueError(message)
         seen.add(stable_key)
-
-
-def _prefixes_overlap(left: str, right: str) -> bool:
-    left_prefix = route_path_prefix(left)
-    right_prefix = route_path_prefix(right)
-    return left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix)

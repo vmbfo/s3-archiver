@@ -8,10 +8,8 @@ from collections.abc import Mapping
 
 import typer
 
+from s3_archiver_cli.archive_payload_utils import JsonScalar, JsonValue
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
-
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 
 
 def log_lock_recovery(reason: str, payload: Mapping[str, object]) -> None:

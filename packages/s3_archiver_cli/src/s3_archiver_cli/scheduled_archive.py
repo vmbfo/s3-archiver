@@ -18,6 +18,7 @@ from s3_archiver_core.archive_lock import FileArchiveRunLock, LockRecoveryLogger
 from s3_archiver_core.settings import AppSettings
 
 from s3_archiver_cli import archive_run_records as _run_records
+from s3_archiver_cli.archive_paths import archive_lock_path
 from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_cli.error_logging import log_error_payload as _log_error_payload
 from s3_archiver_cli.route_payloads import route_summary_payload
@@ -115,7 +116,7 @@ def run_archive_subprocess(
         _relay_output(_as_text(exc.stdout), emit_stdout)
         _relay_output(_as_text(exc.stderr), emit_stderr)
         payload = _timeout_payload(settings, log_file)
-        lock_payload = _run_records.read_lock_payload(_archive_lock_path(settings))
+        lock_payload = _run_records.read_lock_payload(archive_lock_path(settings))
         _run_records.record_subprocess_timeout(
             settings,
             payload=payload,
@@ -185,7 +186,7 @@ def reconcile_archive_lock(
     """Attempt stale-lock reconciliation without taking ownership of an active run."""
 
     clock = _utc_now if now is None else now
-    run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=recovery_logger)
+    run_lock = FileArchiveRunLock(archive_lock_path(settings), recovery_logger=recovery_logger)
     recovery_run_id = uuid4().hex
     if run_lock.acquire(
         run_id=recovery_run_id,
@@ -195,10 +196,6 @@ def reconcile_archive_lock(
         run_lock.release(run_id=recovery_run_id)
         return True
     return False
-
-
-def _archive_lock_path(settings: AppSettings) -> Path:
-    return settings.log_dir / "archive.lock"
 
 
 def _relay_output(output: str, echo: Echo) -> None:

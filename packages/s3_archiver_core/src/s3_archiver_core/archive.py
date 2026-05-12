@@ -15,7 +15,6 @@ from s3_archiver_core.archive_group_metadata import (
 )
 from s3_archiver_core.archive_manifest import (
     ArchiveManifest,
-    ArchiveManifestRoute,
     build_route_archive_manifest,
 )
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
@@ -119,23 +118,7 @@ def _build_manifest(
     routes: tuple[ArchiveRoute, ...],
     started: datetime,
 ) -> ArchiveManifest:
-    return build_route_archive_manifest(
-        tuple(
-            ArchiveManifestRoute(
-                route.name,
-                route.source,
-                route.destination,
-                parser_kind=route.parser_kind,
-                copy_mode=route.copy_mode,
-                source_path=route.source_path,
-                destination_path=route.destination_path,
-                source_identity=route.source_identity,
-                destination_identity=route.destination_identity,
-            )
-            for route in routes
-        ),
-        run_started_at_utc=started,
-    )
+    return build_route_archive_manifest(routes, run_started_at_utc=started)
 
 
 def _skipped(phase: str) -> ArchivePhaseResult:

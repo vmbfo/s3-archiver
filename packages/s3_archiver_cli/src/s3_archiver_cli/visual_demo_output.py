@@ -10,6 +10,7 @@ from typing import cast
 from s3_archiver_core.archive_manifest import ArchiveManifest
 from s3_archiver_core.settings import AppSettings
 
+from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_cli.archive_payloads import (
     archive_group_payloads,
     direct_entry_payloads,
@@ -17,8 +18,6 @@ from s3_archiver_cli.archive_payloads import (
     skipped_object_payloads,
 )
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type Emitter = Callable[[str], None]
 
 

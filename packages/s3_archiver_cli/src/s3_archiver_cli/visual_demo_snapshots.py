@@ -10,10 +10,7 @@ from s3_archiver_core.archive_fingerprint import fingerprint_from_metadata
 from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry
 from s3_archiver_core.s3 import S3ListedObject
 
-from s3_archiver_cli.archive_payload_utils import json_list
-
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
+from s3_archiver_cli.archive_payload_utils import JsonValue, json_list
 
 
 def snapshot_payload(

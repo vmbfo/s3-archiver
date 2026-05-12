@@ -5,7 +5,7 @@ from dataclasses import KW_ONLY, dataclass, field
 
 from s3_archiver_core._archive_manifest_models import CopyMode, ManifestEntry, ParserKind
 from s3_archiver_core._archive_protocols import ArchiveBucket
-from s3_archiver_core.s3 import S3TransferCapabilities
+from s3_archiver_core.s3 import S3TransferCapabilities, VersioningState
 
 DebugLogger = Callable[[ManifestEntry, str], None]
 
@@ -22,6 +22,7 @@ class ArchiveRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
+    versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None
     transfer_capabilities: S3TransferCapabilities = field(default_factory=S3TransferCapabilities)

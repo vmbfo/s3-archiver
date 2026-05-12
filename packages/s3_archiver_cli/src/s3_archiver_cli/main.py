@@ -35,10 +35,10 @@ from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli import visual_demo_command as _visual_demo_command
 from s3_archiver_cli._archive_routes import archive_routes_from_settings
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
+from s3_archiver_cli.archive_paths import archive_lock_path
+from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | dict[str, "JsonValue"] | list["JsonValue"]
 type ReconcileArchiveLock = Callable[..., bool]
 type RunArchiveSubprocess = Callable[..., int]
 type RunScheduledArchive = Callable[..., None]
@@ -86,7 +86,7 @@ def archive() -> None:
         settings, log_file = _load_settings_and_log_file()
     except S3ArchiverError as exc:
         _raise_cli_error(exc, settings)
-    if _archive_lock_path(settings).exists():
+    if archive_lock_path(settings).exists():
         _ = reconcile_archive_lock(settings, recovery_logger=_log_lock_recovery)
     exit_code = _run_archive_command(settings, log_file)
     if exit_code != 0:
@@ -177,7 +177,7 @@ def _emit_cli_error(error: S3ArchiverError, settings: AppSettings | None) -> Non
 def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
     started = datetime.now(tz=UTC)
     locked_run_id = uuid4().hex
-    run_lock = FileArchiveRunLock(_archive_lock_path(settings), recovery_logger=_log_lock_recovery)
+    run_lock = FileArchiveRunLock(archive_lock_path(settings), recovery_logger=_log_lock_recovery)
     if not run_lock.acquire(
         run_id=locked_run_id,
         run_started_at_utc=started,
@@ -236,10 +236,6 @@ def _run_configured_archive(
         run_started_at_utc=started,
         debug_logger=debug_logger,
     )
-
-
-def _archive_lock_path(settings: AppSettings) -> Path:
-    return settings.log_dir / "archive.lock"
 
 
 def _emit_archive_payload(payload: Mapping[str, JsonValue]) -> bool:

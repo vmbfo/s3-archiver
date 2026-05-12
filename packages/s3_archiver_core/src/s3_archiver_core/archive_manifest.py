@@ -7,6 +7,7 @@ from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
     ArchiveManifest,
     ArchiveManifestRoute,
+    ArchiveManifestRouteSpec,
     CopyMode,
     DestinationLocator,
     ManifestEntry,
@@ -22,6 +23,7 @@ __all__ = (
     "ArchiveGroup",
     "ArchiveManifest",
     "ArchiveManifestRoute",
+    "ArchiveManifestRouteSpec",
     "CopyMode",
     "ManifestEntry",
     "ParserContext",
@@ -68,7 +70,7 @@ def build_archive_manifest(
 
 
 def build_route_archive_manifest(
-    routes: Iterable[ArchiveManifestRoute],
+    routes: Iterable[ArchiveManifestRouteSpec],
     *,
     run_started_at_utc: datetime,
 ) -> ArchiveManifest:

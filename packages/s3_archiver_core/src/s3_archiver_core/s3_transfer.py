@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from s3_archiver_core._archive_s3_helpers import (
     ReadableBody,
@@ -13,14 +13,10 @@ from s3_archiver_core._archive_s3_helpers import (
     copy_source_kwargs,
     versioned_kwargs,
 )
-from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties
+from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties, TransferStrategy
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
 S3_MAX_MULTIPART_PARTS = 10_000
-
-S3TransferStrategy = Literal[
-    "simple_native_copy", "multipart_native_copy", "multipart_streaming", "temp_file_backed"
-]
 
 
 def copy_s3_object(
@@ -33,7 +29,7 @@ def copy_s3_object(
     destination_bucket: str,
     destination_key: str,
     metadata: Mapping[str, str],
-    strategy: S3TransferStrategy,
+    strategy: TransferStrategy,
     temp_dir: Path,
 ) -> None:
     """Copy an S3 object with the requested strategy."""
