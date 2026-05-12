@@ -25,6 +25,7 @@ def test_json_objects_extracts_object_lines_only() -> None:
 
 def test_json_objects_extracts_json_line_from_mixed_stdout() -> None:
     assert json_objects('plain\n{"status":"ok"}\n') == [{"status": "ok"}]
+    assert json_objects('plain\n{bad json}\n{"status":"ok"}\n') == [{"status": "ok"}]
 
 
 def test_json_objects_accepts_whole_output_json_payloads() -> None:

@@ -208,6 +208,7 @@ def test_seed_run_and_verify_success_and_source_mismatch(
         emit: Callable[[str], None],
     ) -> dict[str, object]:
         _ = settings, emit
+        emit("== S3 Archiver Visual Demo ==")
         return archive_runner(object(), log_file)
 
     monkeypatch.setattr(compose_module, "run_visual_walkthrough", fake_run_visual_walkthrough)

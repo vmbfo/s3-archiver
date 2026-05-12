@@ -30,8 +30,7 @@ def json_objects(output: str) -> list[dict[str, object]]:
             payload = cast(object, json.loads(candidate))
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict):
-            objects.append(cast(dict[str, object], payload))
+        objects.append(cast(dict[str, object], payload))
     return objects
 
 
