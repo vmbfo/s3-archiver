@@ -41,16 +41,35 @@ class DestinationLocator(Protocol):
 class ArchiveManifestRouteSpec(Protocol):
     """Route shape accepted by route manifest construction."""
 
-    name: str
-    source: SourceLister
-    destination: DestinationLocator
-    parser_kind: ParserKind
-    copy_mode: CopyMode
-    source_path: str
-    destination_path: str
-    versioning_state: VersioningState | None
-    source_identity: object | None
-    destination_identity: object | None
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def source(self) -> SourceLister: ...
+
+    @property
+    def destination(self) -> DestinationLocator: ...
+
+    @property
+    def parser_kind(self) -> ParserKind: ...
+
+    @property
+    def copy_mode(self) -> CopyMode: ...
+
+    @property
+    def source_path(self) -> str: ...
+
+    @property
+    def destination_path(self) -> str: ...
+
+    @property
+    def versioning_state(self) -> VersioningState | None: ...
+
+    @property
+    def source_identity(self) -> object | None: ...
+
+    @property
+    def destination_identity(self) -> object | None: ...
 
 
 @dataclass(frozen=True, slots=True)

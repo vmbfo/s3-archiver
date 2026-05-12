@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import cast
+from queue import Queue
+from typing import Protocol, cast
 
 import pytest
 from s3_archiver_core import _archive_copy as archive_copy_module
@@ -22,6 +23,16 @@ from s3_archiver_core.archive_manifest import (
 from tests.unit.archive_workflow_fakes import FakeBucket
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
+
+
+class _DrainPendingResults(Protocol):
+    def __call__(
+        self,
+        results: Queue[tuple[str, ...]],
+        pending: int,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, ...]: ...
 
 
 @pytest.mark.unit()
@@ -101,8 +112,16 @@ def test_route_worker_edges_cover_empty_timeout_and_worker_exception() -> None:
         raise RuntimeError("route boom")
 
     assert run_parallel_items(("route",), fail_worker, lambda: False, lambda: 1.0) == (
-        "route boom",
+        "route: route boom",
     )
+
+
+@pytest.mark.unit()
+def test_timeout_drain_edges_cover_expired_budget_and_empty_queue() -> None:
+    drain = _drain_pending_results()
+    results: Queue[tuple[str, ...]] = Queue()
+    assert drain(results, 1, timeout_seconds=0.0) == ()
+    assert drain(results, 1, timeout_seconds=0.001) == ()
 
 
 @pytest.mark.unit()
@@ -260,3 +279,8 @@ def _run_parallel_items() -> Callable[
         ],
         getattr(archive_copy_module, name),
     )
+
+
+def _drain_pending_results() -> _DrainPendingResults:
+    name = "_drain_pending_results"
+    return cast(_DrainPendingResults, getattr(archive_copy_module, name))

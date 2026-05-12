@@ -17,6 +17,7 @@ from s3_archiver_cli.archive_payloads import (
     manifest_target_day,
     skipped_object_payloads,
 )
+from s3_archiver_cli.route_payloads import route_summary_payload
 
 type Emitter = Callable[[str], None]
 
@@ -31,10 +32,10 @@ def emit_intro(
 ) -> None:
     """Emit the visual demo heading and runtime context."""
 
-    first_route = settings.routes[0]
+    route_summary = route_summary_payload(settings)
     emit(title)
-    emit(f"source bucket: {first_route.source.bucket}")
-    emit(f"destination bucket: {first_route.destination.bucket}")
+    emit(_bucket_summary("source", route_summary))
+    emit(_bucket_summary("destination", route_summary))
     emit(f"log file: {log_file}")
     emit(f"run started at utc: {started.isoformat()}")
 
@@ -198,6 +199,14 @@ def _route_fields(row: dict[str, JsonValue]) -> str:
         return ""
     route, parser, copy_mode = values
     return f"route={route} parser={parser} copy_mode={copy_mode} "
+
+
+def _bucket_summary(side: str, route_summary: dict[str, JsonValue]) -> str:
+    singular = route_summary.get(f"{side}_bucket")
+    if isinstance(singular, str):
+        return f"{side} bucket: {singular}"
+    buckets = route_summary.get(f"{side}_buckets")
+    return f"{side} buckets: {', '.join(str(bucket) for bucket in cast(list[JsonValue], buckets))}"
 
 
 def _archive_days(groups: list[dict[str, JsonValue]]) -> list[str]:

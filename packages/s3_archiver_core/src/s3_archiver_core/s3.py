@@ -214,8 +214,12 @@ def transfer_capabilities_for_locations(
     source_profile = transfer_profile_for_location(source)
     destination_profile = transfer_profile_for_location(destination)
     same_native_backend = _native_copy_backend_matches(source, destination)
+    same_native_credentials = _native_copy_credentials_match(source, destination)
     native_copy = (
-        same_native_backend and source_profile.native_copy and destination_profile.native_copy
+        same_native_backend
+        and same_native_credentials
+        and source_profile.native_copy
+        and destination_profile.native_copy
     )
     return S3TransferCapabilities(
         native_copy=native_copy,
@@ -255,6 +259,16 @@ def _native_copy_backend_matches(
         and source_identity.endpoint_url == destination_identity.endpoint_url
         and source_identity.region == destination_identity.region
         and source_identity.namespace == destination_identity.namespace
+    )
+
+
+def _native_copy_credentials_match(
+    source: S3LocationSettings,
+    destination: S3LocationSettings,
+) -> bool:
+    return (
+        source.access_key_id == destination.access_key_id
+        and source.secret_access_key == destination.secret_access_key
     )
 
 

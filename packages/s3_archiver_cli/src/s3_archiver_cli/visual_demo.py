@@ -25,6 +25,7 @@ from s3_archiver_cli.archive_payloads import (
     manifest_target_day,
     skipped_object_payloads,
 )
+from s3_archiver_cli.route_payloads import route_summary_payload
 from s3_archiver_cli.visual_demo_snapshots import (
     manifest_destination_key_map as _manifest_destination_key_map,
 )
@@ -100,11 +101,9 @@ def run_visual_demo(
         "before_archive": before_snapshot,
         "after_archive": after_archive_snapshot,
     }
-    first_route = settings.routes[0]
     summary: dict[str, JsonValue] = {
         "status": "ok" if archive_payload.get("status") == "ok" else "error",
-        "source_bucket": first_route.source.bucket,
-        "destination_bucket": first_route.destination.bucket,
+        **route_summary_payload(settings),
         "log_file": str(log_file),
         "run_started_at_utc": started.isoformat(),
         "health": health,

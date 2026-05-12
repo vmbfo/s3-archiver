@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
@@ -30,6 +31,8 @@ from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX
 
 type GroupIdentity = tuple[object | None, str, str]
 type EntryIdentity = tuple[object | None, str, str, str | None]
+
+WORKER_TIMEOUT_DRAIN_SECONDS = 0.25
 
 
 def copy_phase(
@@ -228,9 +231,35 @@ def _run_parallel_items[T](
             route_failures = results.get(timeout=time_remaining())
         except Empty:
             failures.append("archive run timed out")
+            failures.extend(
+                _drain_pending_results(
+                    results,
+                    pending,
+                    timeout_seconds=WORKER_TIMEOUT_DRAIN_SECONDS,
+                )
+            )
             return tuple(failures)
         pending -= 1
         failures.extend(route_failures)
+    return tuple(failures)
+
+
+def _drain_pending_results(
+    results: Queue[tuple[str, ...]],
+    pending: int,
+    *,
+    timeout_seconds: float,
+) -> tuple[str, ...]:
+    deadline = time.monotonic() + timeout_seconds
+    failures: list[str] = []
+    for _ in range(pending):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            failures.extend(results.get(timeout=remaining))
+        except Empty:
+            break
     return tuple(failures)
 
 
@@ -267,5 +296,5 @@ def _put_worker_result[T](
     try:
         failures = worker(item)
     except Exception as exc:
-        failures = (str(exc),)
+        failures = (f"{item}: {exc}",)
     results.put(failures)

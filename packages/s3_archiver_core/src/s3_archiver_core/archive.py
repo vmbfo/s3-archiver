@@ -80,7 +80,12 @@ def run_archive(
             time_remaining,
         )
         if _timed_out(now, deadline):
-            return _run_result(run_id, manifest, _timeout("copy"), _skipped("verify"))
+            return _run_result(
+                run_id,
+                manifest,
+                copy_result if not copy_result.ok else _timeout("copy"),
+                _skipped("verify"),
+            )
         verify_result = (
             _skipped("verify")
             if not copy_result.ok
@@ -93,7 +98,12 @@ def run_archive(
             )
         )
         if copy_result.ok and _timed_out(now, deadline):
-            return _run_result(run_id, manifest, copy_result, _timeout("verify"))
+            return _run_result(
+                run_id,
+                manifest,
+                copy_result,
+                verify_result if not verify_result.ok else _timeout("verify"),
+            )
         return ArchiveRunResult(
             run_id,
             manifest,

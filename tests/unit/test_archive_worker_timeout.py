@@ -42,7 +42,7 @@ def test_run_archive_returns_quickly_after_copy_and_verify() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> None:
+def test_run_archive_waits_for_timed_out_copy_worker_before_returning() -> None:
     class SlowUploadBucket(FakeBucket):
         @override
         def upload_archive_file(
@@ -68,7 +68,35 @@ def test_run_archive_reports_timeout_without_waiting_for_stuck_copy_worker() -> 
 
     assert result.copy.failures == ("archive run timed out",)
     assert result.verify.skipped is True
-    assert time.monotonic() - began < 0.15
+    assert time.monotonic() - began >= 0.15
+
+
+@pytest.mark.unit()
+def test_run_archive_preserves_failures_collected_during_timeout_drain() -> None:
+    class SlowFailingUploadBucket(FakeBucket):
+        @override
+        def upload_archive_file(
+            self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
+        ) -> None:
+            time.sleep(0.1)
+            raise RuntimeError("upload failed")
+
+    started = datetime.now(tz=UTC)
+    target_day = started.date() - timedelta(days=60)
+    source_key = f"data/fae/{target_day.isoformat()}T00-00-00.txt"
+    source = FakeBucket("source", (_listed(source_key, 90),))
+    destination = SlowFailingUploadBucket("destination")
+
+    result = run_archive(
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(run_timeout=timedelta(milliseconds=50)),
+        run_started_at_utc=started,
+        clock=lambda: datetime.now(tz=UTC),
+    )
+
+    assert result.copy.failures[0] == "archive run timed out"
+    assert any("upload failed" in failure for failure in result.copy.failures[1:])
+    assert result.verify.skipped is True
 
 
 @pytest.mark.unit()
@@ -76,7 +104,10 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
     script = textwrap.dedent(
         """
         import time
+        from collections.abc import Mapping
         from datetime import UTC, datetime, timedelta
+        from pathlib import Path
+        from typing import override
         from tests.unit.archive_workflow_fakes import (
             FakeBucket,
             archive_routes, daily_run_timeout,
@@ -84,17 +115,25 @@ def test_timed_out_worker_does_not_keep_python_process_alive() -> None:
         )
         from s3_archiver_core.archive import run_archive
 
+        class StuckUploadBucket(FakeBucket):
+            @override
+            def upload_archive_file(
+                self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
+            ) -> None:
+                time.sleep(5)
+
         started = datetime.now(tz=UTC)
         target_day = started.date() - timedelta(days=60)
         source_key = f"data/fae/{target_day.isoformat()}T00-00-00.txt"
         source = FakeBucket("source", (listed_object(source_key, 90),))
-        destination = FakeBucket("destination")
-        run_archive(
+        destination = StuckUploadBucket("destination")
+        result = run_archive(
             archive_routes(source, destination),
             run_timeout=daily_run_timeout(run_timeout=timedelta(milliseconds=50)),
             run_started_at_utc=started,
             clock=lambda: datetime.now(tz=UTC),
         )
+        assert result.copy.failures == ("archive run timed out",)
         """
     )
 
