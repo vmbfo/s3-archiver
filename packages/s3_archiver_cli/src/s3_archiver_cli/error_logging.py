@@ -9,16 +9,8 @@ from pathlib import Path
 
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_payloads import (
-    archive_group_payloads,
     archive_manifest_payload,
-    destination_archive_keys,
-    direct_entry_payloads,
-    manifest_target_day,
     phase_status,
-    skipped_object_payloads,
-)
-from s3_archiver_core.archive_payloads import (
-    destination_keys as all_destination_keys,
 )
 from s3_archiver_core.errors import (
     ArchiveRunError,
@@ -27,7 +19,7 @@ from s3_archiver_core.errors import (
     LoggingError,
     S3ArchiverError,
 )
-from s3_archiver_core.payload_utils import JsonValue, json_list
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.route_payloads import route_summary_payload
 from s3_archiver_core.settings import AppSettings
 
@@ -66,29 +58,21 @@ def archive_result_payload(
 ) -> dict[str, JsonValue]:
     """Build the CLI payload for a completed archive invocation."""
 
-    target_day = manifest_target_day(result.manifest)
-    archive_groups = archive_group_payloads(result.manifest)
-    direct_entries = direct_entry_payloads(result.manifest)
-    archive_keys = destination_archive_keys(archive_groups)
-    destination_keys = all_destination_keys(archive_groups, direct_entries)
-    skipped_objects = skipped_object_payloads(result.manifest)
-    archive_group_values = json_list(archive_groups)
-    direct_entry_values = json_list(direct_entries)
     manifest_payload = archive_manifest_payload(result.manifest, include_run_started_at_utc=True)
     return {
         "status": status,
         "run_id": result.run_id,
         **route_summary_payload(settings),
         "log_file": str(log_file),
-        "target_day": target_day,
-        "archive_count": len(archive_groups),
-        "direct_copy_count": len(direct_entries),
-        "source_object_count": len(result.manifest.entries),
-        "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": archive_keys,
-        "destination_keys": destination_keys,
-        "archive_groups": archive_group_values,
-        "direct_entries": direct_entry_values,
+        "target_day": manifest_payload["target_day"],
+        "archive_count": manifest_payload["archive_count"],
+        "direct_copy_count": manifest_payload["direct_copy_count"],
+        "source_object_count": manifest_payload["source_object_count"],
+        "skipped_object_count": manifest_payload["skipped_object_count"],
+        "destination_archive_keys": manifest_payload["destination_archive_keys"],
+        "destination_keys": manifest_payload["destination_keys"],
+        "archive_groups": manifest_payload["archive_groups"],
+        "direct_entries": manifest_payload["direct_entries"],
         "manifest": manifest_payload,
         "phases": {
             "list": _phase_payload(result.list),

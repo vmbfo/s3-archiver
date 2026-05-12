@@ -10,9 +10,9 @@ from typing import cast
 import pytest
 import s3_archiver_cli.error_logging as error_logging
 import s3_archiver_visual_demo.output as visual_demo_output
-from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.settings import AppSettings
 
 

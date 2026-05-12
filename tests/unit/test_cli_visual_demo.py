@@ -11,8 +11,8 @@ from typing import cast, override
 
 import pytest
 import s3_archiver_visual_demo.walkthrough as demo_module
-from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.s3 import S3ListedObject
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
