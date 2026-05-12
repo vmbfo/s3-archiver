@@ -8,22 +8,22 @@ import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import cast
 
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 from s3_archiver_core.s3 import S3Client, build_s3_client
 from s3_archiver_core.settings import AppSettings
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import is_retryable_localstack_message
+from s3_archiver_localstack_support.compose import find_repo_root
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import seed_timestamped_objects
+from s3_archiver_localstack_support.objects import seed_timestamped_objects
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 SEED_NOW = datetime(2100, 1, 1, tzinfo=UTC)
 
 
@@ -127,14 +127,10 @@ def _head_object_with_retry(
         try:
             return client.head_object(Bucket=bucket, Key=key)
         except (BotoCoreError, ClientError) as exc:
-            if attempt == attempts - 1 or not _is_retryable_head_error(exc):
+            if attempt == attempts - 1 or not is_retryable_localstack_message(
+                str(exc),
+                extra_fragments=("when calling the HeadObject operation: Not Found",),
+            ):
                 raise
             time.sleep(delay_seconds)
     raise AssertionError("head_object retry loop exhausted without returning")
-
-
-def _is_retryable_head_error(exc: Exception) -> bool:
-    message = str(exc)
-    return "Could not connect to the endpoint URL" in message or (
-        "when calling the HeadObject operation: Not Found" in message
-    )

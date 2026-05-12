@@ -1,52 +1,48 @@
-"""Terminal renderer for the visual e2e demo."""
+"""Terminal renderer for the manual visual demo."""
 
 from __future__ import annotations
 
-import subprocess
-import time
-from collections.abc import Collection
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Protocol
 
 
-class ComposeRunner(Protocol):
-    """Callable shape for the shared compose helper."""
+class VisualDemoPrinter:
+    """Print sampled visual-demo walkthrough output for terminal presentation."""
 
-    def __call__(
-        self,
-        env: dict[str, str],
-        *args: str,
-        check: bool = True,
-    ) -> subprocess.CompletedProcess[str]: ...
+    def __init__(self, archive_start_age_days: int) -> None:
+        self._printer: _SampledDemoPrinter = _SampledDemoPrinter(archive_start_age_days)
+
+    def emit(self, line: str) -> None:
+        """Print one raw walkthrough line in stakeholder-friendly form."""
+
+        self._printer.print_line(line)
+
+    def finish(self) -> None:
+        """Flush any sampled output rows."""
+
+        self._printer.finish()
 
 
-def run_visual_demo(
-    env: dict[str, str],
-    *,
-    repo_root: Path,
-    cli_command: str = "demo",
-    compose_runner: ComposeRunner,
-    retryable_messages: Collection[str],
-    retryable_returncodes: Collection[int],
-    retries: int,
-    retry_delay_seconds: float,
-    archive_start_age_days: int,
-    seeded_count: int,
-) -> subprocess.CompletedProcess[str]:
+def print_image_build_intro() -> None:
+    """Print the runtime image build section."""
+
     _print_demo_header("Preparing the runtime image")
     print("  Building the app image quietly. Build logs are shown only if the build fails.")
-    build_result = compose_runner(env, "build", "app", check=False)
-    if build_result.returncode != 0:
-        raise AssertionError(
-            "\n".join(
-                (
-                    "failed to build the app image",
-                    f"stdout:\n{build_result.stdout}",
-                    f"stderr:\n{build_result.stderr}",
-                )
-            )
+
+
+def build_failure_message(stdout: str, stderr: str) -> str:
+    """Return a readable app image build failure message."""
+
+    return "\n".join(
+        (
+            "failed to build the app image",
+            f"stdout:\n{stdout}",
+            f"stderr:\n{stderr}",
         )
+    )
+
+
+def print_demo_intro(*, seeded_count: int) -> None:
+    """Print the compose-backed demo section."""
 
     _print_demo_header("Running the compose-backed demo")
     print("  LocalStack has fresh source and destination buckets for this test run.")
@@ -56,74 +52,8 @@ def run_visual_demo(
         + "valid, invalid, and unsafe-key timestamp examples."
     )
     print("  Archive selection is configured by the app route parser.")
-    print(
-        f"  The next lines are live output from `s3-archiver {cli_command}`, "
-        + "with JSON logs hidden."
-    )
+    print("  The next lines are live output from the manual demo CLI, with JSON hidden.")
     print()
-
-    for attempt in range(retries + 1):
-        result = _run_visual_demo_once(
-            env,
-            repo_root=repo_root,
-            archive_start_age_days=archive_start_age_days,
-            cli_command=cli_command,
-        )
-        if result.returncode == 0:
-            return result
-        if attempt == retries or _is_non_retryable_visual_demo_error(
-            result,
-            retryable_messages=retryable_messages,
-            retryable_returncodes=retryable_returncodes,
-        ):
-            raise AssertionError(
-                "\n".join(
-                    (
-                        f"visual demo failed with exit code {result.returncode}",
-                        f"stdout:\n{result.stdout}",
-                        f"stderr:\n{result.stderr}",
-                    )
-                )
-            )
-        print()
-        print("  Compose reported a retryable startup issue; retrying the demo command.")
-        time.sleep(retry_delay_seconds)
-
-    raise AssertionError("visual demo retry loop exhausted without returning")
-
-
-def _run_visual_demo_once(
-    env: dict[str, str],
-    *,
-    repo_root: Path,
-    archive_start_age_days: int,
-    cli_command: str,
-) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", "run", "--rm"]
-    if env.get("ARCHIVER_CONFIG_JSON"):
-        command.extend(("-e", "ARCHIVER_CONFIG_JSON"))
-    command.extend(("app", cli_command))
-    process = subprocess.Popen(
-        command,
-        cwd=repo_root,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    output_lines: list[str] = []
-    if process.stdout is None:
-        raise AssertionError("visual demo process stdout was not captured")
-    printer = _SampledDemoPrinter(archive_start_age_days)
-    with process.stdout:
-        for raw_line in process.stdout:
-            output_lines.append(raw_line)
-            printer.print_line(raw_line.rstrip("\n"))
-    printer.finish()
-    return_code = process.wait()
-    output = "".join(output_lines)
-    return subprocess.CompletedProcess(command, return_code, stdout=output, stderr="")
 
 
 class _SampledDemoPrinter:
@@ -169,7 +99,7 @@ def _print_visual_demo_line(line: str) -> None:
         return
     match line:
         case "== S3 Archiver Visual Demo ==":
-            _print_demo_header("S3 Archiver visual e2e demo")
+            _print_demo_header("S3 Archiver visual demo")
             print("  This is a real Docker Compose run against LocalStack S3.")
         case "== Preflight ==":
             _print_step("1/4", "Preflight checks")
@@ -253,16 +183,3 @@ def _print_step(number: str, title: str) -> None:
     print()
     print(f"[{number}] {title}")
     print("-" * (len(number) + len(title) + 4))
-
-
-def _is_non_retryable_visual_demo_error(
-    result: subprocess.CompletedProcess[str],
-    *,
-    retryable_messages: Collection[str],
-    retryable_returncodes: Collection[int],
-) -> bool:
-    if result.returncode in retryable_returncodes:
-        return False
-    return not any(
-        message in result.stderr or message in result.stdout for message in retryable_messages
-    )

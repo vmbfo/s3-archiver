@@ -16,20 +16,21 @@ from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult
 from s3_archiver_core.archive import run_archive as run_core_archive
 from s3_archiver_core.s3 import S3Client
-from typer.testing import CliRunner
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import (
+    is_retryable_localstack_message,
+    last_json_object,
+)
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import localstack_s3_client
+from s3_archiver_localstack_support.objects import localstack_s3_client
+from typer.testing import CliRunner
 
 RUNNER = CliRunner()
 FROZEN_ARCHIVE_RUN_STARTED_AT = datetime(2099, 12, 31, 12, tzinfo=UTC)
 _RETRYABLE_LOCALSTACK_ERRORS = (
-    "Connection was closed before we received a valid response",
-    "Could not connect to the endpoint URL",
     "when calling the HeadBucket operation: Not Found",
     "when calling the ListObjectVersions operation: The specified bucket does not exist",
 )
@@ -123,10 +124,7 @@ def run_archive_command(
     for attempt in range(attempts):
         result = RUNNER.invoke(cli_module.app, ["archive-once"])
         if result.exit_code == 0 and result.stderr == "":
-            json_line = next(
-                line for line in reversed(result.stdout.splitlines()) if line.startswith("{")
-            )
-            return cast(ArchiveCommandPayload, json.loads(json_line))
+            return cast(ArchiveCommandPayload, cast(object, last_json_object(result.stdout)))
         if attempt == attempts - 1 or not _is_retryable_archive_failure(result.stderr):
             assert result.exit_code == 0, result.stderr
         time.sleep(0.5)
@@ -134,4 +132,7 @@ def run_archive_command(
 
 
 def _is_retryable_archive_failure(stderr: str) -> bool:
-    return any(message in stderr for message in _RETRYABLE_LOCALSTACK_ERRORS)
+    return is_retryable_localstack_message(
+        stderr,
+        extra_fragments=_RETRYABLE_LOCALSTACK_ERRORS,
+    )

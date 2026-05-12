@@ -8,13 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from s3_archiver_core.archive_manifest import build_route_archive_manifest
-from s3_archiver_core.health import run_health_check
-from s3_archiver_core.s3 import build_s3_client
-from s3_archiver_core.settings import AppSettings
-from s3_archiver_core.temp_files import prepare_runtime_temp_dir
-
-from s3_archiver_cli import visual_demo_output as _output
 from s3_archiver_cli._archive_routes import archive_routes_from_settings
 from s3_archiver_cli.archive_payload_utils import JsonValue, json_list
 from s3_archiver_cli.archive_payloads import (
@@ -26,12 +19,19 @@ from s3_archiver_cli.archive_payloads import (
     skipped_object_payloads,
 )
 from s3_archiver_cli.route_payloads import route_summary_payload
-from s3_archiver_cli.visual_demo_snapshots import (
+from s3_archiver_core.archive_manifest import build_route_archive_manifest
+from s3_archiver_core.health import run_health_check
+from s3_archiver_core.s3 import build_s3_client
+from s3_archiver_core.settings import AppSettings
+from s3_archiver_core.temp_files import prepare_runtime_temp_dir
+
+from s3_archiver_visual_demo import output as _output
+from s3_archiver_visual_demo.snapshots import (
     manifest_destination_key_map as _manifest_destination_key_map,
 )
-from s3_archiver_cli.visual_demo_snapshots import manifest_entry_payload as _manifest_entry_payload
-from s3_archiver_cli.visual_demo_snapshots import manifest_key_set as _manifest_key_set
-from s3_archiver_cli.visual_demo_snapshots import snapshot_payload as _snapshot_payload
+from s3_archiver_visual_demo.snapshots import manifest_entry_payload as _manifest_entry_payload
+from s3_archiver_visual_demo.snapshots import manifest_key_set as _manifest_key_set
+from s3_archiver_visual_demo.snapshots import snapshot_payload as _snapshot_payload
 
 type ArchiveRunner = Callable[[AppSettings, Path], dict[str, JsonValue]]
 type Emitter = Callable[[str], None]

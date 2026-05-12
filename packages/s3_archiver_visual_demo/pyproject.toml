@@ -1,0 +1,26 @@
+[project]
+name = "s3-archiver-visual-demo"
+version = "0.1.0"
+description = "Manual compose-backed visual demo for s3-archiver."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "s3-archiver-cli",
+  "s3-archiver-core",
+  "s3-archiver-localstack-support",
+]
+
+[project.scripts]
+s3-archiver-visual-demo = "s3_archiver_visual_demo.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+s3-archiver-cli = { workspace = true }
+s3-archiver-core = { workspace = true }
+s3-archiver-localstack-support = { workspace = true }

@@ -2,38 +2,23 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import textwrap
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import TypedDict, cast
 
 import pytest
-from s3_archiver_core.s3 import S3Client
-
-from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import (
-    LOCALSTACK_COMPOSE_ENDPOINT,
-    LOCALSTACK_HOST_ENDPOINT,
-    LocalstackBucketPair,
-    compose_runtime_log_dir,
-    localstack_test_env,
-)
-from tests.integration.localstack_object_helpers import (
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
+from s3_archiver_localstack_support.objects import (
     listed_keys,
-    localstack_s3_client,
     read_tar_gz_members_text,
 )
 
-_COMPOSE_RETRYABLE_MESSAGES = (
-    "HeadBucket operation: Not Found",
-    "Connection was closed before we received a valid response",
-    'optional dependency "localstack" failed to start',
-    "exited (137)",
-    "unable to upgrade to tcp, received 404",
-    "app is missing dependency localstack",
+from tests.e2e.archive_compose_support import (
+    compose_archive_client,
+    run_archive_compose,
+    write_archive_env_file,
 )
-_COMPOSE_RETRYABLE_RETURNCODES = (137,)
 
 
 class TempFileProbePayload(TypedDict):
@@ -51,7 +36,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     bucket_pair = localstack_bucket_pair
     key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
     archive_key = "compose-temp-file/2099-11-02.tar.gz"
-    env_file = _write_archive_env_file(tmp_path, bucket_pair)
+    env_file = write_archive_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
     probe = textwrap.dedent(
@@ -139,7 +124,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         """
     ).strip()
 
-    result = _run_compose(
+    result = run_archive_compose(
         run_env,
         "run",
         "--no-deps",
@@ -155,58 +140,14 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     assert payload["ok"] is True
     assert payload["strategy"] == "deterministic_tar_gzip"
     assert payload["temp_dir_files"] == []
-    assert listed_keys(_client(tmp_path, bucket_pair, "destination"), bucket_pair.destination) == {
-        archive_key
-    }
+    destination_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "destination")
+    assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
     assert read_tar_gz_members_text(
-        _client(tmp_path, bucket_pair, "destination"),
+        destination_client,
         bucket_pair.destination,
         archive_key,
     ) == {key: "probe\n"}
 
 
-def _write_archive_env_file(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-) -> Path:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir=compose_runtime_log_dir(bucket_pair),
-    )
-    env_file = tmp_path / "compose-coverage.env"
-    _ = env_file.write_text(
-        "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
-        encoding="utf-8",
-    )
-    return env_file
-
-
-def _client(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-    side: Literal["source", "destination"],
-) -> S3Client:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_HOST_ENDPOINT,
-        log_dir=str(tmp_path / "host-logs"),
-    )
-    return localstack_s3_client(env, side)
-
-
-def _run_compose(
-    env: dict[str, str], *args: str, check: bool = True
-) -> subprocess.CompletedProcess[str]:
-    return run_compose(
-        env,
-        *args,
-        check=check,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
-    )
-
-
 def _temp_file_payload(output: str) -> TempFileProbePayload:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(TempFileProbePayload, json.loads(json_line))
+    return cast(TempFileProbePayload, cast(object, last_json_object(output)))

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -11,44 +13,58 @@ from urllib.parse import urlparse
 
 from botocore.exceptions import BotoCoreError, ClientError
 
+from s3_archiver_localstack_support._common import is_retryable_localstack_error, object_entries
+
 LOCALSTACK_HOST_ENDPOINT = "http://127.0.0.1:4566"
 LOCALSTACK_COMPOSE_ENDPOINT = "http://localstack:4566"
 LOCALSTACK_ENDPOINT_HOSTS = frozenset(
     {"127.0.0.1", "localhost", "localstack", "localstack-alt", "localhost.localstack.cloud"}
 )
-_RETRYABLE_LOCALSTACK_ERRORS = (
-    "Connection was closed before we received a valid response",
-    "Could not connect to the endpoint URL",
-)
 
 
 @dataclass(frozen=True, slots=True)
 class LocalstackBucketPair:
+    """Source and destination bucket names for an isolated LocalStack run."""
+
     source: str
     destination: str
 
 
 class LocalstackS3AdminClient(Protocol):
+    """Subset of S3 admin operations used to prepare and clean LocalStack buckets."""
+
     def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        """Check whether a bucket exists."""
         ...
 
     def create_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        """Create a bucket."""
         ...
 
-    def list_buckets(self) -> object: ...
+    def list_buckets(self) -> object:
+        """List buckets."""
+        ...
 
-    def list_objects_v2(self, **kwargs: object) -> dict[str, object]: ...
+    def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+        """List current object versions."""
+        ...
 
-    def list_object_versions(self, **kwargs: object) -> dict[str, object]: ...
+    def list_object_versions(self, **kwargs: object) -> dict[str, object]:
+        """List all object versions and delete markers."""
+        ...
 
     def delete_objects(self, *, Bucket: str, Delete: dict[str, object]) -> object:  # noqa: N803
+        """Delete object versions from a bucket."""
         ...
 
     def delete_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        """Delete an empty bucket."""
         ...
 
 
 def new_localstack_bucket_pair() -> LocalstackBucketPair:
+    """Return unique source and destination bucket names for one isolated run."""
+
     suffix = uuid.uuid4().hex
     return LocalstackBucketPair(
         source=f"s3-archiver-source-{suffix}",
@@ -57,7 +73,30 @@ def new_localstack_bucket_pair() -> LocalstackBucketPair:
 
 
 def bucket_pair_from_env(env: dict[str, str]) -> LocalstackBucketPair:
+    """Read an isolated LocalStack bucket pair from a compose environment."""
+
     return LocalstackBucketPair(env["TEST_S3_SOURCE_BUCKET"], env["TEST_S3_DESTINATION_BUCKET"])
+
+
+def localstack_compose_env(
+    bucket_pair: LocalstackBucketPair,
+    *,
+    app_env_file: Path,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build Docker Compose environment variables for an isolated LocalStack run."""
+
+    env = dict(os.environ if environ is None else environ)
+    localstack_host_endpoint = env.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT)
+    env["APP_ENV_FILE"] = str(app_env_file)
+    env["LOCALSTACK_S3_URL"] = localstack_host_endpoint
+    if (localstack_host_port := urlparse(localstack_host_endpoint).port) is not None:
+        env["LOCALSTACK_HOST_PORT"] = str(localstack_host_port)
+    else:
+        _ = env.pop("LOCALSTACK_HOST_PORT", None)
+    env["TEST_S3_SOURCE_BUCKET"] = bucket_pair.source
+    env["TEST_S3_DESTINATION_BUCKET"] = bucket_pair.destination
+    return env
 
 
 def localstack_test_env(
@@ -66,6 +105,8 @@ def localstack_test_env(
     endpoint: str,
     log_dir: str,
 ) -> dict[str, str]:
+    """Build app environment variables for an isolated LocalStack bucket pair."""
+
     env = {
         "APP_ENV_FILE": "/dev/null",
         "S3_SOURCE_PROVIDER": "localstack",
@@ -92,6 +133,8 @@ def localstack_test_env(
 
 
 def compose_runtime_log_dir(bucket_pair: LocalstackBucketPair) -> str:
+    """Return the in-container log directory for a compose-backed run."""
+
     return f"/var/log/s3-archiver/{bucket_pair.source}"
 
 
@@ -111,9 +154,20 @@ def write_localstack_env_file(
     *,
     endpoint: str,
     log_dir: str,
+    filename: str = "localstack.env",
+    overrides: Mapping[str, str] | None = None,
 ) -> Path:
+    """Write a LocalStack app environment file and return its path."""
+
     env = localstack_test_env(bucket_pair, endpoint=endpoint, log_dir=log_dir)
-    env_file = tmp_path / "localstack.env"
+    if overrides is not None:
+        env.update(overrides)
+    return write_env_file(tmp_path / filename, env)
+
+
+def write_env_file(env_file: Path, env: Mapping[str, str]) -> Path:
+    """Write sorted key-value environment entries and return the file path."""
+
     _ = env_file.write_text(
         "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
         encoding="utf-8",
@@ -121,7 +175,9 @@ def write_localstack_env_file(
     return env_file
 
 
-def assert_localstack_test_target(env: dict[str, str]) -> None:
+def assert_localstack_test_target(env: Mapping[str, str]) -> None:
+    """Reject non-LocalStack endpoints before destructive test operations run."""
+
     for field in ("S3_SOURCE_PROVIDER", "S3_DESTINATION_PROVIDER"):
         if env.get(field) != "localstack":
             raise RuntimeError(f"{field} must be 'localstack' for integration/e2e tests")
@@ -130,6 +186,8 @@ def assert_localstack_test_target(env: dict[str, str]) -> None:
 
 
 def ensure_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> None:
+    """Create a LocalStack bucket if it is not already present."""
+
     try:
         _ = client.create_bucket(Bucket=bucket)
     except ClientError as exc:
@@ -140,7 +198,9 @@ def ensure_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> No
 
 
 def delete_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> None:
-    for attempt in range(5):
+    """Delete a LocalStack bucket and all object versions it contains."""
+
+    for attempt in range(5):  # pragma: no branch
         try:
             _delete_all_versions(client, bucket)
             _delete_current_objects(client, bucket)
@@ -152,7 +212,7 @@ def delete_localstack_bucket(client: LocalstackS3AdminClient, bucket: str) -> No
                 and exc.response.get("Error", {}).get("Code") == "NoSuchBucket"
             ):
                 return
-            if attempt == 4 or not _is_retryable_localstack_error(exc):
+            if attempt == 4 or not is_retryable_localstack_error(exc):
                 raise RuntimeError(
                     f"Failed to delete LocalStack test bucket {bucket!r}: {exc}"
                 ) from exc
@@ -204,7 +264,7 @@ def _delete_current_objects(client: LocalstackS3AdminClient, bucket: str) -> Non
 def _version_delete_entries(page: dict[str, object]) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     for section in ("Versions", "DeleteMarkers"):
-        for item in _object_entries(page.get(section)):
+        for item in object_entries(page.get(section)):
             key = _optional_string(item.get("Key"))
             version_id = _optional_string(item.get("VersionId"))
             if key is not None and version_id is not None:
@@ -215,24 +275,12 @@ def _version_delete_entries(page: dict[str, object]) -> list[dict[str, str]]:
 def _current_delete_entries(page: dict[str, object]) -> list[dict[str, str]]:
     return [
         {"Key": key}
-        for item in _object_entries(page.get("Contents"))
+        for item in object_entries(page.get("Contents"))
         if (key := _optional_string(item.get("Key"))) is not None
     ]
-
-
-def _object_entries(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    entries = cast(list[object], value)
-    return [cast(dict[str, object], entry) for entry in entries if isinstance(entry, dict)]
 
 
 def _optional_string(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
-
-
-def _is_retryable_localstack_error(exc: Exception) -> bool:
-    message = str(exc)
-    return any(detail in message for detail in _RETRYABLE_LOCALSTACK_ERRORS)

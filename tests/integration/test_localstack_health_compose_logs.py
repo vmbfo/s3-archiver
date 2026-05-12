@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import pytest
+from s3_archiver_localstack_support.compose import find_repo_root, run_app_compose
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
 
-from tests.integration.localstack_harness import LocalstackBucketPair
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 APP_LOGS_VOLUME = f"{REPO_ROOT.name}_app_logs"
 
 
@@ -29,23 +28,7 @@ def test_compose_runtime_log_volume_captures_health_logs(
 
 
 def _run_compose(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    command = ["docker", "compose", "--profile", "test", *args]
-    result = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode,
-            command,
-            output=result.stdout,
-            stderr=result.stderr,
-        )
-    return result
+    return run_app_compose(env, *args, repo_root=REPO_ROOT)
 
 
 def _run_volume_probe(command: str) -> subprocess.CompletedProcess[str]:

@@ -9,6 +9,13 @@ from s3_archiver_core.archive import ArchiveRoute, run_archive
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3TransferCapabilities
 from s3_archiver_core.settings import AppSettings
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
+from s3_archiver_localstack_support.objects import (
+    listed_keys,
+    put_test_object,
+    read_object_text,
+    read_tar_gz_members_text,
+)
 
 from tests.integration.archive_cli_test_support import (
     FROZEN_ARCHIVE_RUN_STARTED_AT,
@@ -18,13 +25,6 @@ from tests.integration.archive_cli_test_support import (
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
-from tests.integration.localstack_harness import LocalstackBucketPair
-from tests.integration.localstack_object_helpers import (
-    listed_keys,
-    put_test_object,
-    read_object_text,
-    read_tar_gz_members_text,
-)
 
 TARGET_DAY = "2099-12-31"
 TARGET_ARCHIVE_KEY = f"archive/{TARGET_DAY}.tar.gz"

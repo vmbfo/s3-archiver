@@ -19,18 +19,18 @@ from s3_archiver_core.health import run_health_check
 from s3_archiver_core.logging_config import configure_logging
 from s3_archiver_core.s3 import VersioningState, build_s3_client
 from s3_archiver_core.settings import AppSettings
-from typer.testing import CliRunner
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support.compose import find_repo_root
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     assert_localstack_test_target,
     bucket_pair_from_env,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import listed_keys
+from s3_archiver_localstack_support.objects import listed_keys
+from typer.testing import CliRunner
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 INTEGRATION_RUNTIME_LOG_DIR = (
     REPO_ROOT / ".local" / "integration-runtime" / "var" / "log" / "s3-archiver"
 )

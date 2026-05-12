@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-uv run pytest -q tests/e2e/test_compose_visual_demo.py -m e2e -s --tb=short
+uv run --package s3-archiver-visual-demo s3-archiver-visual-demo "$@"

@@ -9,8 +9,8 @@ from typing import cast
 
 import pytest
 import s3_archiver_cli.error_logging as error_logging
-import s3_archiver_cli.visual_demo as demo_module
-import s3_archiver_cli.visual_demo_output as visual_demo_output
+import s3_archiver_visual_demo.output as visual_demo_output
+from s3_archiver_cli.archive_payload_utils import JsonValue
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
 from s3_archiver_core.settings import AppSettings
@@ -225,7 +225,7 @@ def test_visual_demo_describes_daily_candidates_and_result_groups() -> None:
         entries=(entry,),
         skipped_objects=(SimpleNamespace(key="bad.txt", reason="no timestamp"),),
     )
-    archive_payload: dict[str, demo_module.JsonValue] = {
+    archive_payload: dict[str, JsonValue] = {
         "status": "ok",
         "target_day": "2026-04-13",
         "archive_count": 1,

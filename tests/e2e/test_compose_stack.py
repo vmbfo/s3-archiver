@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import textwrap
@@ -11,13 +10,11 @@ from typing import TypedDict, cast
 
 import pytest
 from s3_archiver_cli.main import HEALTH_CHECK_ERROR_EXIT_CODE, LOGGING_ERROR_EXIT_CODE
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.compose import find_repo_root, run_stack_compose
+from s3_archiver_localstack_support.harness import bucket_pair_from_env, compose_runtime_log_dir
 
-from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import bucket_pair_from_env, compose_runtime_log_dir
-
-_COMPOSE_RETRYABLE_MESSAGES = ("HeadBucket operation: Not Found",)
-_COMPOSE_RETRYABLE_RETURNCODES = (137, HEALTH_CHECK_ERROR_EXIT_CODE)
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 
 
 class ErrorPayload(TypedDict):
@@ -74,7 +71,7 @@ def test_compose_localstack_startup_does_not_precreate_test_buckets(
         )
     finally:
         _ = _run_compose(compose_env, "down", "-v", "--remove-orphans", check=False)
-    payload = cast(dict[str, object], json.loads(result.stdout))
+    payload = last_json_object(result.stdout)
     bucket_names = {
         str(bucket["Name"])
         for bucket in cast(list[dict[str, object]], payload.get("Buckets", []))
@@ -260,20 +257,17 @@ def test_compose_services_fail_closed_without_explicit_app_env_file() -> None:
 def _run_compose(
     env: dict[str, str], *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    return run_compose(
+    return run_stack_compose(
         env,
         *args,
         check=check,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
+        extra_retryable_returncodes=(HEALTH_CHECK_ERROR_EXIT_CODE,),
     )
 
 
 def _error_payload(output: str) -> ErrorPayload:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(ErrorPayload, json.loads(json_line))
+    return cast(ErrorPayload, cast(object, last_json_object(output)))
 
 
 def _rotation_payload(output: str) -> RotationPayload:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(RotationPayload, json.loads(json_line))
+    return cast(RotationPayload, cast(object, last_json_object(output)))
