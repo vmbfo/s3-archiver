@@ -1,4 +1,10 @@
-"""Typed S3 client construction and archive adapter helpers."""
+"""Typed S3 client construction and archive adapter helpers.
+
+``S3Client`` and ``S3ClientFactory`` are PEP 544 ``Protocol`` classes: the
+``...`` method bodies are interface stubs, not abstract methods. The real
+boto3 client (and the fakes used in tests) satisfy them structurally by
+matching the shape — no subclassing required.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,10 @@
-"""Parser protocol."""
+"""Parser protocol.
+
+The ``Protocol`` classes here are PEP 544 structural types: the ``...``
+method/property bodies are interface stubs, not abstract methods. Any object
+matching the shape satisfies them at runtime, so concrete S3 objects and
+test fixtures both fit without subclassing.
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,12 @@
+"""Manifest data classes and the structural protocols they accept.
+
+The ``Protocol`` classes below (``SourceLister``, ``DestinationLocator``,
+``ArchiveManifestRouteSpec``) are PEP 544 structural types — the ``...``
+method/property bodies are interface stubs, not abstract methods. Any object
+whose shape matches satisfies them at runtime, so concrete buckets, route
+records, and test doubles all fit without subclassing.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable

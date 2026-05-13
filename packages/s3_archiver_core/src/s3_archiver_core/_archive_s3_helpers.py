@@ -12,7 +12,12 @@ from s3_archiver_core.s3 import S3ObjectProperties, VersioningState, checksums_f
 
 
 class ReadableBody(Protocol):
-    """Readable streaming body returned by S3 get-object calls."""
+    """Readable streaming body returned by S3 get-object calls.
+
+    PEP 544 structural type — the ``...`` method bodies are interface stubs,
+    not abstract methods. ``botocore.StreamingBody`` and the in-memory test
+    fakes both satisfy it by matching the shape.
+    """
 
     def read(self, amt: int = -1) -> bytes:
         """Read up to ``amt`` bytes."""

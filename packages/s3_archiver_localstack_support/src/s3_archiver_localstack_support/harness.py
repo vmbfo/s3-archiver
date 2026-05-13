@@ -31,7 +31,12 @@ class LocalstackBucketPair:
 
 
 class LocalstackS3AdminClient(Protocol):
-    """Subset of S3 admin operations used to prepare and clean LocalStack buckets."""
+    """Subset of S3 admin operations used to prepare and clean LocalStack buckets.
+
+    PEP 544 structural type — the ``...`` method bodies are interface stubs,
+    not abstract methods. The real boto3 S3 client satisfies it by matching
+    the shape, so no subclassing is needed.
+    """
 
     def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
         """Check whether a bucket exists."""
