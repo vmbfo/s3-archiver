@@ -43,6 +43,8 @@ def copy_phase(
 ) -> tuple[ArchivePhaseResult, tuple[ArchiveGroup, ...], tuple[ManifestEntry, ...]]:
     """Copy direct entries and daily archive groups with one worker per route."""
 
+    direct_entries_by_route = _direct_entries_by_route(manifest)
+    archive_groups_by_route = _archive_groups_by_route(manifest)
     progress = _PhaseProgress("copy", len(manifest.entries), progress_logger)
     verified: dict[GroupIdentity, ArchiveGroup] = {}
     verified_entries: dict[EntryIdentity, ManifestEntry] = {}
@@ -52,7 +54,7 @@ def copy_phase(
     def worker(route_name: str) -> tuple[str, ...]:
         route = routes_by_name[route_name]
         failures: list[str] = []
-        for entry in _route_direct_entries(manifest, route_name):
+        for entry in direct_entries_by_route.get(route_name, ()):
             failure, copied = copy_direct_entry(route, entry, debug_logger)
             progress.advance()
             if failure is not None:
@@ -61,7 +63,7 @@ def copy_phase(
             if copied:
                 with result_lock:
                     verified_entries[_entry_identity(entry)] = entry
-        for group in _route_archive_groups(manifest, route_name):
+        for group in archive_groups_by_route.get(route_name, ()):
             failure, copied = copy_group(
                 route.source,
                 route.destination,
@@ -196,12 +198,14 @@ def verify_phase(
     progress_logger: ProgressLogger | None = None,
 ) -> ArchivePhaseResult:
     route_names = tuple(route.name for route in routes_by_name.values())
+    groups_by_route = _groups_by_route(groups)
+    entries_by_route = _entries_by_route(entries)
     progress = _PhaseProgress("verify", len(groups) + len(entries), progress_logger)
 
     def worker(route_name: str) -> tuple[str, ...]:
         route = routes_by_name[route_name]
         failures: list[str] = []
-        for group in (item for item in groups if item.route_name == route_name):
+        for group in groups_by_route.get(route_name, ()):
             metadata = group_metadata(group)
             existing = route.destination.head_object(group.destination_archive_key)
             if existing is None:
@@ -211,7 +215,7 @@ def verify_phase(
             ):
                 failures.append(f"{group.destination_archive_key}: archive verification failed")
             progress.advance()
-        for entry in (item for item in entries if item.route_name == route_name):
+        for entry in entries_by_route.get(route_name, ()):
             hydrated = _entry_with_current_source_properties(route.source, entry)
             verified = verify_direct_entry(
                 route, hydrated, route.destination.head_object(entry.destination_key)
@@ -253,12 +257,30 @@ def _run_parallel_items[T](
     return tuple(failures)
 
 
-def _route_direct_entries(manifest: ArchiveManifest, route_name: str) -> tuple[ManifestEntry, ...]:
-    return tuple(
-        entry
-        for entry in manifest.entries
-        if entry.route_name == route_name and entry.copy_mode == "direct"
-    )
+def _direct_entries_by_route(manifest: ArchiveManifest) -> dict[str, tuple[ManifestEntry, ...]]:
+    grouped: dict[str, list[ManifestEntry]] = {}
+    for entry in manifest.entries:
+        if entry.copy_mode == "direct":
+            grouped.setdefault(entry.route_name, []).append(entry)
+    return {route_name: tuple(entries) for route_name, entries in grouped.items()}
+
+
+def _archive_groups_by_route(manifest: ArchiveManifest) -> dict[str, tuple[ArchiveGroup, ...]]:
+    return _groups_by_route(manifest.archive_groups)
+
+
+def _groups_by_route(groups: tuple[ArchiveGroup, ...]) -> dict[str, tuple[ArchiveGroup, ...]]:
+    grouped: dict[str, list[ArchiveGroup]] = {}
+    for group in groups:
+        grouped.setdefault(group.route_name, []).append(group)
+    return {route_name: tuple(items) for route_name, items in grouped.items()}
+
+
+def _entries_by_route(entries: tuple[ManifestEntry, ...]) -> dict[str, tuple[ManifestEntry, ...]]:
+    grouped: dict[str, list[ManifestEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(entry.route_name, []).append(entry)
+    return {route_name: tuple(items) for route_name, items in grouped.items()}
 
 
 def _entry_with_current_source_properties(
@@ -315,10 +337,6 @@ def _entry_identity(entry: ManifestEntry) -> EntryIdentity:
         entry.destination_key,
         entry.version_id,
     )
-
-
-def _route_archive_groups(manifest: ArchiveManifest, route_name: str) -> tuple[ArchiveGroup, ...]:
-    return tuple(group for group in manifest.archive_groups if group.route_name == route_name)
 
 
 def _put_worker_result[T](

@@ -136,34 +136,47 @@ def archive_manifest_payload(
     include_archive_days: bool = False,
     include_entries: bool = False,
     include_run_started_at_utc: bool = False,
+    include_details: bool = True,
 ) -> dict[str, JsonValue]:
     """Return the shared JSON-ready archive manifest summary."""
 
-    archive_groups = archive_group_payloads(manifest)
-    direct_entries = direct_entry_payloads(manifest)
-    skipped_objects = skipped_object_payloads(manifest)
+    raw_entries = object_list(attr(manifest, "entries"))
+    raw_groups = object_list(attr(manifest, "archive_groups"))
+    raw_skipped = object_list(attr(manifest, "skipped_objects"))
+    direct_count = sum(
+        1 for entry in raw_entries if string_or_none(attr(entry, "copy_mode")) == "direct"
+    )
     payload: dict[str, JsonValue] = {
         "target_day": manifest_target_day(manifest),
-        "archive_count": len(archive_groups),
-        "direct_copy_count": len(direct_entries),
-        "source_object_count": len(object_list(attr(manifest, "entries"))),
-        "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": [g["destination_archive_key"] for g in archive_groups],
-        "destination_keys": [
-            *(g["destination_archive_key"] for g in archive_groups),
-            *(e["destination_key"] for e in direct_entries),
-        ],
-        "archive_groups": json_list(archive_groups),
-        "direct_entries": json_list(direct_entries),
-        "skipped_objects": json_list(skipped_objects),
+        "archive_count": len(raw_groups),
+        "direct_copy_count": direct_count,
+        "source_object_count": len(raw_entries),
+        "skipped_object_count": len(raw_skipped),
     }
+    if include_details:
+        archive_groups = archive_group_payloads(manifest)
+        direct_entries = direct_entry_payloads(manifest)
+        skipped_objects = skipped_object_payloads(manifest)
+        payload.update(
+            {
+                "destination_archive_keys": [
+                    g["destination_archive_key"] for g in archive_groups
+                ],
+                "destination_keys": [
+                    *(g["destination_archive_key"] for g in archive_groups),
+                    *(e["destination_key"] for e in direct_entries),
+                ],
+                "archive_groups": json_list(archive_groups),
+                "direct_entries": json_list(direct_entries),
+                "skipped_objects": json_list(skipped_objects),
+            }
+        )
     if include_archive_days:
         payload["archive_days"] = cast(
-            JsonValue, sorted({str(g["target_day"]) for g in archive_groups})
+            JsonValue, sorted({date_text(attr(g, "target_day")) for g in raw_groups})
         )
     if include_entries:
-        entries = object_list(attr(manifest, "entries"))
-        payload["entries"] = json_list([manifest_entry_payload(e) for e in entries])
+        payload["entries"] = json_list([manifest_entry_payload(e) for e in raw_entries])
     if include_run_started_at_utc:
         payload["run_started_at_utc"] = datetime_text(attr(manifest, "run_started_at_utc"))
     return payload

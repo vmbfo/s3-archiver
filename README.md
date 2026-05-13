@@ -288,6 +288,10 @@ Do not schedule the same archive from GitHub Actions, host cron, systemd, and a 
 
 Timeout failures now surface explicitly with `field="ARCHIVER_RUN_TIMEOUT"`, `reason="archive_run_timeout"`, and `timed_out=true` in the archive JSON payload and structured error logs.
 
+Archive result payloads are compact by default for production-scale runs: they include counts,
+phase status, archive days, and route summaries, but omit per-object destination lists. Set
+`ARCHIVER_PAYLOAD_DETAIL=full` only for small debugging runs or the visual demo.
+
 ## Conventional Commits And Releases
 
 Commit messages must follow Conventional Commits. The commit-msg hook enforces this after `pre-commit` is installed.

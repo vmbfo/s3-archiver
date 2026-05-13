@@ -148,6 +148,7 @@ def _seed_run_and_verify(
     run_env = dict(context.compose_env)
     run_env["APP_ENV_FILE"] = str(context.app_env_file)
     run_env["ARCHIVER_CONFIG_JSON"] = context.config_json
+    run_env["ARCHIVER_PAYLOAD_DETAIL"] = "full"
     terminal.print_image_build_intro()
     build_result = run_demo_compose(run_env, "build", "app", check=False)
     if build_result.returncode != 0:
@@ -269,6 +270,8 @@ def _run_archive(env: dict[str, str], repo_root: Path) -> dict[str, JsonValue]:
         "--rm",
         "-e",
         "ARCHIVER_CONFIG_JSON",
+        "-e",
+        "ARCHIVER_PAYLOAD_DETAIL",
         "app",
         "archive",
         check=False,
