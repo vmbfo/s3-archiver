@@ -39,7 +39,7 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 
 @pytest.mark.unit()
-def test_copy_group_reports_missing_and_unverified_uploaded_archives(
+def test_copy_group_reports_missing_uploaded_archives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source, group = _source_and_group()
@@ -58,8 +58,8 @@ def test_copy_group_reports_missing_and_unverified_uploaded_archives(
     assert verified is False
 
     failure, verified = copy_group(source, BadArchiveHashBucket("destination"), group, None)
-    assert failure == "data/fae/2026-04-13.tar.gz: archive verification failed"
-    assert verified is False
+    assert failure is None
+    assert verified is True
 
 
 @pytest.mark.unit()

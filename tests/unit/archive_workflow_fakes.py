@@ -167,14 +167,20 @@ class FakeBucket:
     def versioning_state(self) -> VersioningState:
         return self._versioning_state
 
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterable[S3ListedObject]:
         assert versioning_state == self._versioning_state
-        return tuple(self._objects.values())
+        return tuple(item for item in self._objects.values() if item.key.startswith(prefix))
 
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
         if version_id is not None and (item := self._versions.get((key, version_id))) is not None:
             return item.properties
-        return self._destination.get(key)
+        if (destination := self._destination.get(key)) is not None:
+            return destination
+        if (source := self._objects.get(key)) is not None:
+            return source.properties
+        return None
 
     def content_sha256(self, key: str, version_id: str | None = None) -> str | None:
         self.content_sha256_calls.append((key, version_id))

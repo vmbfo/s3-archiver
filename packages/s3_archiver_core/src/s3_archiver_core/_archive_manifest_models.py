@@ -33,7 +33,9 @@ class SourceLister(Protocol):
         """Return the source bucket versioning state."""
         ...
 
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterable[S3ListedObject]:
         """List source objects for the given versioning state."""
         ...
 

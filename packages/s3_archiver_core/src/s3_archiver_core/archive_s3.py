@@ -47,12 +47,15 @@ class S3ArchiveBucket:
         response = self.client.get_bucket_versioning(Bucket=self.bucket)
         return parse_versioning_state(response.get("Status"))
 
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterator[S3ListedObject]:
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterator[S3ListedObject]:
         """List current source objects for the supplied versioning mode."""
+        normalized_prefix = _normalize_list_prefix(prefix)
         if versioning_state == "Disabled":
-            yield from self._list_unversioned()
+            yield from self._list_unversioned(normalized_prefix)
             return
-        yield from self._list_versioned()
+        yield from self._list_versioned(normalized_prefix)
 
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
         """Return S3 object properties, or None when the object is missing."""
@@ -172,10 +175,12 @@ class S3ArchiveBucket:
             self.temp_dir,
         )
 
-    def _list_unversioned(self) -> Iterator[S3ListedObject]:
+    def _list_unversioned(self, prefix: str) -> Iterator[S3ListedObject]:
         start_after: str | None = None
         while True:
             kwargs: dict[str, object] = {"Bucket": self.bucket, "MaxKeys": 1000}
+            if prefix:
+                kwargs["Prefix"] = prefix
             if start_after is not None:
                 kwargs["StartAfter"] = start_after
             page = self.client.list_objects_v2(**kwargs)
@@ -189,11 +194,13 @@ class S3ArchiveBucket:
                 raise RuntimeError("S3 list_objects_v2 returned a truncated empty page")
             start_after = last_key
 
-    def _list_versioned(self) -> Iterator[S3ListedObject]:
+    def _list_versioned(self, prefix: str) -> Iterator[S3ListedObject]:
         key_marker: str | None = None
         version_marker: str | None = None
         while True:
             kwargs: dict[str, object] = {"Bucket": self.bucket, "MaxKeys": 1000}
+            if prefix:
+                kwargs["Prefix"] = prefix
             if key_marker is not None:
                 kwargs["KeyMarker"] = key_marker
             if version_marker is not None:
@@ -214,5 +221,31 @@ class S3ArchiveBucket:
         size = required_int(item["Size"])
         last_modified = cast(datetime, item["LastModified"])
         etag = optional_string(item.get("ETag"))
-        properties = self._source_properties(key, version_id)
+        properties = _listed_properties(item, size, etag, last_modified)
         return S3ListedObject(key, size, last_modified, etag, version_id, properties)
+
+
+def _normalize_list_prefix(prefix: str) -> str:
+    stripped = prefix.strip("/")
+    return "" if stripped == "" else f"{stripped}/"
+
+
+def _listed_properties(
+    item: Mapping[str, object],
+    size: int,
+    etag: str | None,
+    last_modified: datetime,
+) -> S3ObjectProperties:
+    return S3ObjectProperties(
+        size=size,
+        etag=etag,
+        content_type=optional_string(item.get("ContentType")),
+        content_encoding=optional_string(item.get("ContentEncoding")),
+        content_language=optional_string(item.get("ContentLanguage")),
+        content_disposition=optional_string(item.get("ContentDisposition")),
+        cache_control=optional_string(item.get("CacheControl")),
+        expires=cast(datetime | None, item.get("Expires")),
+        metadata={},
+        tags={},
+        last_modified=last_modified,
+    )

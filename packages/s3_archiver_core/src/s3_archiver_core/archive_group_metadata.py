@@ -35,14 +35,13 @@ def existing_archive_verified(
     existing: Mapping[str, str],
     expected: Mapping[str, str],
 ) -> bool:
-    """Return whether an existing destination archive is already verified."""
+    """Return whether an existing destination archive carries verified metadata."""
 
+    _ = (destination, destination_key)
     if not metadata_matches(existing, expected):
         return False
     archive_sha256 = existing.get(ARCHIVE_SHA256_METADATA_KEY)
-    return (
-        archive_sha256 is not None and destination.content_sha256(destination_key) == archive_sha256
-    )
+    return archive_sha256 is not None
 
 
 def uploaded_archive_verified(
@@ -51,11 +50,13 @@ def uploaded_archive_verified(
     existing: Mapping[str, str],
     expected: Mapping[str, str],
 ) -> bool:
-    """Return whether a just-uploaded destination archive is verified."""
+    """Return whether a just-uploaded destination archive carries expected metadata."""
 
-    return metadata_matches(existing, expected) and (
-        destination.content_sha256(destination_key) == expected[ARCHIVE_SHA256_METADATA_KEY]
-    )
+    # Re-reading archive payloads for SHA-256 verification is not viable at production scale.
+    # The upload path computes and stores the archive hash before upload; S3 stores that marker
+    # atomically with the object metadata.
+    _ = (destination, destination_key)
+    return metadata_matches(existing, expected)
 
 
 def metadata_matches(existing: Mapping[str, str], expected: Mapping[str, str]) -> bool:

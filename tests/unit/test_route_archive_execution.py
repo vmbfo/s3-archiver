@@ -21,8 +21,11 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 class FailingListBucket(FakeBucket):
     @override
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterable[S3ListedObject]:
         _ = versioning_state
+        _ = prefix
         raise RuntimeError("list failed")
 
 

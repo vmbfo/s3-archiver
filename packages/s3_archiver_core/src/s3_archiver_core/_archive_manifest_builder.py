@@ -61,7 +61,7 @@ def build_archive_manifest(
     run_started = as_utc(run_started_at_utc)
     entries: list[ManifestEntry] = []
     skipped: list[SkippedObject] = []
-    for listed in source.list_source_objects(versioning_state):
+    for listed in source.list_source_objects(versioning_state, prefix=context.source_path):
         if context.source_path and not listed.key.startswith(context.source_path):
             continue
         selected = select_object(parser_kind, listed, context.source_path)

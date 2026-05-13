@@ -41,6 +41,17 @@ def test_s3_archive_bucket_lists_unversioned_pages() -> None:
     assert [item.key for item in listed] == ["a.txt", "b.txt"]
     assert client.list_v2_calls[0] == {"Bucket": "source", "MaxKeys": 1000}
     assert client.list_v2_calls[1]["StartAfter"] == "a.txt"
+    assert client.head_call == {}
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_lists_unversioned_prefix() -> None:
+    client = FakeArchiveClient()
+    bucket = S3ArchiveBucket(client, "source")
+
+    _ = tuple(bucket.list_source_objects("Disabled", prefix="data/raw"))
+
+    assert client.list_v2_calls[0]["Prefix"] == "data/raw/"
 
 
 @pytest.mark.unit()
@@ -57,6 +68,16 @@ def test_s3_archive_bucket_lists_current_versions_and_excludes_delete_markers() 
     ]
     assert client.version_calls[1]["KeyMarker"] == "k"
     assert client.version_calls[1]["VersionIdMarker"] == "v"
+
+
+@pytest.mark.unit()
+def test_s3_archive_bucket_lists_versioned_prefix() -> None:
+    client = FakeArchiveClient()
+    bucket = S3ArchiveBucket(client, "source")
+
+    _ = tuple(bucket.list_source_objects("Suspended", prefix="/data/raw/"))
+
+    assert client.version_calls[0]["Prefix"] == "data/raw/"
 
 
 @pytest.mark.unit()

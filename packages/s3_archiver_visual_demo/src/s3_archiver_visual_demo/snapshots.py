@@ -76,12 +76,16 @@ def _route_snapshot(
     source_state = route.source.versioning_state()
     destination_state = route.destination.versioning_state()
     source_objects = sorted(
-        _objects_under_prefix(route.source.list_source_objects(source_state), route.source_path),
+        _objects_under_prefix(
+            route.source.list_source_objects(source_state, prefix=route.source_path),
+            route.source_path,
+        ),
         key=_object_sort_key,
     )
     destination_objects = sorted(
         _objects_under_prefix(
-            route.destination.list_source_objects(destination_state), route.destination_path
+            route.destination.list_source_objects(destination_state, prefix=route.destination_path),
+            route.destination_path,
         ),
         key=_object_sort_key,
     )
