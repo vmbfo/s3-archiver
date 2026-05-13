@@ -4,12 +4,10 @@ from collections.abc import Iterable
 from datetime import datetime
 from itertools import chain
 
+from s3_archiver_core._archive_env import positive_int_env
 from s3_archiver_core._archive_identity import stable_identity_value
-from s3_archiver_core._archive_manifest_builder import (
-    archive_groups,
-    iter_archive_manifest_items,
-)
-from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
+from s3_archiver_core._archive_manifest_builder import iter_archive_manifest_items
+from s3_archiver_core._archive_manifest_groups import archive_groups
 from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
     ArchiveManifest,
@@ -22,15 +20,19 @@ from s3_archiver_core._archive_manifest_paths import (
     route_paths_overlap,
     storage_identity,
 )
+from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
+from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.s3 import VersioningState
 
 _SQLITE_MANIFEST_ENTRY_THRESHOLD = 100_000
+_DEFAULT_LIST_PROGRESS_ESTIMATE = 2_000_000
 
 
 def build_route_archive_manifest(
     routes: Iterable[ArchiveManifestRouteSpec],
     *,
     run_started_at_utc: datetime,
+    progress_logger: ProgressLogger | None = None,
 ) -> ArchiveManifest:
     """Build a deterministic global manifest for route-based archiving."""
 
@@ -40,6 +42,8 @@ def build_route_archive_manifest(
     entries: list[ManifestEntry] = []
     skipped: list[SkippedObject] = []
     store: SQLiteManifestStore | None = None
+    listed_count = 0
+    list_progress_total = _list_progress_total()
     for route in route_tuple:
         for item in iter_archive_manifest_items(
             route.source,
@@ -54,6 +58,9 @@ def build_route_archive_manifest(
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
         ):
+            listed_count += 1
+            if progress_logger is not None:
+                progress_logger(_list_progress(listed_count, list_progress_total))
             if store is None and len(entries) + len(skipped) >= _SQLITE_MANIFEST_ENTRY_THRESHOLD:
                 store = SQLiteManifestStore.temporary()
                 for entry in entries:
@@ -71,6 +78,8 @@ def build_route_archive_manifest(
                 skipped.append(item)
             else:
                 store.add_skipped(item)
+    if progress_logger is not None:
+        progress_logger(ArchiveProgress("list", listed_count, listed_count))
     if store is not None:
         store.commit()
         store.assert_no_duplicate_sources()
@@ -117,6 +126,14 @@ def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...
 
 def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
     return route.versioning_state or route.source.versioning_state()
+
+
+def _list_progress_total() -> int:
+    return positive_int_env("ARCHIVER_LIST_PROGRESS_ESTIMATE", _DEFAULT_LIST_PROGRESS_ESTIMATE)
+
+
+def _list_progress(completed: int, estimated_total: int) -> ArchiveProgress:
+    return ArchiveProgress("list", completed, max(estimated_total, completed + 1))
 
 
 def _reject_duplicate_sources(entries: tuple[ManifestEntry, ...]) -> None:

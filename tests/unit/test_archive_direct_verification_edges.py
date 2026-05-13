@@ -16,7 +16,10 @@ from tests.unit.archive_workflow_fakes import listed_object as _listed
 
 
 @pytest.mark.unit()
-def test_direct_copy_existing_destination_with_mismatched_content_fails() -> None:
+def test_direct_copy_existing_destination_with_matching_metadata_rejects_corrupt_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARCHIVER_DIRECT_CONTENT_VERIFY", "true")
     source, entry = _direct_manifest_objects()
     destination = FakeBucket(
         "archive",
@@ -34,9 +37,34 @@ def test_direct_copy_existing_destination_with_mismatched_content_fails() -> Non
         None,
     )
 
-    assert failure == "data/raw.txt: content mismatch"
+    assert failure == f"{entry.destination_key}: content mismatch"
     assert copied is False
     assert destination.copied == []
+
+
+@pytest.mark.unit()
+def test_direct_copy_existing_destination_skips_body_hashing_by_default() -> None:
+    source, entry = _direct_manifest_objects()
+    destination = FakeBucket(
+        "archive",
+        destination={
+            entry.destination_key: replace(
+                entry.object.properties, metadata=archive_metadata(entry)
+            )
+        },
+        payloads={entry.destination_key: b"corrupt"},
+    )
+
+    failure, copied = copy_direct_entry(
+        ArchiveRoute("direct", source, destination, parser_kind="direct", copy_mode="direct"),
+        entry,
+        None,
+    )
+
+    assert failure is None
+    assert copied is True
+    assert source.content_sha256_calls == []
+    assert destination.content_sha256_calls == []
 
 
 def _direct_manifest_objects() -> tuple[FakeBucket, ManifestEntry]:

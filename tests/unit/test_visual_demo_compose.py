@@ -286,14 +286,14 @@ def test_run_archive_invokes_app_archive_and_reads_payload(monkeypatch: pytest.M
         return subprocess.CompletedProcess(("docker",), 0, stdout='{"status":"ok"}\n', stderr="")
 
     monkeypatch.setattr(compose_module, "run_demo_compose", fake_run_demo_compose)
-
     result = compose_module.__dict__["_run_archive"]({"A": "B"}, Path.cwd())
 
     assert result == {"status": "ok"}
+    args = ("run", "--rm", "-e", "ARCHIVER_CONFIG_JSON")
     assert calls == [
         {
             "env": {"A": "B"},
-            "args": ("run", "--rm", "-e", "ARCHIVER_CONFIG_JSON", "app", "archive"),
+            "args": (*args, "-e", "ARCHIVER_PAYLOAD_DETAIL", "app", "archive"),
             "check": False,
             "repo_root": Path.cwd(),
         }

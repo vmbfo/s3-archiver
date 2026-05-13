@@ -276,8 +276,6 @@ def test_s3_archive_bucket_head_and_tag_failures_are_not_synthesized() -> None:
 
     client.head_error = client_error("404")
     assert bucket.head_object("missing.txt") is None
-    with pytest.raises(FileNotFoundError, match="listed source object disappeared"):
-        _ = tuple(bucket.list_source_objects("Disabled"))
 
     client.head_error = client_error("AccessDenied", 403)
     with pytest.raises(ClientError):

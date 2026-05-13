@@ -131,6 +131,7 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
         result: ArchiveRunResult,
         _settings: AppSettings,
         _log_file: Path,
+        **_kwargs: object,
     ) -> dict[str, object]:
         return {
             "status": status,

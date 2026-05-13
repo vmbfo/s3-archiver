@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -17,7 +16,6 @@ import typer
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult, run_archive
 from s3_archiver_core.archive_lock import FileArchiveRunLock
 from s3_archiver_core.archive_manifest import ManifestEntry
-from s3_archiver_core.archive_progress import ArchiveProgress
 from s3_archiver_core.archive_routes import archive_routes_from_settings
 from s3_archiver_core.errors import (
     ArchiveRunError,
@@ -37,6 +35,10 @@ from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import error_logging as _error_logging
 from s3_archiver_cli import scheduled_archive as _scheduled_archive
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
+from s3_archiver_cli.archive_progress_reporting import ArchiveProgressReporter
+from s3_archiver_cli.archive_progress_reporting import (
+    include_archive_payload_details as _include_archive_payload_details,
+)
 from s3_archiver_cli.env import load_runtime_env as _load_runtime_env
 
 type ReconcileArchiveLock = Callable[..., bool]
@@ -232,7 +234,7 @@ def _run_configured_archive(
     settings: AppSettings, routes: tuple[ArchiveRoute, ...], started: datetime
 ) -> ArchiveRunResult:
     debug_logger = _log_transfer_decision if settings.log_level == "DEBUG" else None
-    progress_logger = _ArchiveProgressReporter()
+    progress_logger = ArchiveProgressReporter()
     return run_archive(
         routes,
         run_timeout=settings.run_timeout,
@@ -261,73 +263,6 @@ def _log_transfer_decision(entry: ManifestEntry, strategy: str) -> None:
             "strategy": strategy,
         },
     )
-
-
-class _ArchiveProgressReporter:
-    def __init__(self) -> None:
-        self._logger = logging.getLogger("s3_archiver.archive")
-        self._started_by_phase: dict[str, float] = {}
-        self._last_percent_by_phase: dict[str, int] = {}
-
-    def __call__(self, progress: ArchiveProgress) -> None:
-        percent = progress.percent
-        last_percent = self._last_percent_by_phase.get(progress.phase)
-        if last_percent is not None and percent <= last_percent:
-            return
-        self._last_percent_by_phase[progress.phase] = percent
-        now = time.monotonic()
-        started = self._started_by_phase.setdefault(progress.phase, now)
-        elapsed_seconds = max(now - started, 0.0)
-        eta_seconds = _eta_seconds(progress, elapsed_seconds)
-        progress_bar = _progress_bar(percent)
-        _ = self._logger.info(
-            "archive progress %s %d%% %s eta=%s",
-            progress.phase,
-            percent,
-            progress_bar,
-            _format_duration(eta_seconds),
-            extra={
-                "event": "archive.progress",
-                "phase": progress.phase,
-                "completed_units": progress.completed,
-                "total_units": progress.total,
-                "percent": percent,
-                "progress_bar": progress_bar,
-                "elapsed_seconds": round(elapsed_seconds, 3),
-                "eta_seconds": eta_seconds,
-                "eta": _format_duration(eta_seconds),
-            },
-        )
-
-
-def _eta_seconds(progress: ArchiveProgress, elapsed_seconds: float) -> int | None:
-    if progress.total <= 0 or progress.completed >= progress.total:
-        return 0
-    if progress.completed <= 0 or elapsed_seconds <= 0:
-        return None
-    rate = progress.completed / elapsed_seconds
-    if rate <= 0:
-        return None
-    return max(int((progress.total - progress.completed) / rate), 0)
-
-
-def _progress_bar(percent: int) -> str:
-    width = 20
-    filled = min(max((percent * width) // 100, 0), width)
-    return f"[{'#' * filled}{'.' * (width - filled)}]"
-
-
-def _format_duration(seconds: int | None) -> str:
-    if seconds is None:
-        return "unknown"
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
-def _include_archive_payload_details() -> bool:
-    value = os.environ.get("ARCHIVER_PAYLOAD_DETAIL", "summary").strip().lower()
-    return value in {"1", "true", "full", "detailed"}
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:

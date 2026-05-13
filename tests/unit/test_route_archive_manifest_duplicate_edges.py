@@ -98,3 +98,36 @@ def test_route_manifest_rejects_duplicate_source_identities() -> None:
             ),
             run_started_at_utc=STARTED,
         )
+
+
+@pytest.mark.unit()
+def test_sqlite_route_manifest_rejects_direct_collision_with_first_archive_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import s3_archiver_core._archive_route_manifest as route_manifest_module
+
+    monkeypatch.setattr(route_manifest_module, "_SQLITE_MANIFEST_ENTRY_THRESHOLD", 0)
+    destination = FakeBucket("archive")
+
+    with pytest.raises(ValueError, match="duplicate destination object identity"):
+        _ = build_route_archive_manifest(
+            (
+                ArchiveManifestRoute(
+                    "direct",
+                    FakeBucket("direct", (_listed("archives/fae/2026-04-13.tar.gz", 1, None),)),
+                    destination,
+                    parser_kind="direct",
+                    copy_mode="direct",
+                ),
+                ArchiveManifestRoute(
+                    "daily",
+                    FakeBucket("daily", (_listed("data/fae/2026-04-13T00-00-00Z.xml", 1, None),)),
+                    destination,
+                    source_path="data/fae/",
+                    destination_path="archives/fae/",
+                    parser_kind="filename_timestamp",
+                    copy_mode="daily_tar_gz",
+                ),
+            ),
+            run_started_at_utc=STARTED,
+        )

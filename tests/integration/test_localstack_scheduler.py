@@ -248,11 +248,13 @@ def test_schedule_retries_after_timeout_on_next_tick(
 
 
 def _integration_env(tmp_path: Path, bucket_pair: LocalstackBucketPair) -> dict[str, str]:
-    return localstack_test_env(
+    env = localstack_test_env(
         bucket_pair,
         endpoint=os.environ.get("LOCALSTACK_S3_URL", LOCALSTACK_HOST_ENDPOINT),
         log_dir=str(tmp_path / "logs"),
     )
+    env["ARCHIVER_PAYLOAD_DETAIL"] = "full"
+    return env
 
 
 def _start_active_lock(lock_path: Path) -> subprocess.Popen[bytes]:
