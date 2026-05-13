@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from s3_archiver_core.archive import ArchivePhaseResult
 from s3_archiver_core.payload_utils import JsonScalar as JsonScalar
 from s3_archiver_core.payload_utils import (
     JsonValue,
     attr,
-    count_from_attr,
-    date_or_none,
     date_text,
     datetime_text,
     int_or_none,
@@ -28,24 +28,22 @@ def manifest_target_day(manifest: object) -> str:
     """Return the manifest target day as an ISO date string."""
 
     value = attr(manifest, "target_day")
-    if value is not None:
-        return date_text(value)
-    return ""
+    return date_text(value) if value is not None else ""
 
 
 def archive_group_payloads(manifest: object) -> list[dict[str, JsonValue]]:
     """Return archive group payloads."""
 
-    return [archive_group_payload(group) for group in object_list(attr(manifest, "archive_groups"))]
+    return [archive_group_payload(g) for g in object_list(attr(manifest, "archive_groups"))]
 
 
 def direct_entry_payloads(manifest: object) -> list[dict[str, JsonValue]]:
     """Return direct-copy destination payloads for flat manifest entries."""
 
     return [
-        direct_entry_payload(entry)
-        for entry in object_list(attr(manifest, "entries"))
-        if string_or_none(attr(entry, "copy_mode")) == "direct"
+        direct_entry_payload(e)
+        for e in object_list(attr(manifest, "entries"))
+        if string_or_none(attr(e, "copy_mode")) == "direct"
     ]
 
 
@@ -53,14 +51,15 @@ def archive_group_payload(group: object) -> dict[str, JsonValue]:
     """Return one archive group payload."""
 
     entries = object_list(attr(group, "entries"))
+    count = attr(group, "source_object_count")
     return {
         **_route_identity_fields(group, entries),
         "target_day": date_text(attr(group, "target_day")),
         "archive_root": string_or_none(attr(group, "archive_root")),
-        "destination_archive_key": group_destination_archive_key(group, entries),
-        "source_object_count": count_from_attr(group, "source_object_count", entries),
+        "destination_archive_key": _group_archive_key(group, entries),
+        "source_object_count": count if isinstance(count, int) else len(entries),
         "skipped_object_count": 0,
-        "source_objects": json_list([entry_reference_payload(entry) for entry in entries]),
+        "source_objects": json_list([entry_reference_payload(e) for e in entries]),
     }
 
 
@@ -91,10 +90,10 @@ def _route_identity_fields(
         "copy_mode": string_or_none(attr(obj, "copy_mode")),
         "source_bucket": string_or_none(attr(obj, "source_bucket")),
         "source_identity": string_or_none(attr(obj, "source_identity"))
-        or entry_value(fallback, "source_identity"),
+        or _entry_value(fallback, "source_identity"),
         "destination_bucket": string_or_none(attr(obj, "destination_bucket")),
         "destination_identity": string_or_none(attr(obj, "destination_identity"))
-        or entry_value(fallback, "destination_identity"),
+        or _entry_value(fallback, "destination_identity"),
     }
 
 
@@ -102,14 +101,15 @@ def skipped_object_payloads(manifest: object) -> list[dict[str, JsonValue]]:
     """Return skipped source object payloads."""
 
     skipped = attr(manifest, "skipped_objects")
-    if skipped is None:
-        return []
-    return [skipped_object_payload(item) for item in object_list(skipped)]
+    return (
+        [] if skipped is None else [skipped_object_payload(item) for item in object_list(skipped)]
+    )
 
 
 def skipped_object_payload(item: object) -> dict[str, JsonValue]:
     """Return one skipped object payload."""
 
+    target_day = attr(item, "target_day")
     return {
         "key": string_or_none(attr(item, "key")),
         "reason": string_or_none(attr(item, "reason")),
@@ -125,7 +125,7 @@ def skipped_object_payload(item: object) -> dict[str, JsonValue]:
         "destination_bucket": string_or_none(attr(item, "destination_bucket")),
         "source_identity": string_or_none(attr(item, "source_identity")),
         "destination_identity": string_or_none(attr(item, "destination_identity")),
-        "target_day": date_or_none(attr(item, "target_day")),
+        "target_day": None if target_day is None else date_text(target_day),
         "archive_root": string_or_none(attr(item, "archive_root")),
     }
 
@@ -142,25 +142,28 @@ def archive_manifest_payload(
     archive_groups = archive_group_payloads(manifest)
     direct_entries = direct_entry_payloads(manifest)
     skipped_objects = skipped_object_payloads(manifest)
-    archive_keys = destination_archive_keys(archive_groups)
-    all_destination_keys = destination_keys(archive_groups, direct_entries)
     payload: dict[str, JsonValue] = {
         "target_day": manifest_target_day(manifest),
         "archive_count": len(archive_groups),
         "direct_copy_count": len(direct_entries),
         "source_object_count": len(object_list(attr(manifest, "entries"))),
         "skipped_object_count": len(skipped_objects),
-        "destination_archive_keys": archive_keys,
-        "destination_keys": all_destination_keys,
+        "destination_archive_keys": [g["destination_archive_key"] for g in archive_groups],
+        "destination_keys": [
+            *(g["destination_archive_key"] for g in archive_groups),
+            *(e["destination_key"] for e in direct_entries),
+        ],
         "archive_groups": json_list(archive_groups),
         "direct_entries": json_list(direct_entries),
         "skipped_objects": json_list(skipped_objects),
     }
     if include_archive_days:
-        payload["archive_days"] = _archive_days_payload(archive_groups)
+        payload["archive_days"] = cast(
+            JsonValue, sorted({str(g["target_day"]) for g in archive_groups})
+        )
     if include_entries:
         entries = object_list(attr(manifest, "entries"))
-        payload["entries"] = json_list([manifest_entry_payload(entry) for entry in entries])
+        payload["entries"] = json_list([manifest_entry_payload(e) for e in entries])
     if include_run_started_at_utc:
         payload["run_started_at_utc"] = datetime_text(attr(manifest, "run_started_at_utc"))
     return payload
@@ -189,66 +192,33 @@ def entry_reference_payload(entry: object) -> dict[str, JsonValue]:
         "source_bucket": string_or_none(attr(entry, "source_bucket")),
         "destination_bucket": string_or_none(attr(entry, "destination_bucket")),
         "destination_key": string_or_none(attr(entry, "destination_key")),
-        "destination_archive_key": entry_archive_key_payload(entry),
+        "destination_archive_key": _entry_archive_key(entry),
         "source_identity": string_or_none(attr(entry, "source_identity")),
         "destination_identity": string_or_none(attr(entry, "destination_identity")),
     }
 
 
-def destination_archive_keys(groups: list[dict[str, JsonValue]]) -> list[JsonValue]:
-    """Return destination archive keys from group payloads."""
-
-    return [group["destination_archive_key"] for group in groups]
-
-
-def destination_keys(
-    groups: list[dict[str, JsonValue]],
-    direct_entries: list[dict[str, JsonValue]],
-) -> list[JsonValue]:
-    """Return all destination keys, including direct-copy objects."""
-
-    return [
-        *destination_archive_keys(groups),
-        *(entry["destination_key"] for entry in direct_entries),
-    ]
-
-
-def group_destination_archive_key(group: object, entries: list[object]) -> str:
-    """Return a group's destination archive key."""
-
+def _group_archive_key(group: object, entries: list[object]) -> str:
     value = attr(group, "destination_archive_key")
     if value is not None:
         return str(value)
-    return entry_destination_archive_key(entries[0]) if entries else ""
+    return _entry_destination_archive_key(entries[0]) if entries else ""
 
 
-def entry_destination_archive_key(entry: object) -> str:
-    """Return the destination archive key for a source entry."""
-
+def _entry_destination_archive_key(entry: object) -> str:
     value = attr(entry, "destination_archive_key")
     return str(value if value is not None else attr(entry, "key") or "")
 
 
-def entry_archive_key_payload(entry: object) -> str | None:
-    """Return archive-key payload data only for archive copy modes."""
-
+def _entry_archive_key(entry: object) -> str | None:
     if string_or_none(attr(entry, "copy_mode")) == "direct":
         return None
-    return entry_destination_archive_key(entry)
+    return _entry_destination_archive_key(entry)
 
 
-def entry_value(entries: list[object], name: str) -> str | None:
-    """Return a string payload value from the first entry that carries it."""
-
+def _entry_value(entries: list[object], name: str) -> str | None:
     for entry in entries:
         value = string_or_none(attr(entry, name))
         if value is not None:
             return value
     return None
-
-
-def _archive_days_payload(archive_groups: list[dict[str, JsonValue]]) -> list[JsonValue]:
-    archive_days: list[JsonValue] = []
-    for day in sorted({str(group["target_day"]) for group in archive_groups}):
-        archive_days.append(day)
-    return archive_days

@@ -22,7 +22,6 @@ from s3_archiver_core._archive_s3_helpers import (
     version_id,
     versioned_kwargs,
 )
-from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
 from s3_archiver_core.archive_transfer import TransferStrategy
 from s3_archiver_core.s3 import (
     S3_CHUNK_BYTES,
@@ -39,7 +38,7 @@ from s3_archiver_core.temp_files import default_temp_dir
 class S3ArchiveBucket:
     """Archive bucket adapter backed by an S3-compatible client."""
 
-    client: ArchiveS3Client
+    client: S3Client
     bucket: str
     temp_dir: Path = field(default_factory=default_temp_dir)
 
@@ -114,7 +113,7 @@ class S3ArchiveBucket:
     ) -> None:
         """Upload an archive file with deterministic metadata."""
         upload_s3_file(
-            cast(S3Client, self.client),
+            self.client,
             self.bucket,
             destination_key,
             archive_path,
@@ -160,8 +159,8 @@ class S3ArchiveBucket:
         if not isinstance(source, S3ArchiveBucket):
             raise TypeError("S3ArchiveBucket copy requires an S3ArchiveBucket source")
         copy_s3_object(
-            cast(S3Client, self.client),
-            cast(S3Client, source.client),
+            self.client,
+            source.client,
             source_bucket,
             source_key,
             source_version_id,

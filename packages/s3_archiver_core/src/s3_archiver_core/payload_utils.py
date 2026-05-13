@@ -35,13 +35,6 @@ def object_list(value: object | None) -> list[object]:
     return []
 
 
-def count_from_attr(source: object, name: str, fallback_items: list[object]) -> int:
-    """Return an integer count attribute or the fallback item count."""
-
-    value = attr(source, name)
-    return value if isinstance(value, int) else len(fallback_items)
-
-
 def date_text(value: object) -> str:
     """Render dates and datetimes as ISO date strings."""
 
@@ -50,12 +43,6 @@ def date_text(value: object) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
-
-
-def date_or_none(value: object | None) -> str | None:
-    """Render date-like values only when present."""
-
-    return None if value is None else date_text(value)
 
 
 def datetime_text(value: object | None) -> str | None:

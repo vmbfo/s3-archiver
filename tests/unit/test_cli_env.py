@@ -86,7 +86,7 @@ def test_check_command_prefers_process_env_over_env_file(
 
     assert result.exit_code == 0
     payload = _load_payload(result.stdout)
-    assert payload.get("bucket") == "bucket-from-process-env"
+    assert payload.get("source_bucket") == "bucket-from-process-env"
 
 
 @pytest.mark.unit()

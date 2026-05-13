@@ -116,6 +116,16 @@ class FakeArchiveClient:
     def delete_object(self, **kwargs: object) -> Mapping[str, object]:
         return self._record(self.delete_calls, kwargs, {})
 
+    def head_bucket(self, *, Bucket: str) -> object:  # noqa: N803
+        _ = Bucket
+        return {}
+
+    def list_buckets(self) -> Mapping[str, object]:
+        return {}
+
+    def put_bucket_versioning(self, **kwargs: object) -> Mapping[str, object]:
+        return self._record([], kwargs, {})
+
     def _record(
         self,
         calls: list[dict[str, object]],

@@ -73,9 +73,6 @@ class HealthReport:
 
         return {
             "status": self.status,
-            "provider": self.source_provider,
-            "bucket": self.source_bucket,
-            "endpoint_url": self.source_endpoint_url,
             "source_provider": self.source_provider,
             "source_bucket": self.source_bucket,
             "source_endpoint_url": self.source_endpoint_url,

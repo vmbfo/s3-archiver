@@ -7,7 +7,6 @@ from uuid import uuid4
 from s3_archiver_core._archive_copy import copy_phase as _copy_phase_impl
 from s3_archiver_core._archive_copy import verify_phase as _verify_phase_impl
 from s3_archiver_core._archive_protocols import ArchiveRunLock
-from s3_archiver_core._archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
     MANIFEST_SHA256_METADATA_KEY,
@@ -18,6 +17,7 @@ from s3_archiver_core.archive_manifest import (
     build_route_archive_manifest,
 )
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
+from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 
 __all__ = (
     "ARCHIVE_SHA256_METADATA_KEY",

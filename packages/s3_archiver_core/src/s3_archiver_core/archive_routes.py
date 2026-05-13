@@ -1,17 +1,42 @@
-"""Archive route construction helpers."""
+"""Archive route runtime models and construction helpers."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import KW_ONLY, dataclass, field
 from typing import cast
 
-from s3_archiver_core._archive_s3_protocols import ArchiveS3Client
-from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core._archive_manifest_models import CopyMode, ManifestEntry, ParserKind
+from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
-from s3_archiver_core.s3 import transfer_capabilities_for_locations
+from s3_archiver_core.s3 import (
+    S3Client,
+    S3TransferCapabilities,
+    VersioningState,
+    transfer_capabilities_for_locations,
+)
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
+DebugLogger = Callable[[ManifestEntry, str], None]
 BuildS3Client = Callable[[S3LocationSettings], object]
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRoute:
+    """Runtime source/destination pair for one configured archive route."""
+
+    name: str
+    source: ArchiveBucket
+    destination: ArchiveBucket
+    _: KW_ONLY
+    parser_kind: ParserKind
+    copy_mode: CopyMode
+    source_path: str = ""
+    destination_path: str = ""
+    versioning_state: VersioningState | None = None
+    source_identity: object | None = None
+    destination_identity: object | None = None
+    transfer_capabilities: S3TransferCapabilities = field(default_factory=S3TransferCapabilities)
 
 
 def archive_routes_from_settings(
@@ -23,12 +48,12 @@ def archive_routes_from_settings(
         ArchiveRoute(
             route.name,
             S3ArchiveBucket(
-                cast(ArchiveS3Client, build_client(route.source)),
+                cast(S3Client, build_client(route.source)),
                 route.source.bucket,
                 settings.temp_dir,
             ),
             S3ArchiveBucket(
-                cast(ArchiveS3Client, build_client(route.destination)),
+                cast(S3Client, build_client(route.destination)),
                 route.destination.bucket,
                 settings.temp_dir,
             ),
