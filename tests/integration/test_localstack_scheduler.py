@@ -15,19 +15,20 @@ import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 from s3_archiver_core.settings import AppSettings
-
-from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import json_objects, last_json_object
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import (
+from s3_archiver_localstack_support.objects import (
     listed_keys,
     localstack_s3_client,
     put_test_object,
     read_tar_gz_members_text,
 )
+
+from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 from tests.integration.scheduler_timeout_probe import timeout_probe_script
 
 
@@ -268,16 +269,11 @@ def _start_active_lock(lock_path: Path) -> subprocess.Popen[bytes]:
 
 
 def _last_json(output: str) -> dict[str, object]:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(dict[str, object], json.loads(json_line))
+    return last_json_object(output)
 
 
 def _json_payloads(output: str) -> list[dict[str, object]]:
-    return [
-        cast(dict[str, object], json.loads(line))
-        for line in output.splitlines()
-        if line.startswith("{")
-    ]
+    return json_objects(output)
 
 
 def _last_error_payload(output: str) -> SchedulerErrorPayload:

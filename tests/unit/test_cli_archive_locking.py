@@ -10,7 +10,6 @@ import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
@@ -47,19 +46,19 @@ def test_archive_command_wires_lock_recovery_logger(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "configure_logging", configure)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 

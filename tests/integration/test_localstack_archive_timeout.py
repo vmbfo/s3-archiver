@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import textwrap
@@ -13,13 +12,13 @@ import pytest
 import s3_archiver_cli.main as cli_module
 import s3_archiver_cli.scheduled_archive as scheduled_archive_module
 from s3_archiver_core.settings import AppSettings
-from typer.testing import CliRunner
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
+from typer.testing import CliRunner
 
 RUNNER = CliRunner()
 
@@ -95,8 +94,7 @@ def test_archive_command_times_out_without_late_child_mutation(
 
 
 def _last_json(output: str) -> dict[str, object]:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(dict[str, object], json.loads(json_line))
+    return last_json_object(output)
 
 
 def _last_error_payload(output: str) -> SchedulerErrorPayload:

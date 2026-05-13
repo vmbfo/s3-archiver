@@ -11,7 +11,7 @@ from s3_archiver_core.archive import group_metadata, run_archive
 from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.s3 import S3ObjectProperties, VersioningState
 
-from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes, daily_run_timeout
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -50,9 +50,8 @@ def test_rerun_rejects_existing_archive_with_stale_manifest_metadata() -> None:
     )
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -68,9 +67,8 @@ def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     destination = FakeBucket("destination")
     decisions: list[tuple[str, str]] = []
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
         debug_logger=lambda entry, strategy: decisions.append((entry.key, strategy)),
@@ -81,9 +79,8 @@ def test_run_archive_orders_phases_and_reuses_verified_archive() -> None:
     assert destination.copied == []
     assert decisions == [(key, "deterministic_tar_gzip")]
     reuse_result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -100,9 +97,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
     failing_destination.fail_copy = True
 
     copy_failed = run_archive(
-        source,
-        failing_destination,
-        daily_archive_options(),
+        archive_routes(source, failing_destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -112,9 +108,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
 
     bad_destination = FakeBucket("destination", destination={archive_key: _properties(size=10)})
     verify_failed = run_archive(
-        source,
-        bad_destination,
-        daily_archive_options(),
+        archive_routes(source, bad_destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -137,9 +132,8 @@ def test_copy_or_verify_failure_blocks_later_phases() -> None:
             return super().head_object(key, version_id)
 
     verify_missing = run_archive(
-        source,
-        MissingDuringVerify(),
-        daily_archive_options(),
+        archive_routes(source, MissingDuringVerify()),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -156,9 +150,8 @@ def test_archive_upload_failure_keeps_archive_key_for_reporting() -> None:
     destination.fail_copy = True
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -174,9 +167,8 @@ def test_run_archive_timeout_blocks_later_phases() -> None:
     destination = FakeBucket("destination")
 
     timed_out = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=started,
         clock=lambda: started + timedelta(days=8),
     )
@@ -193,9 +185,8 @@ def test_list_failure_blocks_archive_phases() -> None:
             raise RuntimeError("source.txt: list failed")
 
     result = run_archive(
-        BrokenListBucket("source"),
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(BrokenListBucket("source"), FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -214,9 +205,8 @@ def test_archive_accepts_source_last_modified_changes_after_listing() -> None:
     source = FakeBucket("source", (listed,))
 
     result = run_archive(
-        source,
-        FakeBucket("destination"),
-        daily_archive_options(),
+        archive_routes(source, FakeBucket("destination")),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )
@@ -231,9 +221,8 @@ def test_key_only_archive_succeeds_when_current_source_still_matches() -> None:
     destination = FakeBucket("destination")
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=_clock,
     )

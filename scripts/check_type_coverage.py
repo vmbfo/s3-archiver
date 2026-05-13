@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce a 100% pyright verifytypes score for both packages."""
+"""Enforce a 100% pyright verifytypes score for typed packages."""
 
 from __future__ import annotations
 
@@ -7,7 +7,12 @@ import re
 import subprocess
 import sys
 
-_PACKAGES = ("s3_archiver_core", "s3_archiver_cli")
+_PACKAGES = (
+    "s3_archiver_core",
+    "s3_archiver_cli",
+    "s3_archiver_localstack_support",
+    "s3_archiver_visual_demo",
+)
 _TYPE_COMPLETENESS_TARGET = "Type completeness score: 100%"
 _WARNING_COUNT_PATTERN = re.compile(r"^\s{2}[^:]+:\s+([1-9]\d*)$")
 

@@ -59,19 +59,19 @@ def test_run_archive_keeps_matching_run_id_and_releases_lock(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: object,
         *,
+        run_timeout: object,
         run_started_at_utc: datetime,
         debug_logger: object | None = None,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, debug_logger)
+        _ = (routes, run_timeout, run_started_at_utc, debug_logger)
         return _archive_result(run_id="locked-run")
 
     monkeypatch.setattr(cli_module, "uuid4", lambda: FixedUuid())
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     payload = _run_archive(settings, Path("/tmp/log"))
 
@@ -109,12 +109,12 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: object,
         *,
+        run_timeout: object,
         run_started_at_utc: datetime,
         debug_logger: object | None = None,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, debug_logger)
+        _ = (routes, run_timeout, run_started_at_utc, debug_logger)
         result = _archive_result(run_id="core-run")
         return ArchiveRunResult(
             result.run_id,
@@ -139,7 +139,7 @@ def test_run_archive_preserves_group_state_when_rewriting_run_id(
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecordingLock)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
     monkeypatch.setattr(error_logging, "archive_result_payload", archive_result_payload)
 
     payload = _run_archive(settings, Path("/tmp/log"))

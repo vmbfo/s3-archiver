@@ -4,11 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import cast
+from typing import Protocol, cast
 
 from botocore.exceptions import ClientError
 
-from s3_archiver_core.s3 import S3ObjectProperties, checksums_from_head_fields
+from s3_archiver_core.s3 import S3ObjectProperties, VersioningState, checksums_from_head_fields
+
+
+class ReadableBody(Protocol):
+    """Readable streaming body returned by S3 get-object calls."""
+
+    def read(self, amt: int = -1) -> bytes:
+        """Read up to ``amt`` bytes."""
+        ...
+
+    def close(self) -> None:
+        """Close the body when supported."""
+        ...
 
 
 def versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, object]:
@@ -16,6 +28,27 @@ def versioned_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str,
     if version_id is not None:
         kwargs["VersionId"] = version_id
     return kwargs
+
+
+def copy_source_kwargs(bucket: str, key: str, version_id: str | None) -> dict[str, str]:
+    source = {"Bucket": bucket, "Key": key}
+    if version_id is not None:
+        source["VersionId"] = version_id
+    return source
+
+
+def close_body(body: ReadableBody) -> None:
+    close = getattr(body, "close", None)
+    if callable(close):
+        _ = close()
+
+
+def parse_versioning_state(status: object) -> VersioningState:
+    if status == "Enabled":
+        return "Enabled"
+    if status == "Suspended":
+        return "Suspended"
+    return "Disabled"
 
 
 def properties_from_head(head: Mapping[str, object], tags: Mapping[str, str]) -> S3ObjectProperties:

@@ -2,38 +2,23 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
 import textwrap
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import TypedDict, cast
 
 import pytest
-from s3_archiver_core.s3 import S3Client
-
-from tests.e2e.compose_helpers import run_compose
-from tests.integration.localstack_harness import (
-    LOCALSTACK_COMPOSE_ENDPOINT,
-    LOCALSTACK_HOST_ENDPOINT,
-    LocalstackBucketPair,
-    compose_runtime_log_dir,
-    localstack_test_env,
-)
-from tests.integration.localstack_object_helpers import (
+from s3_archiver_localstack_support import last_json_object
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
+from s3_archiver_localstack_support.objects import (
     listed_keys,
-    localstack_s3_client,
     read_tar_gz_members_text,
 )
 
-_COMPOSE_RETRYABLE_MESSAGES = (
-    "HeadBucket operation: Not Found",
-    "Connection was closed before we received a valid response",
-    'optional dependency "localstack" failed to start',
-    "exited (137)",
-    "unable to upgrade to tcp, received 404",
-    "app is missing dependency localstack",
+from tests.e2e.archive_compose_support import (
+    compose_archive_client,
+    run_archive_compose,
+    write_archive_env_file,
 )
-_COMPOSE_RETRYABLE_RETURNCODES = (137,)
 
 
 class TempFileProbePayload(TypedDict):
@@ -51,7 +36,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     bucket_pair = localstack_bucket_pair
     key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
     archive_key = "compose-temp-file/2099-11-02.tar.gz"
-    env_file = _write_archive_env_file(tmp_path, bucket_pair)
+    env_file = write_archive_env_file(tmp_path, bucket_pair)
     run_env = dict(compose_env)
     run_env["APP_ENV_FILE"] = str(env_file)
     probe = textwrap.dedent(
@@ -60,13 +45,11 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         import json
         import os
         import sys
-        from dataclasses import replace
         from datetime import UTC, datetime
         from pathlib import Path
 
         from botocore.exceptions import ClientError
-        from s3_archiver_core.archive import run_archive
-        from s3_archiver_core.archive_options import ArchiveOptions
+        from s3_archiver_core.archive import ArchiveRoute, run_archive
         from s3_archiver_core.archive_s3 import S3ArchiveBucket
         from s3_archiver_core.s3 import S3TransferCapabilities, build_s3_client
         from s3_archiver_core.settings import AppSettings
@@ -75,12 +58,12 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         temp_dir = Path("/tmp/s3-archiver-compose-temp-file")
         key = "compose-temp-file/2099-11-02T00-00-00-runtime.txt"
         decisions = []
-        source_client = build_s3_client(settings.source)
-        destination_client = build_s3_client(settings.destination)
+        source_client = build_s3_client(settings.routes[0].source)
+        destination_client = build_s3_client(settings.routes[0].destination)
 
         for client, bucket in (
-            (source_client, settings.source.bucket),
-            (destination_client, settings.destination.bucket),
+            (source_client, settings.routes[0].source.bucket),
+            (destination_client, settings.routes[0].destination.bucket),
         ):
             try:
                 client.create_bucket(Bucket=bucket)
@@ -89,25 +72,36 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
                 if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
                     raise
 
-        source_client.put_object(Bucket=settings.source.bucket, Key=key, Body=b"probe\\n")
+        source_client.put_object(Bucket=settings.routes[0].source.bucket, Key=key, Body=b"probe\\n")
         destination = S3ArchiveBucket(
             destination_client,
-            settings.destination.bucket,
+            settings.routes[0].destination.bucket,
             temp_dir,
         )
+        route = settings.routes[0]
+        source = S3ArchiveBucket(source_client, settings.routes[0].source.bucket, temp_dir)
         result = run_archive(
-            S3ArchiveBucket(source_client, settings.source.bucket, temp_dir),
-            destination,
-            replace(
-                ArchiveOptions.from_settings(settings),
-                transfer_capabilities=S3TransferCapabilities(
+            (
+                ArchiveRoute(
+                    route.name,
+                    source,
+                    destination,
+                    parser_kind=route.parser.value,
+                    copy_mode=route.copy_mode.value,
+                    source_path=route.source.path,
+                    destination_path=route.destination.path,
+                    source_identity=route.source.storage_identity(),
+                    destination_identity=route.destination.storage_identity(),
+                    transfer_capabilities=S3TransferCapabilities(
                     native_copy=False,
                     multipart_copy=False,
                     streaming_upload=True,
                     temp_file_backed=True,
                     streaming_limit_bytes=1,
                 ),
+                ),
             ),
+            run_timeout=settings.run_timeout,
             run_started_at_utc=datetime(2100, 1, 1, tzinfo=UTC),
             debug_logger=lambda _entry, strategy: decisions.append(strategy),
         )
@@ -130,7 +124,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
         """
     ).strip()
 
-    result = _run_compose(
+    result = run_archive_compose(
         run_env,
         "run",
         "--no-deps",
@@ -146,58 +140,14 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     assert payload["ok"] is True
     assert payload["strategy"] == "deterministic_tar_gzip"
     assert payload["temp_dir_files"] == []
-    assert listed_keys(_client(tmp_path, bucket_pair, "destination"), bucket_pair.destination) == {
-        archive_key
-    }
+    destination_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "destination")
+    assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
     assert read_tar_gz_members_text(
-        _client(tmp_path, bucket_pair, "destination"),
+        destination_client,
         bucket_pair.destination,
         archive_key,
     ) == {key: "probe\n"}
 
 
-def _write_archive_env_file(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-) -> Path:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
-        log_dir=compose_runtime_log_dir(bucket_pair),
-    )
-    env_file = tmp_path / "compose-coverage.env"
-    _ = env_file.write_text(
-        "".join(f"{key}={value}\n" for key, value in sorted(env.items())),
-        encoding="utf-8",
-    )
-    return env_file
-
-
-def _client(
-    tmp_path: Path,
-    bucket_pair: LocalstackBucketPair,
-    side: Literal["source", "destination"],
-) -> S3Client:
-    env = localstack_test_env(
-        bucket_pair,
-        endpoint=LOCALSTACK_HOST_ENDPOINT,
-        log_dir=str(tmp_path / "host-logs"),
-    )
-    return localstack_s3_client(env, side)
-
-
-def _run_compose(
-    env: dict[str, str], *args: str, check: bool = True
-) -> subprocess.CompletedProcess[str]:
-    return run_compose(
-        env,
-        *args,
-        check=check,
-        retryable_messages=_COMPOSE_RETRYABLE_MESSAGES,
-        retryable_returncodes=_COMPOSE_RETRYABLE_RETURNCODES,
-    )
-
-
 def _temp_file_payload(output: str) -> TempFileProbePayload:
-    json_line = next(line for line in reversed(output.splitlines()) if line.startswith("{"))
-    return cast(TempFileProbePayload, json.loads(json_line))
+    return cast(TempFileProbePayload, cast(object, last_json_object(output)))

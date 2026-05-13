@@ -70,7 +70,7 @@ repos:
 
       - id: build
         name: build
-        entry: bash -lc 'uv build --package s3-archiver-core && uv build --package s3-archiver-cli'
+        entry: bash -lc 'uv build --package s3-archiver-core && uv build --package s3-archiver-cli && uv build --package s3-archiver-localstack-support && uv build --package s3-archiver-visual-demo'
         language: system
         pass_filenames: false
         stages: [pre-push]

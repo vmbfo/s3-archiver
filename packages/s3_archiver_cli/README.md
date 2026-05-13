@@ -7,7 +7,6 @@ Typer-based CLI package for the `s3-archiver` entrypoint.
 - `s3-archiver check`: load configuration, validate all routes, and verify source and destination bucket access.
 - `s3-archiver archive`: run one archive invocation for every configured route.
 - `s3-archiver schedule`: run the built-in once-per-day UTC scheduler loop.
-- `s3-archiver demo`: run the compose-backed visual demo workflow.
 
 ## Runtime Environment
 

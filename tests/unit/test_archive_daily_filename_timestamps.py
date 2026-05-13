@@ -17,7 +17,7 @@ from s3_archiver_core.archive import (
 from s3_archiver_core.archive_manifest import build_archive_manifest
 from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 
-from tests.unit.archive_workflow_fakes import FakeBucket, daily_archive_options
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes, daily_run_timeout
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -183,9 +183,8 @@ def test_run_archive_uploads_deterministic_tar_with_manifest_metadata() -> None:
     destination = FakeBucket("destination")
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -236,9 +235,8 @@ def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> No
     )
 
     result = run_archive(
-        source,
-        matching,
-        daily_archive_options(),
+        archive_routes(source, matching),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -252,9 +250,8 @@ def test_existing_archive_matching_manifest_is_reused_and_mismatch_fails() -> No
         },
     )
     failed = run_archive(
-        source,
-        mismatched,
-        daily_archive_options(),
+        archive_routes(source, mismatched),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -273,9 +270,8 @@ def test_archive_does_not_delete_manifest_versions() -> None:
     destination = FakeBucket("destination")
 
     result = run_archive(
-        source,
-        destination,
-        daily_archive_options(),
+        archive_routes(source, destination),
+        run_timeout=daily_run_timeout(),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )

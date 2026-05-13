@@ -10,7 +10,7 @@ from typing import Literal, Protocol, cast
 from boto3.session import Session
 from botocore.config import Config
 
-from s3_archiver_core.settings import AppSettings, S3LocationSettings
+from s3_archiver_core.settings import S3LocationSettings
 
 
 class S3Client(Protocol):
@@ -86,6 +86,12 @@ class S3Client(Protocol):
 
 
 VersioningState = Literal["Disabled", "Enabled", "Suspended"]
+TransferStrategy = Literal[
+    "simple_native_copy",
+    "multipart_native_copy",
+    "multipart_streaming",
+    "temp_file_backed",
+]
 S3_CHUNK_BYTES = 8 * 1024 * 1024
 DEFAULT_SIMPLE_COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
 DEFAULT_STREAMING_LIMIT_BYTES = 50 * 1024 * 1024 * 1024
@@ -141,16 +147,7 @@ class S3TransferCapabilities:
     streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
 
 
-@dataclass(frozen=True, slots=True)
-class S3ProviderTransferProfile:
-    """Provider-level transfer primitives and thresholds."""
-
-    native_copy: bool = True
-    multipart_copy: bool = True
-    streaming_upload: bool = True
-    temp_file_backed: bool = True
-    simple_copy_limit_bytes: int = DEFAULT_SIMPLE_COPY_LIMIT_BYTES
-    streaming_limit_bytes: int = DEFAULT_STREAMING_LIMIT_BYTES
+S3ProviderTransferProfile = S3TransferCapabilities
 
 
 _TRANSFER_PROFILES: Mapping[str, S3ProviderTransferProfile] = {
@@ -169,10 +166,9 @@ class S3ClientFactory(Protocol):
         ...
 
 
-def build_s3_client(settings: AppSettings | S3LocationSettings) -> S3Client:
+def build_s3_client(location: S3LocationSettings) -> S3Client:
     """Create a configured S3 client for one S3 location."""
 
-    location = settings.source if isinstance(settings, AppSettings) else settings
     session = Session(
         aws_access_key_id=location.access_key_id,
         aws_secret_access_key=location.secret_access_key,
@@ -218,8 +214,12 @@ def transfer_capabilities_for_locations(
     source_profile = transfer_profile_for_location(source)
     destination_profile = transfer_profile_for_location(destination)
     same_native_backend = _native_copy_backend_matches(source, destination)
+    same_native_credentials = _native_copy_credentials_match(source, destination)
     native_copy = (
-        same_native_backend and source_profile.native_copy and destination_profile.native_copy
+        same_native_backend
+        and same_native_credentials
+        and source_profile.native_copy
+        and destination_profile.native_copy
     )
     return S3TransferCapabilities(
         native_copy=native_copy,
@@ -259,6 +259,16 @@ def _native_copy_backend_matches(
         and source_identity.endpoint_url == destination_identity.endpoint_url
         and source_identity.region == destination_identity.region
         and source_identity.namespace == destination_identity.namespace
+    )
+
+
+def _native_copy_credentials_match(
+    source: S3LocationSettings,
+    destination: S3LocationSettings,
+) -> bool:
+    return (
+        source.access_key_id == destination.access_key_id
+        and source.secret_access_key == destination.secret_access_key
     )
 
 

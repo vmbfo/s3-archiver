@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import cast, override
+from typing import override
 
 import pytest
-from s3_archiver_core import archive as archive_module
+from s3_archiver_core._archive_copy import copy_group
 from s3_archiver_core.archive_fingerprint import (
     archive_metadata,
     fingerprint_from_metadata,
@@ -27,7 +27,6 @@ from s3_archiver_core.archive_transfer import (
     verify_destination_checksum,
     verify_destination_content,
 )
-from s3_archiver_core.archive_workers import run_archive_group_workers, run_archive_workers
 from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
 from s3_archiver_core.s3 import S3ObjectProperties
 
@@ -44,7 +43,6 @@ def test_copy_group_reports_missing_and_unverified_uploaded_archives(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source, group = _source_and_group()
-    copy_group = _copy_group_func()
 
     def fail_named_tempfile(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("temp unavailable")
@@ -196,29 +194,6 @@ def test_s3_archive_bucket_read_source_bytes_reads_and_closes_stream() -> None:
     assert client.get_call == {"Bucket": "source", "Key": "key", "VersionId": "v1"}
 
 
-@pytest.mark.unit()
-def test_archive_workers_report_group_and_entry_worker_exceptions() -> None:
-    _source, group = _source_and_group()
-
-    group_failures = run_archive_group_workers(
-        (group,),
-        1,
-        lambda _group: _raise("group boom"),
-        lambda: False,
-        lambda: 1.0,
-    )
-    entry_failures = run_archive_workers(
-        group.entries,
-        1,
-        lambda _entry: _raise("entry boom"),
-        lambda: False,
-        lambda: 1.0,
-    )
-
-    assert group_failures == ("data/fae/2026-04-13.tar.gz: group boom",)
-    assert entry_failures == ("data/fae/2026-04-13T00-00-00Z.txt: entry boom",)
-
-
 class MissingAfterUploadBucket(FakeBucket):
     @override
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
@@ -266,24 +241,3 @@ def _entry_with_properties(
 def _props(_version_id: str | None) -> S3ObjectProperties:
     _ = _version_id
     return _properties(checksum_type="FULL_OBJECT")
-
-
-def _copy_group_func() -> Callable[
-    [FakeBucket, FakeBucket, ArchiveGroup, object | None],
-    tuple[str | None, bool],
-]:
-    return cast(
-        Callable[
-            [FakeBucket, FakeBucket, ArchiveGroup, object | None],
-            tuple[str | None, bool],
-        ],
-        _private_attr(archive_module, "_copy_group"),
-    )
-
-
-def _raise(message: str) -> str:
-    raise RuntimeError(message)
-
-
-def _private_attr(module: object, name: str) -> object:
-    return cast(object, getattr(module, name))

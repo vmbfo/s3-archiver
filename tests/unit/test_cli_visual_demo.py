@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import cast, override
 
 import pytest
-import s3_archiver_cli.visual_demo as demo_module
+import s3_archiver_visual_demo.walkthrough as demo_module
 from s3_archiver_core.archive import ArchiveRoute
+from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.s3 import S3ListedObject
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 
@@ -24,7 +25,7 @@ def _demo_settings(base_env: dict[str, str], tmp_path: Path) -> AppSettings:
     return replace(settings, temp_dir=tmp_path / "runtime-temp")
 
 
-def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:
+def _ok_archive_payload() -> dict[str, JsonValue]:
     return {
         "status": "ok",
         "phases": {
@@ -36,7 +37,7 @@ def _ok_archive_payload() -> dict[str, demo_module.JsonValue]:
 
 
 class FakeReport:
-    def as_dict(self) -> dict[str, demo_module.JsonValue]:
+    def as_dict(self) -> dict[str, JsonValue]:
         return {"status": "ok", "checked_at": "2026-04-24T12:00:00+00:00"}
 
 
@@ -48,15 +49,15 @@ def test_run_visual_demo_reports_bucket_story(
 ) -> None:
     settings = _demo_settings(base_env, tmp_path)
     source = FakeBucket(
-        settings.source.bucket,
+        settings.routes[0].source.bucket,
         (
             _listed("demo/2024-02-20T00-00-00.txt", 61),
             _listed("demo/2024-04-21T00-00-00.txt", 1),
         ),
     )
-    destination = SnapshotBucket(settings.destination.bucket)
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
-    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, JsonValue]:
         archived = _listed("demo/2024-02-20T00-00-00.txt", 61)
         metadata = {
             "s3-archiver-source-fingerprint": (
@@ -100,7 +101,7 @@ def test_run_visual_demo_reports_bucket_story(
 
     assert summary["status"] == "ok"
     manifest = cast(dict[str, object], summary["archive_manifest"])
-    assert manifest["object_count"] == 1
+    assert manifest["source_object_count"] == 1
     snapshots = cast(dict[str, object], summary["snapshots"])
     before_archive = cast(dict[str, object], snapshots["before_archive"])
     after_archive = cast(dict[str, object], snapshots["after_archive"])
@@ -126,10 +127,10 @@ def test_run_visual_demo_uses_default_utc_clock(
             _ = tz
             return datetime(2024, 4, 20, tzinfo=UTC)
 
-    source = FakeBucket(settings.source.bucket, (_listed("demo/old.txt", 61),))
-    destination = SnapshotBucket(settings.destination.bucket)
+    source = FakeBucket(settings.routes[0].source.bucket, (_listed("demo/old.txt", 61),))
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
-    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, JsonValue]:
         return _ok_archive_payload()
 
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:
@@ -170,10 +171,10 @@ def test_run_visual_demo_reports_direct_entries(
     tmp_path: Path,
 ) -> None:
     settings = _demo_settings(base_env, tmp_path)
-    source = FakeBucket(settings.source.bucket, (_listed("raw/live.txt", 1),))
-    destination = SnapshotBucket(settings.destination.bucket)
+    source = FakeBucket(settings.routes[0].source.bucket, (_listed("raw/live.txt", 1),))
+    destination = SnapshotBucket(settings.routes[0].destination.bucket)
 
-    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, demo_module.JsonValue]:
+    def archive_runner(_settings: AppSettings, _log_file: Path) -> dict[str, JsonValue]:
         return _ok_archive_payload()
 
     def fake_health_check(_settings: AppSettings, _log_file: Path) -> FakeReport:

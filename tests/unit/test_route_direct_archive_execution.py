@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import override
 
 import pytest
-from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions, ArchiveRouteOptions
+from s3_archiver_core.archive import ArchiveRoute, run_archive
 from s3_archiver_core.archive_transfer import (
     FINGERPRINT_METADATA_KEY,
     fingerprint_from_metadata,
@@ -16,7 +15,7 @@ from s3_archiver_core.archive_transfer import (
     verify_destination_checksum,
 )
 
-from tests.unit.archive_workflow_fakes import FakeBucket
+from tests.unit.archive_workflow_fakes import FakeBucket, archive_routes
 from tests.unit.archive_workflow_fakes import listed_object as _listed
 from tests.unit.archive_workflow_fakes import object_properties as _properties
 
@@ -47,9 +46,8 @@ def test_run_archive_direct_copy_mode_copies_and_verifies() -> None:
     destination = FakeBucket("archive")
 
     result = run_archive(
-        source,
-        destination,
-        _direct_options(destination_path="mirror/"),
+        _direct_routes(source, destination, destination_path="mirror/"),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -67,9 +65,8 @@ def test_run_archive_direct_copy_mode_rechecks_content_in_verify_phase() -> None
     destination = CorruptAfterCopyVerificationBucket("archive")
 
     result = run_archive(
-        source,
-        destination,
-        _direct_options(),
+        _direct_routes(source, destination),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -90,9 +87,8 @@ def test_run_archive_direct_copy_mode_skips_future_last_modified_before_copy() -
     destination = FakeBucket("archive")
 
     result = run_archive(
-        source,
-        destination,
-        _direct_options(),
+        _direct_routes(source, destination),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -135,9 +131,8 @@ def test_direct_copy_preserves_object_properties_for_manifest_and_verification()
     destination = FakeBucket("archive")
 
     result = run_archive(
-        source,
-        destination,
-        _direct_options(destination_path="mirror/"),
+        _direct_routes(source, destination, destination_path="mirror/"),
+        run_timeout=timedelta(days=7),
         run_started_at_utc=STARTED,
         clock=lambda: STARTED,
     )
@@ -177,14 +172,13 @@ def test_direct_copy_preserves_object_properties_for_manifest_and_verification()
     } == properties.metadata
 
 
-def _direct_options(*, destination_path: str = "") -> ArchiveOptions:
-    return ArchiveOptions(
-        routes=(
-            ArchiveRouteOptions(
-                "default",
-                destination_path=destination_path,
-                parser_kind="direct",
-                copy_mode="direct",
-            ),
-        ),
+def _direct_routes(
+    source: FakeBucket, destination: FakeBucket, *, destination_path: str = ""
+) -> tuple[ArchiveRoute, ...]:
+    return archive_routes(
+        source,
+        destination,
+        destination_path=destination_path,
+        parser_kind="direct",
+        copy_mode="direct",
     )

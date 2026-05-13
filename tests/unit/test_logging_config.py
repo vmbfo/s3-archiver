@@ -36,7 +36,9 @@ def test_configure_logging_adds_stdout_and_file_handlers(
         handler for handler in handlers if isinstance(handler, TimedRotatingFileHandler)
     ]
     logger = logging.getLogger("s3_archiver.test")
-    _ = logger.info("hello world", extra={"event": "unit.log", "bucket": settings.bucket})
+    _ = logger.info(
+        "hello world", extra={"event": "unit.log", "bucket": settings.routes[0].source.bucket}
+    )
 
     assert log_file.exists()
     assert (
@@ -55,7 +57,7 @@ def test_configure_logging_adds_stdout_and_file_handlers(
     payload = _log_records(log_file)[-1]
     assert payload["message"] == "hello world"
     assert payload["event"] == "unit.log"
-    assert payload["bucket"] == settings.bucket
+    assert payload["bucket"] == settings.routes[0].source.bucket
     assert payload["correlation_id"] is None
     assert payload["trace_id"] is None
     assert payload["span_id"] is None

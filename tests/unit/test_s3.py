@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
 
@@ -11,8 +10,6 @@ import pytest
 import s3_archiver_core.s3 as s3_module
 from botocore.response import StreamingBody
 from s3_archiver_core.settings import AppSettings, S3AddressingStyle, S3LocationSettings, S3Provider
-
-from tests.unit.settings_fakes import dual_env
 
 
 class FakeS3Client:
@@ -115,7 +112,7 @@ def test_build_s3_client_wires_derived_oci_endpoint(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    client = s3_module.build_s3_client(settings)
+    client = s3_module.build_s3_client(settings.routes[0].source)
 
     session = sessions[0]
     config = cast(RecordingConfig, session.client_call["config"])
@@ -126,7 +123,7 @@ def test_build_s3_client_wires_derived_oci_endpoint(
         "region_name": "eu-frankfurt-1",
     }
     assert session.client_call["service_name"] == "s3"
-    assert session.client_call["endpoint_url"] == settings.resolved_endpoint_url()
+    assert session.client_call["endpoint_url"] == settings.routes[0].source.resolved_endpoint_url()
     assert config.signature_version == "s3v4"
     assert config.s3 == {"addressing_style": "path"}
 
@@ -176,7 +173,7 @@ def test_build_s3_client_honors_endpoint_override_and_addressing_style(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    _ = s3_module.build_s3_client(settings)
+    _ = s3_module.build_s3_client(settings.routes[0].source)
 
     session = sessions[0]
     config = cast(RecordingConfig, session.client_call["config"])
@@ -213,7 +210,7 @@ def test_build_s3_client_uses_short_localstack_timeouts(
     monkeypatch.setattr(s3_module, "Session", fake_session)
     monkeypatch.setattr(s3_module, "Config", RecordingConfig)
 
-    _ = s3_module.build_s3_client(settings)
+    _ = s3_module.build_s3_client(settings.routes[0].source)
 
     config = cast(RecordingConfig, sessions[0].client_call["config"])
     assert config.connect_timeout == s3_module.LOCALSTACK_CONNECT_TIMEOUT_SECONDS
@@ -222,55 +219,6 @@ def test_build_s3_client_uses_short_localstack_timeouts(
         "max_attempts": s3_module.LOCALSTACK_MAX_ATTEMPTS,
         "mode": "standard",
     }
-
-
-@pytest.mark.unit()
-def test_transfer_capabilities_for_cross_provider_pair_disable_native_copy(
-    tmp_path: Path,
-) -> None:
-    settings = AppSettings.from_env(dual_env(tmp_path))
-
-    capabilities = s3_module.transfer_capabilities_for_locations(
-        settings.source,
-        settings.destination,
-    )
-
-    assert capabilities.native_copy is False
-    assert capabilities.multipart_copy is False
-    assert capabilities.streaming_upload is True
-    assert capabilities.temp_file_backed is True
-
-
-@pytest.mark.unit()
-def test_transfer_capabilities_honor_provider_profile_registry(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    env = dual_env(tmp_path)
-    env["S3_SOURCE_PROVIDER"] = "localstack"
-    env["S3_SOURCE_REGION"] = "us-east-1"
-    env["S3_SOURCE_ENDPOINT_URL"] = "http://127.0.0.1:4566"
-    env["S3_DESTINATION_PROVIDER"] = "localstack"
-    env["S3_DESTINATION_REGION"] = "us-east-1"
-    env["S3_DESTINATION_ENDPOINT_URL"] = "http://127.0.0.1:4566"
-    settings = AppSettings.from_env(env)
-    monkeypatch.setattr(
-        s3_module,
-        "_TRANSFER_PROFILES",
-        {
-            "localstack": s3_module.S3ProviderTransferProfile(native_copy=False),
-            "oci": s3_module.S3ProviderTransferProfile(),
-        },
-    )
-
-    capabilities = s3_module.transfer_capabilities_for_locations(
-        settings.source,
-        settings.destination,
-    )
-
-    assert capabilities.native_copy is False
-    assert capabilities.multipart_copy is False
-    assert capabilities.streaming_upload is True
 
 
 @pytest.mark.unit()

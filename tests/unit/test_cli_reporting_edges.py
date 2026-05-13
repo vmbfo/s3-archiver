@@ -14,7 +14,6 @@ import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest, ManifestEntry
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.errors import ConfigError, HealthCheckError
 from s3_archiver_core.s3 import S3ListedObject
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
@@ -39,15 +38,15 @@ def test_archive_failure_payload_falls_back_when_no_phase_has_failures(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, kwargs)
         return archive_result(copy=FailedWithoutFailures("copy"))
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -112,18 +111,18 @@ def test_debug_archive_run_logs_transfer_decision(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         debug_logger: Callable[[ManifestEntry, str], None] | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, kwargs)
         assert debug_logger is not None
         debug_logger(manifest_entry(), "streaming_upload")
         return archive_result()
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -168,16 +167,16 @@ def test_archive_lock_recovery_logger_adds_structured_context(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, kwargs)
         return archive_result()
 
     monkeypatch.setattr(cli_module, "FileArchiveRunLock", RecoveringLock)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 

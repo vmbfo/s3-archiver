@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
+
 import pytest
-from s3_archiver_cli.visual_demo_output import JsonValue, emit_archive_result
+from s3_archiver_core.payload_utils import JsonValue
+from s3_archiver_core.settings import AppSettings
+from s3_archiver_visual_demo.output import emit_archive_result, emit_intro
+
+from tests.unit.health_helpers import multi_route_env
 
 
 @pytest.mark.unit()
@@ -66,3 +73,14 @@ def test_archive_result_emits_direct_entries() -> None:
     emit_archive_result(lines.append, payload)
 
     assert "DIRECT destination_key=mirror/raw/live.txt source_object_count=1" in lines
+
+
+@pytest.mark.unit()
+def test_intro_emits_multi_route_bucket_summary(base_env: dict[str, str]) -> None:
+    lines: list[str] = []
+    settings = AppSettings.from_env(multi_route_env(base_env))
+
+    emit_intro(lines.append, settings, Path("demo.log"), datetime(2026, 5, 12, tzinfo=UTC))
+
+    assert "source buckets: archive-bucket, second-source-bucket" in lines
+    assert "destination buckets: destination-bucket, second-destination-bucket" in lines

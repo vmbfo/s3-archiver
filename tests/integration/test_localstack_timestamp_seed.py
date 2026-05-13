@@ -8,22 +8,22 @@ import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import cast
 
 import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 from s3_archiver_core.s3 import S3Client, build_s3_client
 from s3_archiver_core.settings import AppSettings
-
-from tests.integration.localstack_harness import (
+from s3_archiver_localstack_support import is_retryable_localstack_message
+from s3_archiver_localstack_support.compose import find_repo_root
+from s3_archiver_localstack_support.harness import (
     LOCALSTACK_HOST_ENDPOINT,
     LocalstackBucketPair,
     localstack_test_env,
 )
-from tests.integration.localstack_object_helpers import seed_timestamped_objects
+from s3_archiver_localstack_support.objects import seed_timestamped_objects
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 SEED_NOW = datetime(2100, 1, 1, tzinfo=UTC)
 
 
@@ -39,7 +39,7 @@ def test_timestamp_seed_helper_sets_exact_last_modified_values(
         seed_now=SEED_NOW,
     )
     settings = AppSettings.from_env(_integration_env(localstack_bucket_pair))
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
 
     rows = [line.split("\t") for line in result.stdout.splitlines()]
 
@@ -48,7 +48,7 @@ def test_timestamp_seed_helper_sets_exact_last_modified_values(
         expected = SEED_NOW - timedelta(days=int(age_days))
         assert key == f"seed-helper/age-{age_days}-days.txt"
         assert _parse_timestamp(last_modified) == expected
-        head = _head_object_with_retry(client, settings.bucket, key)
+        head = _head_object_with_retry(client, settings.routes[0].source.bucket, key)
         metadata = cast(dict[str, object], head.get("Metadata", {}))
         assert metadata.get("s3-archiver-test-age-days") == age_days
         assert _required_datetime(head, "LastModified") == expected
@@ -71,10 +71,10 @@ def run_timestamp_seed_helper(
         log_dir=str(REPO_ROOT / ".local" / "integration-runtime" / "var" / "log"),
     )
     settings = AppSettings.from_env(env)
-    client = build_s3_client(settings)
+    client = build_s3_client(settings.routes[0].source)
     seed_timestamped_objects(
         client,
-        settings.bucket,
+        settings.routes[0].source.bucket,
         prefix=prefix,
         days=days,
         seed_now=seed_now,
@@ -82,7 +82,7 @@ def run_timestamp_seed_helper(
     rows: list[str] = []
     for day in days:
         key = f"{prefix}/age-{day}-days.txt"
-        head = _head_object_with_retry(client, settings.bucket, key)
+        head = _head_object_with_retry(client, settings.routes[0].source.bucket, key)
         rows.append(f"{key}\t{day}\t{_required_datetime(head, 'LastModified').isoformat()}")
     return subprocess.CompletedProcess(
         args=["seed-object-timestamps"],
@@ -127,14 +127,10 @@ def _head_object_with_retry(
         try:
             return client.head_object(Bucket=bucket, Key=key)
         except (BotoCoreError, ClientError) as exc:
-            if attempt == attempts - 1 or not _is_retryable_head_error(exc):
+            if attempt == attempts - 1 or not is_retryable_localstack_message(
+                str(exc),
+                extra_fragments=("when calling the HeadObject operation: Not Found",),
+            ):
                 raise
             time.sleep(delay_seconds)
     raise AssertionError("head_object retry loop exhausted without returning")
-
-
-def _is_retryable_head_error(exc: Exception) -> bool:
-    message = str(exc)
-    return "Could not connect to the endpoint URL" in message or (
-        "when calling the HeadObject operation: Not Found" in message
-    )

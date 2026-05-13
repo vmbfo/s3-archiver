@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass
 from datetime import date, datetime
 from typing import Literal, Protocol
 
-from s3_archiver_core.parsers.protocol import ParserContext
-from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
@@ -38,6 +36,40 @@ class DestinationLocator(Protocol):
     def bucket(self) -> str:
         """Return the destination bucket name."""
         ...
+
+
+class ArchiveManifestRouteSpec(Protocol):
+    """Route shape accepted by route manifest construction."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def source(self) -> SourceLister: ...
+
+    @property
+    def destination(self) -> DestinationLocator: ...
+
+    @property
+    def parser_kind(self) -> ParserKind: ...
+
+    @property
+    def copy_mode(self) -> CopyMode: ...
+
+    @property
+    def source_path(self) -> str: ...
+
+    @property
+    def destination_path(self) -> str: ...
+
+    @property
+    def versioning_state(self) -> VersioningState | None: ...
+
+    @property
+    def source_identity(self) -> object | None: ...
+
+    @property
+    def destination_identity(self) -> object | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,13 +161,6 @@ class ArchiveManifest:
     skipped_objects: tuple[SkippedObject, ...] = ()
 
 
-ParserResult = SelectedObject | SkippedObject | ParserSkippedObject | None
-ParserSelector = (
-    Callable[[S3ListedObject], ParserResult]
-    | Callable[[S3ListedObject, ParserContext], ParserResult]
-)
-
-
 @dataclass(frozen=True, slots=True)
 class ArchiveManifestRoute:
     """One route used to build a global archive manifest."""
@@ -148,7 +173,6 @@ class ArchiveManifestRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    parser: ParserSelector | None = None
     versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None

@@ -8,18 +8,18 @@ from typing import Protocol, cast
 
 import pytest
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
-
-from tests.integration.archive_cli_test_support import archive_client as _client
-from tests.integration.archive_cli_test_support import archive_env as _archive_env
-from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
-from tests.integration.localstack_harness import LocalstackBucketPair
-from tests.integration.localstack_object_helpers import (
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
+from s3_archiver_localstack_support.objects import (
     listed_key_versions,
     listed_keys,
     put_test_object,
     read_object_text,
     read_tar_gz_members_text,
 )
+
+from tests.integration.archive_cli_test_support import archive_client as _client
+from tests.integration.archive_cli_test_support import archive_env as _archive_env
+from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 
 TARGET_DAY = "2099-12-31"
 
@@ -51,7 +51,7 @@ def test_archive_command_archives_latest_version_without_deleting_source_version
     payload = _run_archive(monkeypatch, env, attempts=6)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 1
+    assert payload["source_object_count"] == 1
     assert read_tar_gz_members_text(
         destination_client, localstack_bucket_pair.destination, archive_key
     ) == {key: "second\n"}
@@ -91,7 +91,7 @@ def test_archive_command_rerun_verifies_existing_archive_without_deleting_source
     rerun_payload = _run_archive(monkeypatch, rerun_env)
 
     assert rerun_payload["status"] == "ok"
-    assert rerun_payload["manifest"]["object_count"] == 1
+    assert rerun_payload["source_object_count"] == 1
     destination_metadata = cast(
         dict[str, str],
         destination_client.head_object(Bucket=localstack_bucket_pair.destination, Key=archive_key)[

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 from s3_archiver_core._route_config_fields import (
     addressing_style,
@@ -16,18 +14,13 @@ from s3_archiver_core._settings_parse import (
     EnvDecoder,
     ParseIssue,
     ParseResult,
+    normalize_endpoint_url,
     normalize_endpoint_url_result,
-    optional_env,
     optional_env_result,
-    parse_bool,
     parse_bool_result,
-    parse_int,
     parse_int_result,
-    parse_runtime_duration,
     parse_runtime_duration_result,
-    parse_string_array,
     parse_string_array_result,
-    require_env,
     require_env_result,
 )
 from s3_archiver_core.errors import ConfigError
@@ -85,6 +78,13 @@ def test_default_endpoint_resolution_covers_supported_providers() -> None:
 
 
 @pytest.mark.unit()
+def test_normalize_endpoint_url_raises_on_invalid_value() -> None:
+    assert normalize_endpoint_url("http://host:4566") == "http://host:4566"
+    with pytest.raises(ConfigError, match="ENDPOINT"):
+        _ = normalize_endpoint_url("localhost:4566", field="ENDPOINT")
+
+
+@pytest.mark.unit()
 def test_parse_result_boundary_captures_issue_without_raising() -> None:
     result = parse_bool_result({"BOOL": "maybe"}, "BOOL", default=False)
 
@@ -95,38 +95,23 @@ def test_parse_result_boundary_captures_issue_without_raising() -> None:
 
 
 @pytest.mark.unit()
-def test_parse_wrappers_cover_successful_result_boundary() -> None:
-    env = {
-        "BOOL": "true",
-        "COUNT": "2",
-        "ARRAY": '["prefix/"]',
-        "VALUE": "configured",
-    }
-
-    assert parse_bool(env, "BOOL", default=False) is True
-    assert parse_int(env, "COUNT", default=1, minimum=1) == 2
-    assert parse_runtime_duration("7d", "DURATION") == timedelta(days=7)
-    assert parse_string_array(env, "ARRAY") == ("prefix/",)
-    assert require_env(env, "VALUE") == "configured"
-    assert optional_env(env, "VALUE") == "configured"
-
-
-@pytest.mark.unit()
-def test_parse_wrappers_raise_config_errors_for_invalid_values() -> None:
-    with pytest.raises(ConfigError, match="BOOL must be true or false"):
-        _ = parse_bool({"BOOL": "maybe"}, "BOOL", default=False)
-
-
-@pytest.mark.unit()
 def test_parse_result_helpers_cover_error_edges() -> None:
+    from datetime import timedelta
+
+    assert parse_bool_result({"BOOL": "true"}, "BOOL", default=False).value is True
     assert parse_bool_result({"BOOL": "false"}, "BOOL", default=True).value is False
     assert parse_bool_result({}, "BOOL", default=True).value is True
+    assert parse_int_result({"COUNT": "2"}, "COUNT", default=1, minimum=1).value == 2
     assert parse_int_result({"COUNT": " "}, "COUNT", default=1, minimum=1).value == 1
     assert parse_int_result({"COUNT": "no"}, "COUNT", default=1, minimum=1).issue is not None
     assert parse_int_result({"COUNT": "0"}, "COUNT", default=1, minimum=1).issue is not None
+    assert parse_runtime_duration_result("7d", "DURATION").value == timedelta(days=7)
     assert parse_runtime_duration_result("soon", "DURATION").issue is not None
+    assert parse_string_array_result({"ARRAY": '["prefix/"]'}, "ARRAY").value == ("prefix/",)
     assert parse_string_array_result({"ARRAY": ""}, "ARRAY").value == ()
     assert parse_string_array_result({"ARRAY": "["}, "ARRAY").issue is not None
+    assert require_env_result({"VALUE": "configured"}, "VALUE").value == "configured"
+    assert optional_env_result({"OPTIONAL": "set"}, "OPTIONAL").value == "set"
     assert parse_string_array_result({"ARRAY": "{}"}, "ARRAY").issue is not None
     assert parse_string_array_result({"ARRAY": "[1]"}, "ARRAY").issue is not None
     assert normalize_endpoint_url_result("localhost:4566", field="ENDPOINT").issue is not None

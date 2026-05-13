@@ -9,6 +9,7 @@ from pathlib import Path
 
 from botocore.exceptions import BotoCoreError, ClientError
 
+from s3_archiver_core._archive_s3_helpers import parse_versioning_state
 from s3_archiver_core.errors import HealthCheckError
 from s3_archiver_core.s3 import S3Client, VersioningState, build_s3_client
 from s3_archiver_core.settings import AppSettings, RouteSettings, S3LocationSettings
@@ -72,9 +73,6 @@ class HealthReport:
 
         return {
             "status": self.status,
-            "provider": self.source_provider,
-            "bucket": self.source_bucket,
-            "endpoint_url": self.source_endpoint_url,
             "source_provider": self.source_provider,
             "source_bucket": self.source_bucket,
             "source_endpoint_url": self.source_endpoint_url,
@@ -94,15 +92,18 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
 
     logger = logging.getLogger("s3_archiver.health")
     routes = settings.routes
-    source_endpoint_url = settings.source.resolved_endpoint_url()
-    destination_endpoint_url = settings.destination.resolved_endpoint_url()
+    first_route = routes[0]
+    source = first_route.source
+    destination = first_route.destination
+    source_endpoint_url = source.resolved_endpoint_url()
+    destination_endpoint_url = destination.resolved_endpoint_url()
     logger.info(
         "running s3 health check",
         extra={
             "event": "health.started",
-            "bucket": settings.source.bucket,
+            "bucket": source.bucket,
             "endpoint_url": source_endpoint_url,
-            "destination_bucket": settings.destination.bucket,
+            "destination_bucket": destination.bucket,
             "destination_endpoint_url": destination_endpoint_url,
             "route_count": len(routes),
         },
@@ -113,20 +114,20 @@ def run_health_check(settings: AppSettings, log_file: Path) -> HealthReport:
         "s3 health check succeeded",
         extra={
             "event": "health.succeeded",
-            "bucket": settings.source.bucket,
-            "destination_bucket": settings.destination.bucket,
+            "bucket": source.bucket,
+            "destination_bucket": destination.bucket,
             "source_versioning": source_versioning,
             "route_count": len(routes),
         },
     )
     return HealthReport(
         status="ok",
-        source_provider=settings.source.provider.value,
-        source_bucket=settings.source.bucket,
+        source_provider=source.provider.value,
+        source_bucket=source.bucket,
         source_endpoint_url=source_endpoint_url,
         source_versioning=source_versioning,
-        destination_provider=settings.destination.provider.value,
-        destination_bucket=settings.destination.bucket,
+        destination_provider=destination.provider.value,
+        destination_bucket=destination.bucket,
         destination_endpoint_url=destination_endpoint_url,
         log_file=str(log_file),
         checked_at=datetime.now(tz=UTC).isoformat(),
@@ -185,9 +186,4 @@ def _source_versioning(client: S3Client, location: S3LocationSettings) -> Versio
         raise HealthCheckError(
             f"Failed to read source bucket versioning for {location.bucket!r}: {exc}"
         ) from exc
-    status = response.get("Status")
-    if status == "Enabled":
-        return "Enabled"
-    if status == "Suspended":
-        return "Suspended"
-    return "Disabled"
+    return parse_versioning_state(response.get("Status"))

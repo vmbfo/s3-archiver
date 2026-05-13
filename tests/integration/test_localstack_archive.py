@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from s3_archiver_core.archive import run_archive
-from s3_archiver_core.archive_options import ArchiveOptions
+from s3_archiver_core.archive import ArchiveRoute, run_archive
 from s3_archiver_core.archive_s3 import S3ArchiveBucket
 from s3_archiver_core.s3 import S3TransferCapabilities
 from s3_archiver_core.settings import AppSettings
+from s3_archiver_localstack_support.harness import LocalstackBucketPair
+from s3_archiver_localstack_support.objects import (
+    listed_keys,
+    put_test_object,
+    read_object_text,
+    read_tar_gz_members_text,
+)
 
 from tests.integration.archive_cli_test_support import (
     FROZEN_ARCHIVE_RUN_STARTED_AT,
@@ -20,13 +25,6 @@ from tests.integration.archive_cli_test_support import (
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
-from tests.integration.localstack_harness import LocalstackBucketPair
-from tests.integration.localstack_object_helpers import (
-    listed_keys,
-    put_test_object,
-    read_object_text,
-    read_tar_gz_members_text,
-)
 
 TARGET_DAY = "2099-12-31"
 TARGET_ARCHIVE_KEY = f"archive/{TARGET_DAY}.tar.gz"
@@ -53,7 +51,7 @@ def test_archive_command_archives_target_day_keys_without_deleting_sources(
     assert payload["status"] == "ok"
     assert payload["source_bucket"] == localstack_bucket_pair.source
     assert payload["destination_bucket"] == localstack_bucket_pair.destination
-    assert payload["manifest"]["object_count"] == len(source_keys)
+    assert payload["source_object_count"] == len(source_keys)
     assert _phase_statuses(payload) == {
         "list": "ok",
         "copy": "ok",
@@ -89,7 +87,7 @@ def test_archive_command_route_source_and_destination_paths_control_daily_archiv
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == 2
+    assert payload["source_object_count"] == 2
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         f"routed/{TARGET_DAY}.tar.gz",
         f"routed/nested/{TARGET_DAY}.tar.gz",
@@ -145,7 +143,7 @@ def test_archive_command_direct_route_copies_source_path_without_deleting_source
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == len(copied_keys)
+    assert payload["source_object_count"] == len(copied_keys)
     assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
         f"mirror/{key}" for key in copied_keys
     }
@@ -181,7 +179,7 @@ def test_archive_command_filename_parser_skips_timestamps_after_frozen_run_start
     payload = _run_archive(monkeypatch, env)
 
     assert payload["status"] == "ok"
-    assert payload["manifest"]["object_count"] == len(eligible_keys)
+    assert payload["source_object_count"] == len(eligible_keys)
     archive_keys = {
         f"{prefix}/2099-12-31.tar.gz",
     }
@@ -214,22 +212,36 @@ def test_archive_core_uses_temp_file_backed_transfer_against_localstack(
     archive_key = f"temp-file-backed/{TARGET_DAY}.tar.gz"
     runtime_temp_dir = tmp_path / "runtime-temp"
     _ = put_test_object(source_client, localstack_bucket_pair.source, key, body=b"temp-file\n")
-    options = replace(
-        ArchiveOptions.from_settings(settings),
-        transfer_capabilities=S3TransferCapabilities(
-            native_copy=False,
-            multipart_copy=False,
-            streaming_upload=True,
-            temp_file_backed=True,
-            streaming_limit_bytes=1,
+    route = settings.routes[0]
+    source = S3ArchiveBucket(source_client, localstack_bucket_pair.source, runtime_temp_dir)
+    destination = S3ArchiveBucket(
+        destination_client, localstack_bucket_pair.destination, runtime_temp_dir
+    )
+    routes = (
+        ArchiveRoute(
+            route.name,
+            source,
+            destination,
+            parser_kind=route.parser.value,
+            copy_mode=route.copy_mode.value,
+            source_path=route.source.path,
+            destination_path=route.destination.path,
+            source_identity=route.source.storage_identity(),
+            destination_identity=route.destination.storage_identity(),
+            transfer_capabilities=S3TransferCapabilities(
+                native_copy=False,
+                multipart_copy=False,
+                streaming_upload=True,
+                temp_file_backed=True,
+                streaming_limit_bytes=1,
+            ),
         ),
     )
     decisions: list[str] = []
 
     result = run_archive(
-        S3ArchiveBucket(source_client, localstack_bucket_pair.source, runtime_temp_dir),
-        S3ArchiveBucket(destination_client, localstack_bucket_pair.destination, runtime_temp_dir),
-        options,
+        routes,
+        run_timeout=settings.run_timeout,
         run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
         debug_logger=lambda _entry, strategy: decisions.append(strategy),
     )

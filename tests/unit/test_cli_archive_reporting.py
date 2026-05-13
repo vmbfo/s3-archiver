@@ -13,7 +13,6 @@ import pytest
 import s3_archiver_cli.main as cli_module
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_manifest import ArchiveManifest
-from s3_archiver_core.archive_options import ArchiveOptions
 from s3_archiver_core.settings import AppSettings, S3LocationSettings
 from typer.testing import CliRunner
 
@@ -44,15 +43,15 @@ def test_archive_command_reports_lock_refusal_payload(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         raise RuntimeError("archive run lock is already held")
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -76,18 +75,18 @@ def test_archive_command_reports_timeout_with_active_phases_only(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         return _archive_result(
             copy=ArchivePhaseResult("copy", ("archive run timed out",)),
             verify=ArchivePhaseResult("verify", skipped=True),
         )
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
     monkeypatch.setattr(cli_module, "_log_error_payload", logged_error_payloads.append)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
@@ -121,17 +120,17 @@ def test_archive_command_reports_error_when_skipped_phase_has_failures(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         return _archive_result(
             copy=ArchivePhaseResult("copy", ("old.txt: mismatch",), skipped=True)
         )
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -151,15 +150,15 @@ def test_archive_command_reports_structured_object_mismatch(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         return _archive_result(copy=ArchivePhaseResult("copy", ("old.txt: content mismatch",)))
 
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     result = RUNNER.invoke(cli_module.app, ["archive-once"])
 
@@ -205,19 +204,19 @@ def test_run_archive_recovers_timed_out_prior_host_lock_before_archive_work(
 
     def run_core_archive(
         routes: tuple[object, ...],
-        options: ArchiveOptions,
         *,
+        run_timeout: object,
         run_started_at_utc: object | None = None,
         **_kwargs: object,
     ) -> ArchiveRunResult:
-        _ = (routes, options, run_started_at_utc, _kwargs)
+        _ = (routes, run_timeout, run_started_at_utc, _kwargs)
         events.append("run_archive")
         return _archive_result()
 
     monkeypatch.setattr(cli_module, "_log_lock_recovery", log_recovery)
     monkeypatch.setattr(cli_module, "run_health_check", run_health)
     monkeypatch.setattr(cli_module, "build_s3_client", build_client)
-    monkeypatch.setattr(cli_module, "run_archive_routes", run_core_archive)
+    monkeypatch.setattr(cli_module, "run_archive", run_core_archive)
 
     run_archive = cast(
         Callable[[AppSettings, Path], dict[str, object]],
