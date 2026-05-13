@@ -1,3 +1,10 @@
+"""Structural type for settings-builder callables.
+
+``AppSettingsFactory`` is a PEP 544 ``Protocol``: the ``...`` body is an
+interface stub, not an abstract method — any callable with the matching
+signature satisfies it at runtime.
+"""
+
 from __future__ import annotations
 
 from datetime import timedelta

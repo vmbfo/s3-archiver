@@ -27,7 +27,12 @@ type Echo = Callable[[str], None]
 
 
 class Logger(Protocol):
-    """Minimal logger protocol for scheduler wait reporting."""
+    """Minimal logger protocol for scheduler wait reporting.
+
+    PEP 544 structural type — the ``...`` body is an interface stub, not an
+    abstract method. ``logging.Logger`` and any matching test double satisfy
+    it by shape, not by subclassing.
+    """
 
     def info(self, msg: object, *args: object, extra: Mapping[str, object] | None = None) -> object:
         """Record one structured info event."""

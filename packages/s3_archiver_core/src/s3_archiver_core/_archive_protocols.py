@@ -1,4 +1,11 @@
-"""Private archive protocol definitions."""
+"""Private archive protocol definitions.
+
+The ``Protocol`` classes below are PEP 544 structural types: the ``...`` method
+bodies are interface stubs, not abstract methods. Any object whose shape
+matches satisfies the protocol at runtime, which is how production adapters
+(e.g. ``S3ArchiveBucket``) and the in-memory test fakes both fit without
+subclassing.
+"""
 
 from __future__ import annotations
 
