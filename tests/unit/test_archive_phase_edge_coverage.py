@@ -260,5 +260,3 @@ def _run_parallel_items() -> Callable[
         ],
         getattr(archive_copy_module, name),
     )
-
-
