@@ -292,6 +292,11 @@ Archive result payloads are compact by default for production-scale runs: they i
 phase status, archive days, and route summaries, but omit per-object destination lists. Set
 `ARCHIVER_PAYLOAD_DETAIL=full` only for small debugging runs or the visual demo.
 
+Large manifests spill from memory into a temporary SQLite database after 100,000 manifest rows.
+Daily `tar.gz` archive groups are capped by both source bytes and object count so temporary archive
+files stay bounded; override the defaults with `ARCHIVER_ARCHIVE_GROUP_MAX_BYTES` and
+`ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS` if a deployment needs smaller or larger archive parts.
+
 ## Conventional Commits And Releases
 
 Commit messages must follow Conventional Commits. The commit-msg hook enforces this after `pre-commit` is installed.

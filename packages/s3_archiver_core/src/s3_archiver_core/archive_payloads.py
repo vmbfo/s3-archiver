@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sized
 from typing import cast
 
 from s3_archiver_core.archive import ArchivePhaseResult
@@ -140,18 +141,23 @@ def archive_manifest_payload(
 ) -> dict[str, JsonValue]:
     """Return the shared JSON-ready archive manifest summary."""
 
-    raw_entries = object_list(attr(manifest, "entries"))
-    raw_groups = object_list(attr(manifest, "archive_groups"))
-    raw_skipped = object_list(attr(manifest, "skipped_objects"))
-    direct_count = sum(
-        1 for entry in raw_entries if string_or_none(attr(entry, "copy_mode")) == "direct"
-    )
+    entries = attr(manifest, "entries")
+    groups = attr(manifest, "archive_groups")
+    skipped = attr(manifest, "skipped_objects")
+    direct_count = _copy_mode_count(entries, "direct")
     payload: dict[str, JsonValue] = {
         "target_day": manifest_target_day(manifest),
-        "archive_count": len(raw_groups),
+        "archive_count": _sequence_count(groups),
         "direct_copy_count": direct_count,
-        "source_object_count": len(raw_entries),
-        "skipped_object_count": len(raw_skipped),
+        "source_object_count": _sequence_count(entries),
+        "skipped_object_count": _sequence_count(skipped),
+        "metrics": cast(
+            JsonValue,
+            {
+                "manifest_storage": string_or_none(attr(manifest, "manifest_storage")),
+                "source_byte_count": int_or_none(attr(manifest, "source_byte_count")) or 0,
+            },
+        ),
     }
     if include_details:
         archive_groups = archive_group_payloads(manifest)
@@ -173,10 +179,10 @@ def archive_manifest_payload(
         )
     if include_archive_days:
         payload["archive_days"] = cast(
-            JsonValue, sorted({date_text(attr(g, "target_day")) for g in raw_groups})
+            JsonValue, sorted({date_text(attr(g, "target_day")) for g in object_list(groups)})
         )
     if include_entries:
-        payload["entries"] = json_list([manifest_entry_payload(e) for e in raw_entries])
+        payload["entries"] = json_list([manifest_entry_payload(e) for e in object_list(entries)])
     if include_run_started_at_utc:
         payload["run_started_at_utc"] = datetime_text(attr(manifest, "run_started_at_utc"))
     return payload
@@ -235,3 +241,23 @@ def _entry_value(entries: list[object], name: str) -> str | None:
         if value is not None:
             return value
     return None
+
+
+def _sequence_count(value: object | None) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, Sized) and not isinstance(value, str):
+        return len(value)
+    return len(object_list(value))
+
+
+def _copy_mode_count(value: object | None, copy_mode: str) -> int:
+    if value is None:
+        return 0
+    count_copy_mode = getattr(value, "count_copy_mode", None)
+    if callable(count_copy_mode):
+        counted = count_copy_mode(copy_mode)
+        return counted if isinstance(counted, int) else 0
+    return sum(
+        1 for entry in object_list(value) if string_or_none(attr(entry, "copy_mode")) == copy_mode
+    )

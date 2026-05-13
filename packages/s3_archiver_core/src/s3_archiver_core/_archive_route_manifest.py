@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime
+from itertools import chain
 
 from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_manifest_builder import (
     archive_groups,
-    build_archive_manifest,
+    iter_archive_manifest_items,
 )
+from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
 from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
     ArchiveManifest,
@@ -22,6 +24,8 @@ from s3_archiver_core._archive_manifest_paths import (
 )
 from s3_archiver_core.s3 import VersioningState
 
+_SQLITE_MANIFEST_ENTRY_THRESHOLD = 100_000
+
 
 def build_route_archive_manifest(
     routes: Iterable[ArchiveManifestRouteSpec],
@@ -35,8 +39,9 @@ def build_route_archive_manifest(
     _reject_overlapping_source_paths(route_tuple)
     entries: list[ManifestEntry] = []
     skipped: list[SkippedObject] = []
+    store: SQLiteManifestStore | None = None
     for route in route_tuple:
-        manifest = build_archive_manifest(
+        for item in iter_archive_manifest_items(
             route.source,
             run_started_at_utc=run_started,
             versioning_state=_route_versioning_state(route),
@@ -48,14 +53,49 @@ def build_route_archive_manifest(
             destination_path=route.destination_path,
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
+        ):
+            if store is None and len(entries) + len(skipped) >= _SQLITE_MANIFEST_ENTRY_THRESHOLD:
+                store = SQLiteManifestStore.temporary()
+                for entry in entries:
+                    store.add_entry(entry)
+                for skipped_object in skipped:
+                    store.add_skipped(skipped_object)
+                entries.clear()
+                skipped.clear()
+            if isinstance(item, ManifestEntry):
+                if store is None:
+                    entries.append(item)
+                else:
+                    store.add_entry(item)
+            elif store is None:
+                skipped.append(item)
+            else:
+                store.add_skipped(item)
+    if store is not None:
+        store.commit()
+        store.assert_no_duplicate_sources()
+        store.assert_no_duplicate_destinations()
+        return ArchiveManifest(
+            run_started,
+            store.entries,
+            None,
+            store.archive_groups,
+            store.skipped_objects,
+            "sqlite",
+            store.entry_size_sum(),
         )
-        entries.extend(manifest.entries)
-        skipped.extend(manifest.skipped_objects)
     entry_tuple = tuple(entries)
     _reject_duplicate_sources(entry_tuple)
     grouped = archive_groups(entry_tuple)
     _reject_duplicate_destinations(entry_tuple, grouped)
-    return ArchiveManifest(run_started, entry_tuple, None, grouped, tuple(skipped))
+    return ArchiveManifest(
+        run_started,
+        entry_tuple,
+        None,
+        grouped,
+        tuple(skipped),
+        source_byte_count=sum(entry.size for entry in entry_tuple),
+    )
 
 
 def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...]) -> None:
@@ -90,16 +130,16 @@ def _reject_duplicate_sources(entries: tuple[ManifestEntry, ...]) -> None:
 
 
 def _reject_duplicate_destinations(
-    entries: tuple[ManifestEntry, ...], groups: tuple[ArchiveGroup, ...]
+    entries: Iterable[ManifestEntry], groups: Iterable[ArchiveGroup]
 ) -> None:
     _reject_duplicate_identities(
-        (
-            *(
+        chain(
+            (
                 (entry.destination_identity, entry.destination_bucket, entry.destination_key)
                 for entry in entries
                 if entry.copy_mode == "direct"
             ),
-            *(
+            (
                 (
                     group.destination_identity,
                     group.destination_bucket,

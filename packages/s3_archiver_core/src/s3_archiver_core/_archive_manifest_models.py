@@ -9,7 +9,7 @@ records, and test doubles all fit without subclassing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from datetime import date, datetime
 from typing import Literal, Protocol
@@ -166,10 +166,12 @@ class ArchiveManifest:
     """Complete archive plan for one run."""
 
     run_started_at_utc: datetime
-    entries: tuple[ManifestEntry, ...]
+    entries: Sequence[ManifestEntry]
     target_day: date | None = None
-    archive_groups: tuple[ArchiveGroup, ...] = ()
-    skipped_objects: tuple[SkippedObject, ...] = ()
+    archive_groups: Sequence[ArchiveGroup] = ()
+    skipped_objects: Sequence[SkippedObject] = ()
+    manifest_storage: str = "memory"
+    source_byte_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
