@@ -32,7 +32,7 @@ from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObjec
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
-DEFAULT_ARCHIVE_GROUP_MAX_BYTES = 50 * 1024 * 1024 * 1024
+DEFAULT_ARCHIVE_GROUP_MAX_BYTES = 100 * 1024 * 1024 * 1024
 DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS = 2_000_000
 
 

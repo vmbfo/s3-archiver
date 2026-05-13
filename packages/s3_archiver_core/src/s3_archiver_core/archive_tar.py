@@ -30,7 +30,7 @@ def write_tar_gz_archive(
         gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as gzip_file,
         tarfile.open(fileobj=gzip_file, mode="w") as tar,
     ):
-        for entry in sorted(group.entries, key=lambda item: item.key):
+        for entry in group.entries:
             body = source.read_source_stream(entry.key, entry.version_id)
             try:
                 member_name, pax_headers = _member_name(entry.key)

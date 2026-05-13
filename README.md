@@ -294,7 +294,7 @@ phase status, archive days, and route summaries, but omit per-object destination
 
 Large manifests spill from memory into a temporary SQLite database after 100,000 manifest rows.
 Daily `tar.gz` archive groups are capped by both source bytes and object count so temporary archive
-files stay bounded. The defaults are 50 GiB and 2,000,000 source objects; override them with
+files stay bounded. The defaults are 100 GiB and 2,000,000 source objects; override them with
 `ARCHIVER_ARCHIVE_GROUP_MAX_BYTES` and `ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS` if a deployment needs
 smaller or larger archive parts.
 

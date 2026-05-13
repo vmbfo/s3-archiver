@@ -69,7 +69,7 @@ def _group_manifest_sha256(group: ArchiveGroup) -> str:
     digest = hashlib.sha256()
     digest.update(b"[")
     first = True
-    for entry in sorted(group.entries, key=lambda item: item.key):
+    for entry in group.entries:
         if first:
             first = False
         else:
