@@ -10,6 +10,8 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Thread
+from typing import IO
 from typing import Protocol
 from uuid import uuid4
 
@@ -107,6 +109,26 @@ def run_archive_subprocess(
     emit_stderr = _stderr_echo if stderr_echo is None else stderr_echo
     clock = _utc_now if now is None else now
     process_command = list(command or archive_child_command())
+    if run_command is subprocess.run:
+        try:
+            return _run_streaming_command(
+                process_command,
+                settings,
+                emit_stdout,
+                emit_stderr,
+            )
+        except subprocess.TimeoutExpired as exc:
+            _handle_subprocess_timeout(
+                exc,
+                settings,
+                log_file,
+                emit_stdout,
+                emit_stderr,
+                recovery_logger,
+                log_error,
+                clock,
+            )
+            return 1
     try:
         result = run_command(
             process_command,
@@ -117,19 +139,16 @@ def run_archive_subprocess(
             timeout=settings.run_timeout.total_seconds(),
         )
     except subprocess.TimeoutExpired as exc:
-        _relay_output(_as_text(exc.stdout), emit_stdout)
-        _relay_output(_as_text(exc.stderr), emit_stderr)
-        payload = _timeout_payload(settings, log_file)
-        lock_payload = _run_records.read_lock_payload(settings.archive_lock_path)
-        _run_records.record_subprocess_timeout(
+        _handle_subprocess_timeout(
+            exc,
             settings,
-            payload=payload,
-            log_file=log_file,
-            lock_payload=lock_payload,
+            log_file,
+            emit_stdout,
+            emit_stderr,
+            recovery_logger,
+            log_error,
+            clock,
         )
-        _ = reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
-        log_error(payload)
-        emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
         return 1
     _relay_output(result.stdout, emit_stdout)
     _relay_output(result.stderr, emit_stderr)
@@ -179,6 +198,84 @@ def _timeout_payload(settings: AppSettings, log_file: Path) -> dict[str, JsonVal
         "timed_out": True,
         "log_file": str(log_file),
     }
+
+
+def _run_streaming_command(
+    command: list[str],
+    settings: AppSettings,
+    emit_stdout: Echo,
+    emit_stderr: Echo,
+) -> int:
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    process = subprocess.Popen(
+        command,
+        env=dict(os.environ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    stdout_thread = _pipe_thread(process.stdout, emit_stdout, stdout_chunks)
+    stderr_thread = _pipe_thread(process.stderr, emit_stderr, stderr_chunks)
+    try:
+        return_code = process.wait(timeout=settings.run_timeout.total_seconds())
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        _ = process.wait()
+        _join_pipe_threads(stdout_thread, stderr_thread)
+        raise subprocess.TimeoutExpired(exc.cmd, exc.timeout, output=None, stderr=None) from exc
+    _join_pipe_threads(stdout_thread, stderr_thread)
+    return return_code
+
+
+def _pipe_thread(
+    pipe: IO[str] | None,
+    echo: Echo,
+    chunks: list[str],
+) -> Thread:
+    thread = Thread(target=_relay_pipe, args=(pipe, echo, chunks), daemon=True)
+    thread.start()
+    return thread
+
+
+def _relay_pipe(pipe: IO[str] | None, echo: Echo, chunks: list[str]) -> None:
+    if pipe is None:
+        return
+    with pipe:
+        for line in pipe:
+            chunks.append(line)
+            echo(line)
+
+
+def _join_pipe_threads(*threads: Thread) -> None:
+    for thread in threads:
+        thread.join()
+
+
+def _handle_subprocess_timeout(
+    exc: subprocess.TimeoutExpired,
+    settings: AppSettings,
+    log_file: Path,
+    emit_stdout: Echo,
+    emit_stderr: Echo,
+    recovery_logger: LockRecoveryLogger | None,
+    log_error: Callable[[Mapping[str, JsonValue]], None],
+    clock: Callable[[], datetime],
+) -> None:
+    _relay_output(_as_text(exc.stdout), emit_stdout)
+    _relay_output(_as_text(exc.stderr), emit_stderr)
+    payload = _timeout_payload(settings, log_file)
+    lock_payload = _run_records.read_lock_payload(settings.archive_lock_path)
+    _run_records.record_subprocess_timeout(
+        settings,
+        payload=payload,
+        log_file=log_file,
+        lock_payload=lock_payload,
+    )
+    _ = reconcile_archive_lock(settings, recovery_logger=recovery_logger, now=clock)
+    log_error(payload)
+    emit_stderr(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def reconcile_archive_lock(

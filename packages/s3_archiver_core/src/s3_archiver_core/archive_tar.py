@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 
 from s3_archiver_core._archive_protocols import ArchiveBucket
@@ -15,7 +16,13 @@ ORIGINAL_KEY_PAX_HEADER = "s3-archiver.original-key"
 _SAFE_MEMBER_PREFIX = "s3-archiver-safe/"
 
 
-def write_tar_gz_archive(source: ArchiveBucket, group: ArchiveGroup, path: Path) -> None:
+def write_tar_gz_archive(
+    source: ArchiveBucket,
+    group: ArchiveGroup,
+    path: Path,
+    *,
+    progress_logger: Callable[[], None] | None = None,
+) -> None:
     """Write a deterministic tar.gz archive for one archive group."""
 
     with (
@@ -37,6 +44,8 @@ def write_tar_gz_archive(source: ArchiveBucket, group: ArchiveGroup, path: Path)
                 info.gname = ""
                 info.pax_headers = dict(pax_headers)
                 tar.addfile(info, body)
+                if progress_logger is not None:
+                    progress_logger()
             finally:
                 body.close()
 
