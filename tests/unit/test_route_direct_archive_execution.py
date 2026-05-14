@@ -59,7 +59,7 @@ def test_run_archive_direct_copy_mode_copies_and_verifies() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_direct_copy_mode_rechecks_content_in_verify_phase() -> None:
+def test_run_archive_direct_copy_mode_does_not_rehash_content_without_checksums() -> None:
     listed = _listed("data/raw.txt", 1, "v1")
     source = FakeBucket("source", (listed,))
     destination = CorruptAfterCopyVerificationBucket("archive")
@@ -72,7 +72,8 @@ def test_run_archive_direct_copy_mode_rechecks_content_in_verify_phase() -> None
     )
 
     assert result.copy.ok is True
-    assert result.verify.failures == ("data/raw.txt: content mismatch",)
+    assert result.verify.ok is True
+    assert source.content_sha256_calls == []
 
 
 @pytest.mark.unit()

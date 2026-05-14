@@ -18,8 +18,10 @@ STARTED = datetime(2026, 4, 27, 12, tzinfo=UTC)
 
 class DuplicateListingBucket(FakeBucket):
     @override
-    def list_source_objects(self, versioning_state: VersioningState) -> Iterable[S3ListedObject]:
-        listed = tuple(super().list_source_objects(versioning_state))
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> Iterable[S3ListedObject]:
+        listed = tuple(super().list_source_objects(versioning_state, prefix=prefix))
         return (*listed, *listed)
 
 

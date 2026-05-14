@@ -232,6 +232,8 @@ class SnapshotBucket(FakeBucket):
         self.objects = objects
 
     @override
-    def list_source_objects(self, versioning_state: str) -> tuple[S3ListedObject, ...]:
+    def list_source_objects(
+        self, versioning_state: str, *, prefix: str = ""
+    ) -> tuple[S3ListedObject, ...]:
         assert versioning_state == self.versioning_state()
-        return self.objects
+        return tuple(item for item in self.objects if item.key.startswith(prefix))

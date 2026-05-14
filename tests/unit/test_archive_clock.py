@@ -22,8 +22,11 @@ class EmptyBucket:
     def versioning_state(self) -> VersioningState:
         return "Disabled"
 
-    def list_source_objects(self, versioning_state: VersioningState) -> tuple[S3ListedObject, ...]:
+    def list_source_objects(
+        self, versioning_state: VersioningState, *, prefix: str = ""
+    ) -> tuple[S3ListedObject, ...]:
         _ = versioning_state
+        _ = prefix
         return ()
 
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
