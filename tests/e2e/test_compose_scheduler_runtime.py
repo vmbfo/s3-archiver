@@ -75,8 +75,7 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
     stderr_json_lines = [line for line in result.stderr.splitlines() if line.startswith("{")]
     assert len(stderr_json_lines) == 1
     assert (
-        cast(dict[str, object], json.loads(stderr_json_lines[0]))["event"]
-        == "startup.working_set"
+        cast(dict[str, object], json.loads(stderr_json_lines[0]))["event"] == "startup.working_set"
     )
     assert '"run_id": "scheduled-run"' in result.stdout
 
