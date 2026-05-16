@@ -15,6 +15,7 @@ from s3_archiver_core.archive_group_metadata import (
     group_metadata,
     uploaded_archive_verified,
 )
+from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.archive_result import ArchivePhaseResult
 from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
@@ -38,9 +39,11 @@ def copy_phase(
     debug_logger: DebugLogger | None,
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
+    progress_logger: ProgressLogger | None = None,
 ) -> tuple[ArchivePhaseResult, tuple[ArchiveGroup, ...], tuple[ManifestEntry, ...]]:
     """Copy direct entries and daily archive groups with one worker per route."""
 
+    progress = _PhaseProgress("copy", len(manifest.entries), progress_logger)
     verified: dict[GroupIdentity, ArchiveGroup] = {}
     verified_entries: dict[EntryIdentity, ManifestEntry] = {}
     result_lock = Lock()
@@ -51,6 +54,7 @@ def copy_phase(
         failures: list[str] = []
         for entry in _route_direct_entries(manifest, route_name):
             failure, copied = copy_direct_entry(route, entry, debug_logger)
+            progress.advance()
             if failure is not None:
                 failures.append(failure)
                 continue
@@ -58,7 +62,13 @@ def copy_phase(
                 with result_lock:
                     verified_entries[_entry_identity(entry)] = entry
         for group in _route_archive_groups(manifest, route_name):
-            failure, copied = copy_group(route.source, route.destination, group, debug_logger)
+            failure, copied = copy_group(
+                route.source,
+                route.destination,
+                group,
+                debug_logger,
+                progress_logger=progress.advance,
+            )
             if failure is not None:
                 failures.append(failure)
                 continue
@@ -139,12 +149,15 @@ def copy_group(
     destination: ArchiveBucket,
     group: ArchiveGroup,
     debug_logger: DebugLogger | None,
+    *,
+    progress_logger: Callable[[], None] | None = None,
 ) -> tuple[str | None, bool]:
     destination_key = group.destination_archive_key
     metadata = group_metadata(group)
     existing = destination.head_object(destination_key)
     if existing is not None:
         if existing_archive_verified(destination, destination_key, existing.metadata, metadata):
+            _advance_group_progress(group, progress_logger)
             return None, True
         return f"{destination_key}: archive verification failed", False
     archive_path: Path | None = None
@@ -157,7 +170,7 @@ def copy_group(
             "wb", delete=False, dir=destination.temp_dir, prefix=TRANSFER_TEMP_PREFIX
         ) as archive_file:
             archive_path = Path(archive_file.name)
-        write_tar_gz_archive(source, group, archive_path)
+        write_tar_gz_archive(source, group, archive_path, progress_logger=progress_logger)
         upload_metadata = dict(metadata)
         upload_metadata[ARCHIVE_SHA256_METADATA_KEY] = sha256_file(archive_path)
         destination.upload_archive_file(destination_key, archive_path, upload_metadata)
@@ -180,8 +193,10 @@ def verify_phase(
     routes_by_name: dict[str, ArchiveRoute],
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
+    progress_logger: ProgressLogger | None = None,
 ) -> ArchivePhaseResult:
     route_names = tuple(route.name for route in routes_by_name.values())
+    progress = _PhaseProgress("verify", len(groups) + len(entries), progress_logger)
 
     def worker(route_name: str) -> tuple[str, ...]:
         route = routes_by_name[route_name]
@@ -195,6 +210,7 @@ def verify_phase(
                 route.destination, group.destination_archive_key, existing.metadata, metadata
             ):
                 failures.append(f"{group.destination_archive_key}: archive verification failed")
+            progress.advance()
         for entry in (item for item in entries if item.route_name == route_name):
             hydrated = _entry_with_current_source_properties(route.source, entry)
             verified = verify_direct_entry(
@@ -202,6 +218,7 @@ def verify_phase(
             )
             if not verified.ok:
                 failures.append(f"{entry.destination_key}: {verified.detail}")
+            progress.advance()
         return tuple(failures)
 
     return ArchivePhaseResult(
@@ -252,6 +269,39 @@ def _entry_with_current_source_properties(
         raise FileNotFoundError(f"{entry.key}: listed source object disappeared before copy")
     listed = replace(entry.object, properties=properties)
     return replace(entry, object=listed)
+
+
+class _PhaseProgress:
+    def __init__(
+        self,
+        phase: str,
+        total: int,
+        progress_logger: ProgressLogger | None,
+    ) -> None:
+        self._phase = phase
+        self._total = total
+        self._progress_logger = progress_logger
+        self._completed = 0
+        self._lock = Lock()
+        if progress_logger is not None and total == 0:
+            progress_logger(ArchiveProgress(phase, 0, 0))
+
+    def advance(self, count: int = 1) -> None:
+        if count <= 0 or self._progress_logger is None:
+            return
+        with self._lock:
+            self._completed = min(self._completed + count, self._total)
+            progress = ArchiveProgress(self._phase, self._completed, self._total)
+        self._progress_logger(progress)
+
+
+def _advance_group_progress(
+    group: ArchiveGroup, progress_logger: Callable[[], None] | None
+) -> None:
+    if progress_logger is None:
+        return
+    for _entry in group.entries:
+        progress_logger()
 
 
 def _group_identity(group: ArchiveGroup) -> GroupIdentity:

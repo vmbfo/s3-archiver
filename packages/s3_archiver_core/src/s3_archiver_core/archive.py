@@ -16,6 +16,7 @@ from s3_archiver_core.archive_manifest import (
     ArchiveManifest,
     build_route_archive_manifest,
 )
+from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 
@@ -37,6 +38,7 @@ def run_archive(
     run_started_at_utc: datetime | None = None,
     run_lock: ArchiveRunLock | None = None,
     debug_logger: DebugLogger | None = None,
+    progress_logger: ProgressLogger | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> ArchiveRunResult:
     """Run one archive pass with one execution worker per route."""
@@ -62,6 +64,7 @@ def run_archive(
                 _skipped("verify"),
                 ArchivePhaseResult("list", (str(exc),)),
             )
+        _emit_manifest_progress(progress_logger, manifest)
         if _timed_out(now, deadline):
             return _run_result(run_id, manifest, _timeout("copy"), _skipped("verify"))
 
@@ -78,6 +81,7 @@ def run_archive(
             debug_logger,
             timed_out,
             time_remaining,
+            progress_logger,
         )
         if _timed_out(now, deadline):
             return _run_result(
@@ -95,6 +99,7 @@ def run_archive(
                 routes_by_name,
                 timed_out,
                 time_remaining,
+                progress_logger,
             )
         )
         if copy_result.ok and _timed_out(now, deadline):
@@ -145,6 +150,15 @@ def _timeout(phase: str) -> ArchivePhaseResult:
 
 def _empty_manifest(started: datetime) -> ArchiveManifest:
     return ArchiveManifest(started, (), None, (), ())
+
+
+def _emit_manifest_progress(
+    progress_logger: ProgressLogger | None, manifest: ArchiveManifest
+) -> None:
+    if progress_logger is None:
+        return
+    total = len(manifest.entries) + len(manifest.skipped_objects)
+    progress_logger(ArchiveProgress("list", total, total))
 
 
 def _as_utc(value: datetime) -> datetime:
