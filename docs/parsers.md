@@ -1,6 +1,6 @@
 # Parsers And Copy Modes
 
-Archive routes use two independent string fields:
+Archive routes use two string fields:
 
 - `parser`: selects which source objects are eligible and which timestamp/archive root they use.
 - `copy_mode`: selects how eligible objects are written to the destination.
@@ -8,6 +8,9 @@ Archive routes use two independent string fields:
 Both fields are plain strings. `copy_mode` is not an object and does not carry nested options.
 When a layout needs different parsing or grouping semantics, add a focused parser name rather
 than overloading an existing parser or copy mode.
+
+Most parser and copy-mode values combine freely, but `folder_timestamp_child` and
+`timestamp_child_tar_gz` are paired: route configuration rejects either one without the other.
 
 ## Parser Contract
 
@@ -146,7 +149,8 @@ Use this with `folder_timestamp_child` for WRF-style domain folders. For archive
 data/wrf/ecmwf/2026-05-16-00-d01.tar.gz
 ```
 
-Route configuration rejects this copy mode unless the parser is `folder_timestamp_child`.
+Route configuration rejects this copy mode unless the parser is `folder_timestamp_child`, and
+also rejects `folder_timestamp_child` unless this copy mode is selected.
 
 ### `direct`
 

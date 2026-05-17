@@ -147,10 +147,14 @@ def _load_copy_mode(
 def _validate_parser_copy_mode(
     decoder: EnvDecoder, parser: ParserKind, copy_mode: CopyMode, field: str
 ) -> bool:
-    if copy_mode is CopyMode.TIMESTAMP_CHILD_TAR_GZ and parser != ParserKind(
-        "folder_timestamp_child"
-    ):
+    folder_timestamp_child = ParserKind("folder_timestamp_child")
+    if copy_mode is CopyMode.TIMESTAMP_CHILD_TAR_GZ and parser != folder_timestamp_child:
         decoder.fail(field, f"{field} requires parser=folder_timestamp_child")
+        return False
+    if parser == folder_timestamp_child and copy_mode is not CopyMode.TIMESTAMP_CHILD_TAR_GZ:
+        decoder.fail(
+            field, f"{field} must be timestamp_child_tar_gz for parser=folder_timestamp_child"
+        )
         return False
     return True
 

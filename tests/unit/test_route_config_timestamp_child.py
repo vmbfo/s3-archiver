@@ -37,6 +37,36 @@ def test_from_env_rejects_timestamp_child_copy_mode_for_other_parsers(tmp_path: 
 
 
 @pytest.mark.unit()
+def test_from_env_rejects_folder_timestamp_child_with_daily_tar_gz(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="timestamp_child_tar_gz"):
+        _ = AppSettings.from_env(
+            _env(
+                tmp_path,
+                _route(
+                    parser="folder_timestamp_child",
+                    copy_mode="daily_tar_gz",
+                    source_path="data/wrf/ecmwf/",
+                ),
+            )
+        )
+
+
+@pytest.mark.unit()
+def test_from_env_rejects_folder_timestamp_child_with_direct(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="timestamp_child_tar_gz"):
+        _ = AppSettings.from_env(
+            _env(
+                tmp_path,
+                _route(
+                    parser="folder_timestamp_child",
+                    copy_mode="direct",
+                    source_path="data/wrf/ecmwf/",
+                ),
+            )
+        )
+
+
+@pytest.mark.unit()
 def test_from_env_rejects_object_copy_mode(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="copy_mode"):
         _ = AppSettings.from_env(_env(tmp_path, _route(copy_mode={"type": "daily_tar_gz"})))
