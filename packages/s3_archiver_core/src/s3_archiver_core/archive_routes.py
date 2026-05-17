@@ -33,7 +33,6 @@ class ArchiveRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    copy_mode_group_after_timestamp_parts: int = 0
     versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None
@@ -62,7 +61,6 @@ def archive_routes_from_settings(
             copy_mode=route.copy_mode.value,
             source_path=route.source.path,
             destination_path=route.destination.path,
-            copy_mode_group_after_timestamp_parts=route.copy_mode_group_after_timestamp_parts,
             source_identity=route.source.storage_identity(),
             destination_identity=route.destination.storage_identity(),
             transfer_capabilities=transfer_capabilities_for_locations(

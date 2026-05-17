@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import cast
 
 from s3_archiver_core._archive_manifest_paths import route_paths_overlap
-from s3_archiver_core._route_config_copy_mode import load_copy_mode_config as _load_copy_mode_config
 from s3_archiver_core._route_config_fields import addressing_style as _addressing_style
 from s3_archiver_core._route_config_fields import endpoint as _endpoint
 from s3_archiver_core._route_config_fields import normalize_s3_prefix as _normalize_s3_prefix
@@ -21,6 +20,7 @@ from s3_archiver_core._route_config_fields import (
 )
 from s3_archiver_core._settings_factory import AppSettingsFactory
 from s3_archiver_core._settings_models import (
+    CopyMode,
     RouteSettings,
     S3LocationSettings,
     S3Provider,
@@ -98,34 +98,18 @@ def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings 
         return None
     name = _required_string(decoder, route, "name", f"{field}.name")
     parser = _load_parser_kind(decoder, route, f"{field}.parser")
-    copy_mode_config = (
-        None
-        if parser is None
-        else _load_copy_mode_config(decoder, route, f"{field}.copy_mode", parser)
-    )
+    copy_mode = _load_copy_mode(decoder, route, f"{field}.copy_mode")
     source = _load_location(decoder, route.get("source"), f"{field}.source", "SOURCE")
     destination = _load_location(
         decoder, route.get("destination"), f"{field}.destination", "DESTINATION"
     )
-    if (
-        name is None
-        or parser is None
-        or copy_mode_config is None
-        or source is None
-        or destination is None
-    ):
+    if name is None or parser is None or copy_mode is None or source is None or destination is None:
+        return None
+    if not _validate_parser_copy_mode(decoder, parser, copy_mode, f"{field}.copy_mode"):
         return None
     _validate_localstack_endpoint_host(decoder, f"{field}.source.endpoint_url", source)
     _validate_localstack_endpoint_host(decoder, f"{field}.destination.endpoint_url", destination)
-    copy_mode, group_after_timestamp_parts = copy_mode_config
-    return RouteSettings(
-        name,
-        parser,
-        copy_mode,
-        source,
-        destination,
-        copy_mode_group_after_timestamp_parts=group_after_timestamp_parts,
-    )
+    return RouteSettings(name, parser, copy_mode, source, destination)
 
 
 def _load_parser_kind(
@@ -145,6 +129,30 @@ def registered_parser_kinds() -> frozenset[ParserKind]:
     """Return parser kinds accepted by route configuration."""
 
     return _parser_registry.registered_parser_kinds()
+
+
+def _load_copy_mode(
+    decoder: EnvDecoder, route: Mapping[str, object], field: str
+) -> CopyMode | None:
+    value = _required_string(decoder, route, "copy_mode", field)
+    valid = frozenset({mode.value for mode in CopyMode})
+    if value is None:
+        return None
+    if value not in valid:
+        decoder.fail(field, f"{field} must be one of {valid}, got {value!r}")
+        return None
+    return CopyMode(value)
+
+
+def _validate_parser_copy_mode(
+    decoder: EnvDecoder, parser: ParserKind, copy_mode: CopyMode, field: str
+) -> bool:
+    if copy_mode is CopyMode.TIMESTAMP_CHILD_TAR_GZ and parser != ParserKind(
+        "folder_timestamp_child"
+    ):
+        decoder.fail(field, f"{field} requires parser=folder_timestamp_child")
+        return False
+    return True
 
 
 def _load_location(

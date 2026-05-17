@@ -192,7 +192,8 @@ class SQLiteManifestStore:
                         """
                     SELECT DISTINCT target_day
                     FROM entries
-                    WHERE copy_mode = 'daily_tar_gz' AND target_day != ''
+                    WHERE copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz')
+                        AND target_day != ''
                     ORDER BY target_day
                     """
                     )

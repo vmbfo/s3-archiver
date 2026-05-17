@@ -55,7 +55,6 @@ def build_route_archive_manifest(
             source_path=route.source_path,
             destination=route.destination,
             destination_path=route.destination_path,
-            copy_mode_group_after_timestamp_parts=_route_group_after_timestamp_parts(route),
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
         ):
@@ -127,13 +126,6 @@ def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...
 
 def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
     return route.versioning_state or route.source.versioning_state()
-
-
-def _route_group_after_timestamp_parts(route: ArchiveManifestRouteSpec) -> int:
-    value = getattr(route, "copy_mode_group_after_timestamp_parts", 0)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("copy_mode_group_after_timestamp_parts must be an integer")
-    return value
 
 
 def _list_progress_total() -> int:

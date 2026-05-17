@@ -17,7 +17,7 @@ from typing import Literal, Protocol
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
 
-CopyMode = Literal["direct", "daily_tar_gz"]
+CopyMode = Literal["direct", "daily_tar_gz", "timestamp_child_tar_gz"]
 ParserKind = str
 
 
@@ -188,7 +188,6 @@ class ArchiveManifestRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
-    copy_mode_group_after_timestamp_parts: int = 0
     versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None

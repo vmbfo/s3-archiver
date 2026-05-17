@@ -167,7 +167,13 @@ def test_sqlite_helpers_cover_error_edges() -> None:
         _ = chunk_row_at(connection, 0)
     assert list(iter_group_rows(connection, "route")) == []
     assert (
-        list(iter_group_entries(connection, ("route", "", "2026-04-13", "bucket", "key", ""))) == []
+        list(
+            iter_group_entries(
+                connection,
+                ("route", "daily_tar_gz", "", "2026-04-13", "bucket", "key", ""),
+            )
+        )
+        == []
     )
 
 

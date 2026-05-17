@@ -1,3 +1,5 @@
+"""Tests for ARCHIVER_CONFIG_JSON route settings."""
+
 from __future__ import annotations
 
 import json
@@ -15,7 +17,7 @@ def _route(
     *,
     name: str = "fae-daily",
     parser: str = "filename_timestamp",
-    copy_mode: object = "daily_tar_gz",
+    copy_mode: str = "daily_tar_gz",
     source_path: str = "data/fae/",
     destination_bucket: str = "archive-bucket",
 ) -> dict[str, object]:
@@ -69,7 +71,6 @@ def test_from_env_decodes_route_config_json(tmp_path: Path) -> None:
     assert route.name == "fae-daily"
     assert route.parser == ParserKind.FILENAME_TIMESTAMP
     assert route.copy_mode is CopyMode.DAILY_TAR_GZ
-    assert route.copy_mode_group_after_timestamp_parts == 0
     assert route.source.provider is S3Provider.LOCALSTACK
     assert route.source.endpoint_url == "http://localstack:4566"
     assert route.source.path == "data/fae/"
@@ -106,7 +107,7 @@ def test_from_env_expands_route_env_refs_with_defaults(tmp_path: Path) -> None:
 )
 def test_from_env_rejects_invalid_route_enums(
     tmp_path: Path,
-    route_update: dict[str, str],
+    route_update: dict[str, object],
     message: str,
 ) -> None:
     route = _route()
