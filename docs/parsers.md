@@ -170,3 +170,7 @@ This is independent from the `direct` parser. For example, `parser: "filename_ti
 
 S3 stores object keys, not directories. A prefix such as `data/wrf/gfs/2025/02/01/` only becomes
 archivable when objects exist under that prefix.
+
+For every supported combination of `parser` and `copy_mode` — including the
+rejected pairings, full destination-path examples, and a decision flow for
+picking one — see [`parser-copy-mode-matrix.md`](parser-copy-mode-matrix.md).
