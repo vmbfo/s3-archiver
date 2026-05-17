@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -202,10 +203,22 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         raise error from exc
     finally:
         run_lock.release(run_id=locked_run_id)
+    include_payload_details = _include_archive_payload_details()
     payload = (
-        _error_logging.archive_result_payload("ok", result, settings, log_file)
+        _error_logging.archive_result_payload(
+            "ok",
+            result,
+            settings,
+            log_file,
+            include_details=include_payload_details,
+        )
         if result.ok
-        else _error_logging.archive_failure_payload(result, settings, log_file)
+        else _error_logging.archive_failure_payload(
+            result,
+            settings,
+            log_file,
+            include_details=include_payload_details,
+        )
     )
     _run_records.record_result(settings, result=result, payload=payload, log_file=log_file)
     return payload
@@ -310,6 +323,11 @@ def _format_duration(seconds: int | None) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def _include_archive_payload_details() -> bool:
+    value = os.environ.get("ARCHIVER_PAYLOAD_DETAIL", "summary").strip().lower()
+    return value in {"1", "true", "full", "detailed"}
 
 
 def _parse_daily_at_utc(value: str) -> tuple[int, int]:

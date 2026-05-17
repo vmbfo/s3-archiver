@@ -23,6 +23,8 @@ from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.route_payloads import route_summary_payload
 from s3_archiver_core.settings import AppSettings
 
+_PHASE_FAILURE_SAMPLE_LIMIT = 100
+
 
 def log_error_payload(payload: Mapping[str, JsonValue], error: Exception | None = None) -> None:
     """Log a structured error payload after logging is configured."""
@@ -55,11 +57,18 @@ def archive_result_payload(
     result: ArchiveRunResult,
     settings: AppSettings,
     log_file: Path,
+    *,
+    include_details: bool = True,
 ) -> dict[str, JsonValue]:
     """Build the CLI payload for a completed archive invocation."""
 
-    manifest_payload = archive_manifest_payload(result.manifest, include_run_started_at_utc=True)
-    return {
+    manifest_payload = archive_manifest_payload(
+        result.manifest,
+        include_archive_days=True,
+        include_run_started_at_utc=True,
+        include_details=include_details,
+    )
+    payload: dict[str, JsonValue] = {
         "status": status,
         "run_id": result.run_id,
         **route_summary_payload(settings),
@@ -70,29 +79,46 @@ def archive_result_payload(
         "direct_copy_count": manifest_payload["direct_copy_count"],
         "source_object_count": manifest_payload["source_object_count"],
         "skipped_object_count": manifest_payload["skipped_object_count"],
-        "destination_archive_keys": manifest_payload["destination_archive_keys"],
-        "destination_keys": manifest_payload["destination_keys"],
-        "archive_groups": manifest_payload["archive_groups"],
-        "direct_entries": manifest_payload["direct_entries"],
-        "skipped_objects": manifest_payload["skipped_objects"],
+        "archive_days": manifest_payload["archive_days"],
+        "payload_detail": "full" if include_details else "summary",
+        "payload_detail_truncated": not include_details,
         "phases": {
             "list": _phase_payload(result.list),
             "copy": _phase_payload(result.copy),
             "verify": _phase_payload(result.verify),
         },
     }
+    if include_details:
+        payload.update(
+            {
+                "destination_archive_keys": manifest_payload["destination_archive_keys"],
+                "destination_keys": manifest_payload["destination_keys"],
+                "archive_groups": manifest_payload["archive_groups"],
+                "direct_entries": manifest_payload["direct_entries"],
+                "skipped_objects": manifest_payload["skipped_objects"],
+            }
+        )
+    return payload
 
 
 def archive_failure_payload(
     result: ArchiveRunResult,
     settings: AppSettings,
     log_file: Path,
+    *,
+    include_details: bool = True,
 ) -> dict[str, JsonValue]:
     """Build the CLI error payload for a failed archive invocation."""
 
     phase, detail = _first_archive_failure(result)
     timed_out = detail == "archive run timed out"
-    payload = archive_result_payload("error", result, settings, log_file)
+    payload = archive_result_payload(
+        "error",
+        result,
+        settings,
+        log_file,
+        include_details=include_details,
+    )
     payload.update(
         {
             "phase": f"archive.{phase}",
@@ -133,10 +159,12 @@ def error_payload(
 
 
 def _phase_payload(result: ArchivePhaseResult) -> dict[str, JsonValue]:
+    failures = result.failures[:_PHASE_FAILURE_SAMPLE_LIMIT]
     return {
         "status": phase_status(result),
         "failure_count": len(result.failures),
-        "failures": list(result.failures),
+        "failures": list(failures),
+        "failures_truncated": len(failures) < len(result.failures),
     }
 
 

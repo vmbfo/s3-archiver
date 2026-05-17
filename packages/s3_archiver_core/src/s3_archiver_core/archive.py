@@ -82,6 +82,7 @@ def run_archive(
             timed_out,
             time_remaining,
             progress_logger,
+            collect_verified=False,
         )
         if _timed_out(now, deadline):
             return _run_result(
