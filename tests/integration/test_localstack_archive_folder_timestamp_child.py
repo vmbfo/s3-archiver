@@ -83,7 +83,7 @@ def test_archive_command_groups_wrf_layout_by_timestamp_child_folder(
     assert set(d01_hour_00.member_mtimes) == {0}
     assert set(d01_hour_00.member_uids) == {0}
     assert set(d01_hour_00.member_gids) == {0}
-    assert set(d01_hour_00.member_modes) == {0}
+    assert set(d01_hour_00.member_modes) == {0o644}
     other_archives = EXPECTED_ARCHIVE_KEYS - {HOUR_00_D01_ARCHIVE_KEY}
     leaked = set(d01_hour_00.members) - HOUR_00_D01_KEYS
     assert leaked == set()

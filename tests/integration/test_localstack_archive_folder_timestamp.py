@@ -81,7 +81,7 @@ def test_archive_command_groups_folder_timestamped_layout_into_daily_archives(
     assert set(feb_01.member_mtimes) == {0}
     assert set(feb_01.member_uids) == {0}
     assert set(feb_01.member_gids) == {0}
-    assert set(feb_01.member_modes) == {0}
+    assert set(feb_01.member_modes) == {0o644}
     assert set(feb_01.members) - DAY_FEB_01_KEYS == set()
     feb_02 = read_deterministic_archive(
         destination_client, destination_bucket, "data/wrf/gfs/2025-02-02.tar.gz"
