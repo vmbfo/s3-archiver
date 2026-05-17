@@ -227,6 +227,8 @@ def test_sqlite_manifest_store_reaps_reader_connection_after_thread_exit(
         del thread
         _ = gc.collect()
         assert worker_id not in store._reader_connections  # pyright: ignore[reportPrivateUsage]
+
+        store._reap_reader_connection(thread_id=-1)  # pyright: ignore[reportPrivateUsage]
     finally:
         store.cleanup()
 
