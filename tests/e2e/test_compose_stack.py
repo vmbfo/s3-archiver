@@ -237,8 +237,8 @@ def test_compose_scheduler_service_runs_schedule_command(
 
 @pytest.mark.e2e()
 def test_compose_services_default_to_dotenv_when_app_env_file_unset(tmp_path: Path) -> None:
-    shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
-    (tmp_path / ".env").write_text("", encoding="utf-8")
+    _ = shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
+    _ = (tmp_path / ".env").write_text("", encoding="utf-8")
     env = os.environ.copy()
     _ = env.pop("APP_ENV_FILE", None)
     _ = env.pop("ENV_FILE", None)
@@ -258,7 +258,7 @@ def test_compose_services_default_to_dotenv_when_app_env_file_unset(tmp_path: Pa
 
 @pytest.mark.e2e()
 def test_compose_services_fail_when_env_file_missing(tmp_path: Path) -> None:
-    shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
+    _ = shutil.copy(REPO_ROOT / "compose.yaml", tmp_path / "compose.yaml")
     env = os.environ.copy()
     _ = env.pop("APP_ENV_FILE", None)
     _ = env.pop("ENV_FILE", None)
