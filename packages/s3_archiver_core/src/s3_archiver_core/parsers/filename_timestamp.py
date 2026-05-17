@@ -42,6 +42,8 @@ class _MalformedTimestampError(ValueError):
 
 
 class FilenameTimestampParser:
+    """Parse archive timestamps from object keys and their parent folders."""
+
     @property
     def kind(self) -> ParserKind:
         return ParserKind.FILENAME_TIMESTAMP
@@ -49,6 +51,7 @@ class FilenameTimestampParser:
     def parse(
         self, listed: ParserListedObject, context: ParserContext | None = None
     ) -> SelectedObject | SkippedObject:
+        """Select an object for archiving when its key contains a reliable timestamp."""
         _ = context
         selected = select_key_timestamp(listed.key)
         if selected is None:
@@ -60,6 +63,7 @@ class FilenameTimestampParser:
 def select_key_timestamp(
     key: str, *, last_modified: datetime | None = None
 ) -> tuple[datetime, TimestampSource] | None:
+    """Return the most reliable timestamp embedded in an object key."""
     _ = last_modified
     path = PurePosixPath(key)
     basename_scan = _candidate_scan(path.name, "basename")
@@ -76,6 +80,7 @@ def select_key_timestamp(
 
 
 def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None:
+    """Return the latest timestamp embedded in a key's parent folder path."""
     candidates = _path_candidates(PurePosixPath(key))
     if not candidates:
         return None
@@ -84,6 +89,7 @@ def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None
 
 
 def archive_root_for_key(key: str) -> str:
+    """Return the parent archive root with timestamp suffix folders removed."""
     parts = list(PurePosixPath(key).parent.parts)
     while parts:
         stripped = _strip_one_timestamp_suffix(parts)
@@ -96,6 +102,7 @@ def archive_root_for_key(key: str) -> str:
 def grouped_archive_root_after_folder_timestamp(
     key: str, group_after_timestamp_parts: int
 ) -> str | None:
+    """Return a grouping root that includes path parts after the selected folder timestamp."""
     if group_after_timestamp_parts <= 0:
         return None
     parts = _clean_path_parts(PurePosixPath(key).parent.parts)
@@ -109,6 +116,7 @@ def grouped_archive_root_after_folder_timestamp(
 
 
 def destination_archive_key(archive_root: str, target_day: date) -> str:
+    """Return the archive object key for an archive root and target day."""
     filename = f"{target_day.isoformat()}.tar.gz"
     return f"{archive_root}/{filename}" if archive_root else filename
 
@@ -136,11 +144,7 @@ def _path_candidates(path: PurePosixPath) -> tuple[_TimestampCandidate, ...]:
     parts = _clean_path_parts(path.parent.parts)
     parent = "/".join(parts)
     span_candidates = tuple(span.candidate for span in _path_timestamp_spans(parts))
-    return _dedupe((*_candidates(parent, "path"), *span_candidates))
-
-
-def _candidates(text: str, source: TimestampSource) -> tuple[_TimestampCandidate, ...]:
-    return _candidate_scan(text, source).candidates
+    return tuple(dict.fromkeys((*_candidate_scan(parent, "path").candidates, *span_candidates)))
 
 
 def _candidate_scan(text: str, source: TimestampSource) -> _CandidateScan:
@@ -153,7 +157,7 @@ def _candidate_scan(text: str, source: TimestampSource) -> _CandidateScan:
             malformed = True
             continue
         candidates.append(candidate)
-    return _CandidateScan(_dedupe(tuple(candidates)), malformed)
+    return _CandidateScan(tuple(dict.fromkeys(candidates)), malformed)
 
 
 def _latest_path_timestamp_span(parts: tuple[str, ...]) -> _PathTimestampSpan | None:
@@ -167,7 +171,8 @@ def _path_timestamp_spans(parts: tuple[str, ...]) -> tuple[_PathTimestampSpan, .
     candidates: list[_PathTimestampSpan] = []
     for index, part in enumerate(parts):
         candidates.extend(
-            _PathTimestampSpan(candidate, index, 1) for candidate in _candidates(part, "path")
+            _PathTimestampSpan(candidate, index, 1)
+            for candidate in _candidate_scan(part, "path").candidates
         )
     for index in range(len(parts) - 2):
         span = _segmented_path_span(parts, index)
@@ -264,13 +269,9 @@ def _strip_one_timestamp_suffix(parts: list[str]) -> list[str]:
         return parts[:-4]
     if len(parts) >= 3 and _is_year(parts[-3]) and _is_month(parts[-2]) and _is_day(parts[-1]):
         return parts[:-3]
-    if _candidates(parts[-1], "path"):
+    if _candidate_scan(parts[-1], "path").candidates:
         return parts[:-1]
     return parts
-
-
-def _dedupe(candidates: tuple[_TimestampCandidate, ...]) -> tuple[_TimestampCandidate, ...]:
-    return tuple(dict.fromkeys(candidates))
 
 
 def _clean_path_parts(parts: tuple[str, ...]) -> tuple[str, ...]:
