@@ -44,6 +44,7 @@ def test_archive_routes_from_settings_builds_runtime_bucket_adapters(tmp_path: P
                 copy_mode=CopyMode.DAILY_TAR_GZ,
                 source=source,
                 destination=destination,
+                copy_mode_group_after_timestamp_parts=1,
             ),
         ),
     )
@@ -63,6 +64,7 @@ def test_archive_routes_from_settings_builds_runtime_bucket_adapters(tmp_path: P
     assert route.name == "daily"
     assert route.parser_kind == "folder_timestamp"
     assert route.copy_mode == "daily_tar_gz"
+    assert route.copy_mode_group_after_timestamp_parts == 1
     assert route.source_path == "source/prefix"
     assert route.destination_path == "destination/prefix"
     assert route.source_identity == source.storage_identity()

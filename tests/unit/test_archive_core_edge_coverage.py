@@ -27,7 +27,11 @@ from s3_archiver_core.archive_transfer import (
     verify_destination_checksum,
     verify_destination_content,
 )
-from s3_archiver_core.parsers.filename_timestamp import archive_root_for_key, select_key_timestamp
+from s3_archiver_core.parsers.filename_timestamp import (
+    archive_root_for_key,
+    grouped_archive_root_after_folder_timestamp,
+    select_key_timestamp,
+)
 from s3_archiver_core.s3 import S3ObjectProperties
 
 from tests.unit.archive_s3_fakes import FakeArchiveClient
@@ -183,6 +187,9 @@ def test_timestamp_parser_covers_path_stripping_and_time_separator_edges() -> No
     )
     assert archive_root_for_key("data/fae/2026-04-13/file.txt") == "data/fae"
     assert archive_root_for_key("file.txt") == ""
+    assert grouped_archive_root_after_folder_timestamp("data/no-stamp/file.txt", 1) is None
+    assert grouped_archive_root_after_folder_timestamp("data/fae/2026/04/13/file.txt", 1) is None
+    assert grouped_archive_root_after_folder_timestamp("data/fae/2026/04/13/file.txt", 0) is None
 
 
 @pytest.mark.unit()

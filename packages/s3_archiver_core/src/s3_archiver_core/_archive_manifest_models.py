@@ -188,6 +188,7 @@ class ArchiveManifestRoute:
     copy_mode: CopyMode
     source_path: str = ""
     destination_path: str = ""
+    copy_mode_group_after_timestamp_parts: int = 0
     versioning_state: VersioningState | None = None
     source_identity: object | None = None
     destination_identity: object | None = None

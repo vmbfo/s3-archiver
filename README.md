@@ -59,7 +59,7 @@ LocalStack readiness now only proves the S3 API is reachable. The pytest integra
 
 - `name`: unique route name used in logs, manifests, health output, and archive result payloads.
 - `parser`: registered parser name, such as `filename_timestamp`, `folder_timestamp`, or `direct`.
-- `copy_mode`: `daily_tar_gz` or `direct`.
+- `copy_mode`: `daily_tar_gz`, `direct`, or an object with `type` set to one of those values.
 - `source`: source S3 location object.
 - `destination`: destination S3 location object.
 
@@ -77,6 +77,22 @@ Copy modes:
 
 - `daily_tar_gz`: writes one deterministic `.tar.gz` archive per route, archive root, and data day.
 - `direct`: copies each selected source object directly to the destination path.
+
+For folder-timestamped archive layouts, `copy_mode` can also be an object with
+`group_after_timestamp_parts`. This non-negative integer keeps the timestamp
+folders plus that many following folder segments in the archive root. For
+example, a route with source and destination paths of `data/wrf/ecmwf/` can keep
+`00/d01`, `00/d02`, and `06/d01` separate:
+
+```json
+{
+  "name": "wrf",
+  "parser": "folder_timestamp",
+  "copy_mode": {"type": "daily_tar_gz", "group_after_timestamp_parts": 1},
+  "source": {"path": "data/wrf/ecmwf/"},
+  "destination": {"path": "data/wrf/ecmwf/"}
+}
+```
 
 Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
 

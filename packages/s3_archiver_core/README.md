@@ -52,4 +52,10 @@ Supported copy modes:
 - `daily_tar_gz`: groups selected objects by route, archive root, and data day, then writes deterministic `.tar.gz` archives.
 - `direct`: copies each selected object to the destination path.
 
+`copy_mode` may also be an object. For folder-timestamped archive layouts,
+`{"type": "daily_tar_gz", "group_after_timestamp_parts": 1}` groups by the
+timestamp folders plus one following folder segment, so keys like
+`data/wrf/ecmwf/2026/05/16/00/d01/...` and `.../d02/...` produce separate daily
+archives under matching destination prefixes.
+
 Route names must be unique, source and destination storage identities must differ, and OCI locations require `namespace` and `iam_user_ocid`. Source paths are validated per storage location with directory-boundary prefix semantics, so sibling prefixes such as `data` and `database` are separate routes while `data` and `data/fae` overlap.

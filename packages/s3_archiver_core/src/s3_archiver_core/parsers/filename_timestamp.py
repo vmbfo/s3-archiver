@@ -30,13 +30,18 @@ class _CandidateScan:
     malformed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _PathTimestampSpan:
+    candidate: _TimestampCandidate
+    part_start: int
+    part_count: int
+
+
 class _MalformedTimestampError(ValueError):
-    """Timestamp-shaped text was present but could not be parsed reliably."""
+    pass
 
 
 class FilenameTimestampParser:
-    """Select objects using timestamps embedded in source keys."""
-
     @property
     def kind(self) -> ParserKind:
         return ParserKind.FILENAME_TIMESTAMP
@@ -44,8 +49,6 @@ class FilenameTimestampParser:
     def parse(
         self, listed: ParserListedObject, context: ParserContext | None = None
     ) -> SelectedObject | SkippedObject:
-        """Select the object when its key contains a reliable timestamp."""
-
         _ = context
         selected = select_key_timestamp(listed.key)
         if selected is None:
@@ -57,8 +60,6 @@ class FilenameTimestampParser:
 def select_key_timestamp(
     key: str, *, last_modified: datetime | None = None
 ) -> tuple[datetime, TimestampSource] | None:
-    """Select the reliable UTC timestamp embedded in a source key."""
-
     _ = last_modified
     path = PurePosixPath(key)
     basename_scan = _candidate_scan(path.name, "basename")
@@ -75,8 +76,6 @@ def select_key_timestamp(
 
 
 def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None:
-    """Select a reliable UTC timestamp embedded in source key folders."""
-
     candidates = _path_candidates(PurePosixPath(key))
     if not candidates:
         return None
@@ -85,8 +84,6 @@ def select_folder_timestamp(key: str) -> tuple[datetime, TimestampSource] | None
 
 
 def archive_root_for_key(key: str) -> str:
-    """Return the archive grouping root for a timestamped source key."""
-
     parts = list(PurePosixPath(key).parent.parts)
     while parts:
         stripped = _strip_one_timestamp_suffix(parts)
@@ -96,9 +93,22 @@ def archive_root_for_key(key: str) -> str:
     return "/".join(part for part in parts if part not in {"", "."})
 
 
-def destination_archive_key(archive_root: str, target_day: date) -> str:
-    """Return the destination tar.gz key for an archive root and day."""
+def grouped_archive_root_after_folder_timestamp(
+    key: str, group_after_timestamp_parts: int
+) -> str | None:
+    if group_after_timestamp_parts <= 0:
+        return None
+    parts = _clean_path_parts(PurePosixPath(key).parent.parts)
+    span = _latest_path_timestamp_span(parts)
+    if span is None:
+        return None
+    root_end = span.part_start + span.part_count + group_after_timestamp_parts
+    if len(parts) < root_end:
+        return None
+    return "/".join(parts[span.part_start : root_end])
 
+
+def destination_archive_key(archive_root: str, target_day: date) -> str:
     filename = f"{target_day.isoformat()}.tar.gz"
     return f"{archive_root}/{filename}" if archive_root else filename
 
@@ -119,15 +129,14 @@ def _pick_candidate(
 
 
 def _latest_candidate(candidates: tuple[_TimestampCandidate, ...]) -> _TimestampCandidate:
-    return max(
-        candidates,
-        key=lambda candidate: candidate.value,
-    )
+    return max(candidates, key=lambda candidate: candidate.value)
 
 
 def _path_candidates(path: PurePosixPath) -> tuple[_TimestampCandidate, ...]:
-    parent = "/".join(part for part in path.parent.parts if part not in {"", "."})
-    return _dedupe((*_candidates(parent, "path"), *_segmented_path_candidates(path.parent.parts)))
+    parts = _clean_path_parts(path.parent.parts)
+    parent = "/".join(parts)
+    span_candidates = tuple(span.candidate for span in _path_timestamp_spans(parts))
+    return _dedupe((*_candidates(parent, "path"), *span_candidates))
 
 
 def _candidates(text: str, source: TimestampSource) -> tuple[_TimestampCandidate, ...]:
@@ -147,19 +156,42 @@ def _candidate_scan(text: str, source: TimestampSource) -> _CandidateScan:
     return _CandidateScan(_dedupe(tuple(candidates)), malformed)
 
 
-def _segmented_path_candidates(parts: tuple[str, ...]) -> tuple[_TimestampCandidate, ...]:
-    candidates: list[_TimestampCandidate] = []
+def _latest_path_timestamp_span(parts: tuple[str, ...]) -> _PathTimestampSpan | None:
+    spans = _path_timestamp_spans(parts)
+    if not spans:
+        return None
+    return max(spans, key=lambda span: span.candidate.value)
+
+
+def _path_timestamp_spans(parts: tuple[str, ...]) -> tuple[_PathTimestampSpan, ...]:
+    candidates: list[_PathTimestampSpan] = []
+    for index, part in enumerate(parts):
+        candidates.extend(
+            _PathTimestampSpan(candidate, index, 1) for candidate in _candidates(part, "path")
+        )
     for index in range(len(parts) - 2):
-        year, month, day = parts[index : index + 3]
-        hour = parts[index + 3] if index + 3 < len(parts) else None
-        if _is_year(year) and _is_month(month) and _is_day(day):
-            hour_value = int(hour) if hour is not None and _is_hour(hour) else 0
-            try:
-                dt = datetime(int(year), int(month), int(day), hour_value, tzinfo=UTC)
-            except ValueError:
-                continue
-            candidates.append(_TimestampCandidate(dt, "path", "/".join(parts[index : index + 4])))
-    return _dedupe(tuple(candidates))
+        span = _segmented_path_span(parts, index)
+        if span is not None:
+            candidates.append(span)
+    return tuple(dict.fromkeys(candidates))
+
+
+def _segmented_path_span(parts: tuple[str, ...], index: int) -> _PathTimestampSpan | None:
+    year, month, day = parts[index : index + 3]
+    hour = parts[index + 3] if index + 3 < len(parts) else None
+    if not (_is_year(year) and _is_month(month) and _is_day(day)):
+        return None
+    hour_value = int(hour) if hour is not None and _is_hour(hour) else 0
+    part_count = 4 if hour is not None and _is_hour(hour) else 3
+    try:
+        dt = datetime(int(year), int(month), int(day), hour_value, tzinfo=UTC)
+    except ValueError:
+        return None
+    return _PathTimestampSpan(
+        _TimestampCandidate(dt, "path", "/".join(parts[index : index + part_count])),
+        index,
+        part_count,
+    )
 
 
 def _match_datetime(
@@ -169,10 +201,7 @@ def _match_datetime(
     time_start = _time_start(tail)
     if time_start is None:
         dt = datetime(
-            int(date_match["year"]),
-            int(date_match["month"]),
-            int(date_match["day"]),
-            tzinfo=UTC,
+            int(date_match["year"]), int(date_match["month"]), int(date_match["day"]), tzinfo=UTC
         )
         return _TimestampCandidate(dt, source, date_match.group(0))
 
@@ -241,14 +270,11 @@ def _strip_one_timestamp_suffix(parts: list[str]) -> list[str]:
 
 
 def _dedupe(candidates: tuple[_TimestampCandidate, ...]) -> tuple[_TimestampCandidate, ...]:
-    seen: set[tuple[datetime, TimestampSource, str]] = set()
-    deduped: list[_TimestampCandidate] = []
-    for candidate in candidates:
-        key = (candidate.value, candidate.source, candidate.text)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(candidate)
-    return tuple(deduped)
+    return tuple(dict.fromkeys(candidates))
+
+
+def _clean_path_parts(parts: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(part for part in parts if part not in {"", "."})
 
 
 def _is_year(value: str | None) -> bool:

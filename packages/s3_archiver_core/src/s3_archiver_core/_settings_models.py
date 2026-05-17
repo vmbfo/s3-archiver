@@ -87,3 +87,4 @@ class RouteSettings:
     copy_mode: CopyMode
     source: S3LocationSettings
     destination: S3LocationSettings
+    copy_mode_group_after_timestamp_parts: int = 0

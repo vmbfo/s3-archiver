@@ -26,6 +26,7 @@ from s3_archiver_core._archive_manifest_selection import select_object
 from s3_archiver_core.parsers.filename_timestamp import (
     archive_root_for_key,
     destination_archive_key,
+    grouped_archive_root_after_folder_timestamp,
 )
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.parsers.results import TimestampSource
@@ -43,6 +44,7 @@ def build_archive_manifest(
     source_path: str = "",
     destination: DestinationLocator | None = None,
     destination_path: str = "",
+    copy_mode_group_after_timestamp_parts: int = 0,
     source_identity: object | None = None,
     destination_identity: object | None = None,
 ) -> ArchiveManifest:
@@ -60,6 +62,7 @@ def build_archive_manifest(
         source_path=source_path,
         destination=destination,
         destination_path=destination_path,
+        copy_mode_group_after_timestamp_parts=copy_mode_group_after_timestamp_parts,
         source_identity=source_identity,
         destination_identity=destination_identity,
     ):
@@ -89,6 +92,7 @@ def iter_archive_manifest_items(
     source_path: str = "",
     destination: DestinationLocator | None = None,
     destination_path: str = "",
+    copy_mode_group_after_timestamp_parts: int = 0,
     source_identity: object | None = None,
     destination_identity: object | None = None,
 ) -> Iterator[ManifestEntry | SkippedObject]:
@@ -102,6 +106,7 @@ def iter_archive_manifest_items(
         copy_mode=copy_mode,
         source_path=normalize_prefix(source_path),
         destination_path=normalize_prefix(destination_path),
+        copy_mode_group_after_timestamp_parts=copy_mode_group_after_timestamp_parts,
         source_identity=source_identity or storage_identity(source),
         destination_identity=destination_identity or storage_identity(destination),
     )
@@ -142,6 +147,7 @@ class _ManifestBuildContext:
     copy_mode: CopyMode
     source_path: str
     destination_path: str
+    copy_mode_group_after_timestamp_parts: int
     source_identity: object | None
     destination_identity: object | None
 
@@ -158,11 +164,7 @@ class _ManifestBuildContext:
         *,
         archive_root: str | None,
     ) -> ManifestEntry:
-        root = (
-            archive_root
-            if archive_root is not None
-            else archive_root_for_key(relative_key(listed.key, self.source_path))
-        )
+        root = self._archive_root_for_entry(listed, archive_root)
         destination_key = (
             join_key(self.destination_path, listed.key)
             if self.copy_mode == "direct"
@@ -190,6 +192,20 @@ class _ManifestBuildContext:
             destination_key=destination_key,
             source_identity=self.source_identity,
             destination_identity=self.destination_identity,
+        )
+
+    def _archive_root_for_entry(self, listed: S3ListedObject, archive_root: str | None) -> str:
+        relative_source_key = relative_key(listed.key, self.source_path)
+        grouped_root = grouped_archive_root_after_folder_timestamp(
+            relative_source_key,
+            self.copy_mode_group_after_timestamp_parts
+            if self.parser_kind == "folder_timestamp" and self.copy_mode == "daily_tar_gz"
+            else 0,
+        )
+        if grouped_root is not None:
+            return grouped_root
+        return (
+            archive_root if archive_root is not None else archive_root_for_key(relative_source_key)
         )
 
     def skipped_object(
