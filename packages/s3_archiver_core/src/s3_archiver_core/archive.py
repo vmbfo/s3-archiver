@@ -16,7 +16,7 @@ from s3_archiver_core.archive_manifest import (
     ArchiveManifest,
     build_route_archive_manifest,
 )
-from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
+from s3_archiver_core.archive_progress import ProgressLogger
 from s3_archiver_core.archive_result import ArchivePhaseResult, ArchiveRunResult
 from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
 
@@ -55,7 +55,7 @@ def run_archive(
         raise RuntimeError("archive run lock is already held")
     try:
         try:
-            manifest = _build_manifest(routes, started)
+            manifest = _build_manifest(routes, started, progress_logger)
         except Exception as exc:
             return ArchiveRunResult(
                 run_id,
@@ -64,7 +64,6 @@ def run_archive(
                 _skipped("verify"),
                 ArchivePhaseResult("list", (str(exc),)),
             )
-        _emit_manifest_progress(progress_logger, manifest)
         if _timed_out(now, deadline):
             return _run_result(run_id, manifest, _timeout("copy"), _skipped("verify"))
 
@@ -133,8 +132,13 @@ def _run_result(
 def _build_manifest(
     routes: tuple[ArchiveRoute, ...],
     started: datetime,
+    progress_logger: ProgressLogger | None,
 ) -> ArchiveManifest:
-    return build_route_archive_manifest(routes, run_started_at_utc=started)
+    return build_route_archive_manifest(
+        routes,
+        run_started_at_utc=started,
+        progress_logger=progress_logger,
+    )
 
 
 def _skipped(phase: str) -> ArchivePhaseResult:
@@ -151,15 +155,6 @@ def _timeout(phase: str) -> ArchivePhaseResult:
 
 def _empty_manifest(started: datetime) -> ArchiveManifest:
     return ArchiveManifest(started, (), None, (), ())
-
-
-def _emit_manifest_progress(
-    progress_logger: ProgressLogger | None, manifest: ArchiveManifest
-) -> None:
-    if progress_logger is None:
-        return
-    total = len(manifest.entries) + len(manifest.skipped_objects)
-    progress_logger(ArchiveProgress("list", total, total))
 
 
 def _as_utc(value: datetime) -> datetime:

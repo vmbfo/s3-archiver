@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sized
+from collections.abc import Iterable, Sized
 from typing import cast
 
 from s3_archiver_core.archive import ArchivePhaseResult
@@ -165,9 +165,7 @@ def archive_manifest_payload(
         skipped_objects = skipped_object_payloads(manifest)
         payload.update(
             {
-                "destination_archive_keys": [
-                    g["destination_archive_key"] for g in archive_groups
-                ],
+                "destination_archive_keys": [g["destination_archive_key"] for g in archive_groups],
                 "destination_keys": [
                     *(g["destination_archive_key"] for g in archive_groups),
                     *(e["destination_key"] for e in direct_entries),
@@ -178,9 +176,7 @@ def archive_manifest_payload(
             }
         )
     if include_archive_days:
-        payload["archive_days"] = cast(
-            JsonValue, sorted({date_text(attr(g, "target_day")) for g in object_list(groups)})
-        )
+        payload["archive_days"] = cast(JsonValue, _archive_days(groups))
     if include_entries:
         payload["entries"] = json_list([manifest_entry_payload(e) for e in object_list(entries)])
     if include_run_started_at_utc:
@@ -261,3 +257,12 @@ def _copy_mode_count(value: object | None, copy_mode: str) -> int:
     return sum(
         1 for entry in object_list(value) if string_or_none(attr(entry, "copy_mode")) == copy_mode
     )
+
+
+def _archive_days(value: object | None) -> list[str]:
+    target_days = getattr(value, "target_days", None)
+    if callable(target_days):
+        raw_days = target_days()
+        if isinstance(raw_days, Iterable) and not isinstance(raw_days, str):
+            return [str(day) for day in raw_days]
+    return sorted({date_text(attr(g, "target_day")) for g in object_list(value)})

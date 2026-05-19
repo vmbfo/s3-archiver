@@ -124,12 +124,6 @@ class S3ArchiveBucket:
             content_type="application/gzip",
         )
 
-    def _source_properties(self, key: str, version_id: str | None) -> S3ObjectProperties:
-        properties = self.head_object(key, version_id)
-        if properties is None:
-            raise FileNotFoundError(f"{key}: listed source object disappeared before metadata read")
-        return properties
-
     def get_tags(self, key: str, version_id: str | None = None) -> Mapping[str, str]:
         """Return object tags as a string mapping."""
         response = self.client.get_object_tagging(**versioned_kwargs(self.bucket, key, version_id))

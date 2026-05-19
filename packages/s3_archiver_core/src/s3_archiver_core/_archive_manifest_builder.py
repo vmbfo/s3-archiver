@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from datetime import date, datetime
+from typing import cast
 
-from s3_archiver_core._archive_identity import stable_identity_value
+from s3_archiver_core._archive_manifest_groups import archive_groups
 from s3_archiver_core._archive_manifest_models import (
-    ArchiveGroup,
     ArchiveManifest,
     CopyMode,
     DestinationLocator,
@@ -31,9 +30,6 @@ from s3_archiver_core.parsers.filename_timestamp import (
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
-
-DEFAULT_ARCHIVE_GROUP_MAX_BYTES = 50 * 1024 * 1024 * 1024
-DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS = 2_000_000
 
 
 def build_archive_manifest(
@@ -110,7 +106,7 @@ def iter_archive_manifest_items(
         destination_identity=destination_identity or storage_identity(destination),
     )
     run_started = as_utc(run_started_at_utc)
-    for listed in source.list_source_objects(versioning_state, prefix=context.source_path):
+    for listed in _list_source_objects(source, versioning_state, context.source_path):
         if context.source_path and not listed.key.startswith(context.source_path):
             continue
         selected = select_object(parser_kind, listed, context.source_path)
@@ -135,52 +131,6 @@ def iter_archive_manifest_items(
             timestamp.date(),
             archive_root=selected.archive_root,
         )
-
-
-def archive_groups(entries: Iterable[ManifestEntry]) -> tuple[ArchiveGroup, ...]:
-    """Group daily tar entries by route, root, target day, key, and destination."""
-
-    grouped_entries: dict[_ArchiveGroupKey, list[ManifestEntry]] = {}
-    for entry in entries:
-        if entry.copy_mode != "daily_tar_gz" or entry.target_day is None:
-            continue
-        key = (
-            entry.route_name,
-            entry.archive_root,
-            entry.target_day,
-            entry.destination_bucket,
-            entry.destination_archive_key,
-            _stable_sort_value(entry.destination_identity),
-        )
-        grouped_entries.setdefault(key, []).append(entry)
-
-    groups: list[ArchiveGroup] = []
-    for key in sorted(grouped_entries):
-        grouped = tuple(sorted(grouped_entries[key], key=lambda item: item.key))
-        for chunk_index, chunk in enumerate(_bounded_group_chunks(grouped), start=1):
-            chunk_entries = _archive_chunk_entries(chunk, chunk_index)
-            first = chunk_entries[0]
-            if first.target_day is None:  # pragma: no cover - guarded before grouping
-                raise RuntimeError("daily archive group missing target day")
-            groups.append(
-                ArchiveGroup(
-                    target_day=first.target_day,
-                    archive_root=first.archive_root,
-                    destination_archive_key=first.destination_archive_key,
-                    entries=chunk_entries,
-                    route_name=first.route_name,
-                    parser_kind=first.parser_kind,
-                    copy_mode=first.copy_mode,
-                    source_bucket=first.source_bucket,
-                    source_identity=first.source_identity,
-                    destination_bucket=first.destination_bucket,
-                    destination_identity=first.destination_identity,
-                )
-            )
-    return tuple(groups)
-
-
-type _ArchiveGroupKey = tuple[str, str, date, str, str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,66 +225,17 @@ class _ManifestBuildContext:
         )
 
 
-def _stable_sort_value(value: object) -> str:
-    return repr(stable_identity_value(value))
-
-
-def _bounded_group_chunks(
-    entries: tuple[ManifestEntry, ...],
-) -> tuple[tuple[ManifestEntry, ...], ...]:
-    max_bytes = _positive_int_env(
-        "ARCHIVER_ARCHIVE_GROUP_MAX_BYTES", DEFAULT_ARCHIVE_GROUP_MAX_BYTES
-    )
-    max_objects = _positive_int_env(
-        "ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS", DEFAULT_ARCHIVE_GROUP_MAX_OBJECTS
-    )
-    chunks: list[tuple[ManifestEntry, ...]] = []
-    chunk: list[ManifestEntry] = []
-    chunk_bytes = 0
-    for entry in entries:
-        next_bytes = chunk_bytes + max(entry.size, 0)
-        if chunk and (len(chunk) >= max_objects or next_bytes > max_bytes):
-            chunks.append(tuple(chunk))
-            chunk = []
-            chunk_bytes = 0
-            next_bytes = max(entry.size, 0)
-        chunk.append(entry)
-        chunk_bytes = next_bytes
-    if chunk:
-        chunks.append(tuple(chunk))
-    return tuple(chunks)
-
-
-def _archive_chunk_entries(
-    entries: tuple[ManifestEntry, ...],
-    chunk_index: int,
-) -> tuple[ManifestEntry, ...]:
-    if chunk_index == 1:
-        return entries
-    destination_key = _chunk_archive_key(entries[0].destination_archive_key, chunk_index)
-    return tuple(
-        replace(
-            entry,
-            destination_archive_key=destination_key,
-            destination_key=destination_key,
-        )
-        for entry in entries
-    )
-
-
-def _chunk_archive_key(key: str, chunk_index: int) -> str:
-    suffix = f".part-{chunk_index:05d}.tar.gz"
-    if key.endswith(".tar.gz"):
-        return f"{key[:-7]}{suffix}"
-    return f"{key}.part-{chunk_index:05d}"
-
-
-def _positive_int_env(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None:
-        return default
+def _list_source_objects(
+    source: SourceLister,
+    versioning_state: VersioningState,
+    source_path: str,
+) -> Iterable[S3ListedObject]:
     try:
-        parsed = int(value)
-    except ValueError:
-        return default
-    return parsed if parsed > 0 else default
+        return source.list_source_objects(versioning_state, prefix=source_path)
+    except TypeError:
+        if source_path:
+            raise
+        legacy_lister = cast(
+            Callable[[VersioningState], Iterable[S3ListedObject]], source.list_source_objects
+        )
+        return legacy_lister(versioning_state)

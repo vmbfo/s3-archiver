@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import cast
 
 import pytest
 from s3_archiver_core import _archive_copy as archive_copy_module
 from s3_archiver_core._archive_copy import copy_phase, verify_phase
+from s3_archiver_core._archive_parallel import run_parallel_items
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRoute
 from s3_archiver_core.archive_manifest import (
@@ -156,6 +156,7 @@ def test_copy_phase_ignores_uncopied_success_results(
         _destination: ArchiveBucket,
         _group: ArchiveGroup,
         _debug_logger: DebugLogger | None,
+        **_kwargs: object,
     ) -> tuple[str | None, bool]:
         return None, False
 
@@ -247,16 +248,4 @@ def _run_parallel_items() -> Callable[
     ],
     tuple[str, ...],
 ]:
-    name = "_run_parallel_items"
-    return cast(
-        Callable[
-            [
-                tuple[str, ...],
-                Callable[[str], tuple[str, ...]],
-                Callable[[], bool],
-                Callable[[], float],
-            ],
-            tuple[str, ...],
-        ],
-        getattr(archive_copy_module, name),
-    )
+    return run_parallel_items

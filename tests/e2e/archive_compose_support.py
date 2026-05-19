@@ -27,12 +27,13 @@ def write_archive_env_file(
 ) -> Path:
     """Write the compose app env file for archive e2e tests."""
 
+    merged_overrides = {"ARCHIVER_PAYLOAD_DETAIL": "full", **dict(overrides or {})}
     return write_localstack_env_file(
         tmp_path,
         bucket_pair,
         endpoint=LOCALSTACK_COMPOSE_ENDPOINT,
         log_dir=compose_runtime_log_dir(bucket_pair),
-        overrides=overrides,
+        overrides=merged_overrides,
     )
 
 

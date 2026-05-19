@@ -126,7 +126,7 @@ class ArchiveGroup:
     target_day: date
     archive_root: str
     destination_archive_key: str
-    entries: tuple[ManifestEntry, ...]
+    entries: Sequence[ManifestEntry]
     route_name: str = "default"
     parser_kind: ParserKind = "filename_timestamp"
     copy_mode: CopyMode = "daily_tar_gz"
@@ -134,6 +134,8 @@ class ArchiveGroup:
     source_identity: object | None = None
     destination_bucket: str = ""
     destination_identity: object | None = None
+    manifest_sha256: str | None = None
+    source_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

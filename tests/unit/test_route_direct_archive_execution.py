@@ -59,7 +59,10 @@ def test_run_archive_direct_copy_mode_copies_and_verifies() -> None:
 
 
 @pytest.mark.unit()
-def test_run_archive_direct_copy_mode_does_not_rehash_content_without_checksums() -> None:
+def test_run_archive_direct_copy_mode_rehashes_content_without_checksums(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ARCHIVER_DIRECT_CONTENT_VERIFY", "true")
     listed = _listed("data/raw.txt", 1, "v1")
     source = FakeBucket("source", (listed,))
     destination = CorruptAfterCopyVerificationBucket("archive")
@@ -72,8 +75,10 @@ def test_run_archive_direct_copy_mode_does_not_rehash_content_without_checksums(
     )
 
     assert result.copy.ok is True
-    assert result.verify.ok is True
-    assert source.content_sha256_calls == []
+    assert result.verify.ok is False
+    assert result.verify.failures == ("data/raw.txt: content mismatch",)
+    assert source.content_sha256_calls == [("data/raw.txt", "v1"), ("data/raw.txt", "v1")]
+    assert destination.content_sha256_calls == [("data/raw.txt", None), ("data/raw.txt", None)]
 
 
 @pytest.mark.unit()

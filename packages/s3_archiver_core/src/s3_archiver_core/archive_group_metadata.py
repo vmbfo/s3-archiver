@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 
-from s3_archiver_core._archive_identity import stable_identity_value
+from s3_archiver_core._archive_manifest_digest import manifest_entries_sha256
 from s3_archiver_core._archive_protocols import ArchiveBucket
 from s3_archiver_core.archive_manifest import ArchiveGroup
 
@@ -22,9 +20,10 @@ def group_metadata(group: ArchiveGroup) -> Mapping[str, str]:
     """Return deterministic manifest metadata for one archive group."""
 
     return {
-        MANIFEST_SHA256_METADATA_KEY: _group_manifest_sha256(group),
+        MANIFEST_SHA256_METADATA_KEY: group.manifest_sha256
+        or manifest_entries_sha256(group.entries),
         TARGET_DAY_METADATA_KEY: group.target_day.isoformat(),
-        SOURCE_COUNT_METADATA_KEY: str(len(group.entries)),
+        SOURCE_COUNT_METADATA_KEY: str(group.source_count or len(group.entries)),
         SCHEMA_VERSION_METADATA_KEY: ARCHIVE_SCHEMA_VERSION,
     }
 
@@ -63,34 +62,3 @@ def metadata_matches(existing: Mapping[str, str], expected: Mapping[str, str]) -
     """Return whether all expected archive metadata keys match."""
 
     return all(existing.get(key) == value for key, value in expected.items())
-
-
-def _group_manifest_sha256(group: ArchiveGroup) -> str:
-    digest = hashlib.sha256()
-    digest.update(b"[")
-    first = True
-    for entry in sorted(group.entries, key=lambda item: item.key):
-        if first:
-            first = False
-        else:
-            digest.update(b",")
-        row = {
-            "copy_mode": entry.copy_mode,
-            "destination_archive_key": entry.destination_archive_key,
-            "key": entry.key,
-            "parser_kind": entry.parser_kind,
-            "route_name": entry.route_name,
-            "size": entry.size,
-            "source_bucket": entry.source_bucket,
-            "source_identity": stable_identity_value(entry.source_identity),
-            "source_path": entry.source_path,
-            "etag": entry.etag,
-            "version_id": entry.version_id,
-            "selected_timestamp": (
-                entry.selected_timestamp.isoformat() if entry.selected_timestamp else None
-            ),
-            "timestamp_source": entry.timestamp_source,
-        }
-        digest.update(json.dumps(row, sort_keys=True, separators=(",", ":")).encode())
-    digest.update(b"]")
-    return digest.hexdigest()
