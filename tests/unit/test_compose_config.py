@@ -29,3 +29,19 @@ def test_compose_file_delegates_config_to_env_file() -> None:
     assert "ARCHIVER_MAX_WORKERS" not in compose_text
     assert "S3_SOURCE_PATH_WHITELIST" not in compose_text
     assert "S3_SOURCE_PATH_BLACKLIST" not in compose_text
+
+
+@pytest.mark.unit()
+def test_compose_binds_runtime_temp_dir_from_host() -> None:
+    compose_text = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    compose_config = cast(dict[str, object], yaml.safe_load(compose_text))
+    services = cast(dict[str, object], compose_config["services"])
+
+    for service_name in ("app", "scheduler"):
+        service = cast(dict[str, object], services[service_name])
+        volumes = cast(list[object], service["volumes"])
+        temp_volume = cast(dict[str, object], volumes[1])
+
+        assert temp_volume["type"] == "bind"
+        assert temp_volume["source"] == "${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}"
+        assert temp_volume["target"] == "${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}"

@@ -18,6 +18,8 @@ Object size guardrails default to 100 GiB, expressed as `102400` MiB. Set `ARCHI
 
 Runtime visibility logs include `archive.object.large` before source objects at or above `ARCHIVER_LARGE_OBJECT_LOG_BYTES` (`1073741824` by default), and `archive.object.long_running` when one direct copy or archive-member write exceeds `ARCHIVER_LONG_OBJECT_LOG_SECONDS` (`300` by default).
 
+`ARCHIVER_TEMP_DIR` controls where staged transfer files and daily archives are written before upload. In Docker Compose, the same path is bind-mounted from the host into the container, so `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver` writes to the host `/mnt/data` disk instead of the container root filesystem. When using a non-default env file, make the value visible to Compose too, for example `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver APP_ENV_FILE=/opt/s3-archiver/.env docker compose run --rm app archive`.
+
 Use shared S3 environment variables for provider, auth, endpoint, region, addressing style, and OCI fields, then set only the buckets per side:
 
 ```shell
