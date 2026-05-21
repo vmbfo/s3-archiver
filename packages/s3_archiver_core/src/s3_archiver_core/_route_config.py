@@ -32,6 +32,7 @@ from s3_archiver_core.parsers.kinds import ParserKind
 from s3_archiver_core.temp_files import default_temp_dir
 
 type JsonObject = dict[str, object]
+_ARRAY_ERROR = "ARCHIVER_CONFIG_JSON must be a non-empty JSON array of route objects"
 
 
 def load_app_settings_from_config_json[T](
@@ -80,9 +81,6 @@ def _load_route_settings(decoder: EnvDecoder, raw_config: str) -> tuple[RouteSet
         routes.append(route)
     _validate_route_storage(decoder, tuple(routes))
     return tuple(routes)
-
-
-_ARRAY_ERROR = "ARCHIVER_CONFIG_JSON must be a non-empty JSON array of route objects"
 
 
 def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings | None:
@@ -272,8 +270,11 @@ def _location_string(
 
 
 def _location_env_keys(side: str, key: str, *, shared: bool) -> tuple[str, ...]:
-    suffix = {"access_key_id": "ACCESS_KEY", "secret_access_key": "SECRET_KEY",
-              "endpoint_url": "ENDPOINT"}.get(key, key.upper())
+    suffix = {
+        "access_key_id": "ACCESS_KEY",
+        "secret_access_key": "SECRET_KEY",
+        "endpoint_url": "ENDPOINT",
+    }.get(key, key.upper())
     side_key = f"S3_{side}_{suffix}"
     if not shared:
         return (side_key,)

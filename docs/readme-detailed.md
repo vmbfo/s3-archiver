@@ -38,7 +38,7 @@ docker compose --profile test down -v
 Running the app container without an explicit command prints CLI help and exits `0`.
 Use `s3-archiver check` for startup validation, `s3-archiver archive` for one archive invocation, and `s3-archiver schedule` for the built-in once-per-day UTC scheduler loop.
 
-The container runs rootless and writes JSON log files to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
+The container entrypoint repairs writable runtime mounts, drops to the unprivileged app user, and writes JSON log files to the `app_logs` named volume mounted at `/var/log/s3-archiver` in the container.
 The checked-in env files default `LOG_DIR` to `/var/log/s3-archiver` to match the runtime contract used by the container image and Compose stack.
 
 Use `.env.example` for OCI-backed runs and `.env.e2e` as the template for the LocalStack compose flow shown above.
@@ -252,7 +252,7 @@ Run all suites with the canonical coverage-gated command:
 - Large source objects emit an `archive.object.large` log before transfer; `ARCHIVER_LARGE_OBJECT_LOG_BYTES` defaults to `1073741824`.
 - Single-object copy/archive-member writes emit `archive.object.long_running` after `ARCHIVER_LONG_OBJECT_LOG_SECONDS`, which defaults to `300`.
 - Oversized object/archive skips are logged as warnings, and completion logs repeat skipped-object counts by reason.
-- `ARCHIVER_TEMP_DIR` is bind-mounted at the same path in Docker Compose. Set `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver` in the default `.env`, or export it alongside `APP_ENV_FILE`, so staged archives use the host `/mnt/data` filesystem instead of the container root filesystem.
+- `ARCHIVER_TEMP_DIR` is bind-mounted at the same path in Docker Compose. Set `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver` in the default `.env`, or export it alongside `APP_ENV_FILE`, so staged archives use the host `/mnt/data` filesystem instead of the container root filesystem. The runtime entrypoint repairs ownership of `ARCHIVER_TEMP_DIR` and `LOG_DIR`, then drops to the unprivileged app user before running the archiver.
 - Inspect the file logs with Docker:
 
 ```bash
@@ -275,7 +275,7 @@ docker run --rm \
 
 - Unit tests cover config validation, logging setup, health checks, CLI behavior, and repo policy guards.
 - Integration tests run against LocalStack S3 with fixture-managed per-test source and destination buckets, LocalStack endpoint guard rails, and object round-trips.
-- E2E tests build and run the compose stack, assert the rootless container can complete `s3-archiver check` and persist logs, and verify the runtime image excludes repo tests and LocalStack test support.
+- E2E tests build and run the compose stack, assert the unprivileged runtime can complete `s3-archiver check` and persist logs, and verify the runtime image excludes repo tests and LocalStack test support.
 - CI is currently intended to run locally through the documented scripts and Make targets.
 
 LocalStack test-only helpers live under `docker/localstack/test-support` and are mounted only into the LocalStack service by the `test` compose profile. They are not copied into the application runtime image.

@@ -115,10 +115,7 @@ def object_activity_watchdog(
             return
         elapsed_seconds = max(time.monotonic() - started, threshold)
         _LOGGER.info(
-            (
-                "archive %s still running source_key=%s elapsed_seconds=%.3f "
-                "destination_key=%s"
-            ),
+            ("archive %s still running source_key=%s elapsed_seconds=%.3f destination_key=%s"),
             operation,
             source_key,
             elapsed_seconds,

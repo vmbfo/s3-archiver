@@ -45,3 +45,25 @@ def test_compose_binds_runtime_temp_dir_from_host() -> None:
         assert temp_volume["type"] == "bind"
         assert temp_volume["source"] == "${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}"
         assert temp_volume["target"] == "${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}"
+
+
+@pytest.mark.unit()
+def test_compose_passes_runtime_temp_dir_to_container() -> None:
+    compose_text = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    compose_config = cast(dict[str, object], yaml.safe_load(compose_text))
+    services = cast(dict[str, object], compose_config["services"])
+
+    for service_name in ("app", "scheduler"):
+        service = cast(dict[str, object], services[service_name])
+        environment = cast(dict[str, object], service["environment"])
+
+        assert environment["ARCHIVER_TEMP_DIR"] == "${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}"
+
+
+@pytest.mark.unit()
+def test_runtime_image_uses_temp_mount_repair_entrypoint() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY scripts/docker-entrypoint.py /usr/local/bin/s3-archiver-entrypoint" in dockerfile
+    assert 'ENTRYPOINT ["s3-archiver-entrypoint"]' in dockerfile
+    assert "USER app:app" not in dockerfile
