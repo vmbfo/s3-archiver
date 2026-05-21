@@ -205,10 +205,14 @@ def _build_client_config(
             connect_timeout=LOCALSTACK_CONNECT_TIMEOUT_SECONDS,
             read_timeout=LOCALSTACK_READ_TIMEOUT_SECONDS,
             retries={"max_attempts": LOCALSTACK_MAX_ATTEMPTS, "mode": "standard"},
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
         )
     return Config(
         signature_version="s3v4",
         s3={"addressing_style": addressing_style},
+        request_checksum_calculation="when_required",
+        response_checksum_validation="when_required",
     )
 
 
