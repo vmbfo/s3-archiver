@@ -85,6 +85,16 @@ def test_normalize_endpoint_url_raises_on_invalid_value() -> None:
 
 
 @pytest.mark.unit()
+def test_normalize_endpoint_url_prepends_https_for_bare_hostname() -> None:
+    assert (
+        normalize_endpoint_url("fre1hvrsz7q6.compat.objectstorage.eu-frankfurt-1.oraclecloud.com")
+        == "https://fre1hvrsz7q6.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
+    )
+    assert normalize_endpoint_url("s3.example.com") == "https://s3.example.com"
+    assert normalize_endpoint_url_result("", field="ENDPOINT").issue is not None
+
+
+@pytest.mark.unit()
 def test_parse_result_boundary_captures_issue_without_raising() -> None:
     result = parse_bool_result({"BOOL": "maybe"}, "BOOL", default=False)
 
