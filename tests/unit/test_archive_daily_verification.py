@@ -129,3 +129,40 @@ def test_mismatched_existing_archive_fails_only_that_group() -> None:
     assert result.copy.failures == (
         f"{skipped_group.destination_archive_key}: archive verification failed",
     )
+
+
+@pytest.mark.unit()
+def test_stale_verified_archive_is_refreshed_for_late_arriving_prior_day_objects() -> None:
+    started = datetime(2026, 5, 22, 7, tzinfo=UTC)
+    original = _listed("data/harmonie/processor/2026-05-21T00-00-00Z.grib", 1, "v1")
+    late = _listed("data/harmonie/processor/2026-05-21T06-00-00Z.grib", 1, "v2")
+    current_day = _listed("data/harmonie/processor/2026-05-22T00-00-00Z.grib", 1, "v3")
+    first_source = FakeBucket("source", (original,))
+    destination = FakeBucket("destination")
+
+    first = run_archive(
+        archive_routes(first_source, destination),
+        run_timeout=daily_run_timeout(),
+        run_started_at_utc=started,
+        clock=lambda: started,
+    )
+    archive_key = "data/harmonie/processor/2026-05-21.tar.gz"
+    first_payload = destination.destination_payload(archive_key)
+    assert first.ok is True
+    assert first.manifest.skipped_objects == ()
+
+    second_source = FakeBucket("source", (original, late, current_day))
+    second = run_archive(
+        archive_routes(second_source, destination),
+        run_timeout=daily_run_timeout(),
+        run_started_at_utc=started,
+        clock=lambda: started,
+    )
+
+    assert second.ok is True
+    assert destination.uploaded == [archive_key, archive_key]
+    assert destination.destination_payload(archive_key) != first_payload
+    assert [entry.key for entry in second.manifest.entries] == [original.key, late.key]
+    assert [(skip.key, skip.reason) for skip in second.manifest.skipped_objects] == [
+        (current_day.key, "parser timestamp in incomplete UTC day")
+    ]

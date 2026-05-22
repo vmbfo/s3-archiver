@@ -23,6 +23,7 @@ from s3_archiver_core._archive_size_limits import estimated_archive_size_bytes
 from s3_archiver_core._archive_verify_direct import verify_direct_entry
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
+    existing_archive_refreshable,
     existing_archive_verified,
     group_metadata,
     uploaded_archive_verified,
@@ -167,7 +168,8 @@ def copy_group(
         if existing_archive_verified(destination, destination_key, existing.metadata, metadata):
             _advance_group_progress(group, progress_logger)
             return None, True
-        return f"{destination_key}: archive verification failed", False
+        if not existing_archive_refreshable(existing.metadata, metadata):
+            return f"{destination_key}: archive verification failed", False
     archive_path: Path | None = None
     try:
         if debug_logger is not None:
