@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import textwrap
+from typing import cast
 
 import pytest
 from s3_archiver_localstack_support import last_json_object
@@ -70,7 +72,11 @@ def test_compose_scheduler_waits_for_next_tick_after_lock_refusal(
         "run-2",
         "sleep-3:04:05",
     ]
-    assert not any(line.startswith("{") for line in result.stderr.splitlines())
+    stderr_json_lines = [line for line in result.stderr.splitlines() if line.startswith("{")]
+    assert len(stderr_json_lines) == 1
+    assert (
+        cast(dict[str, object], json.loads(stderr_json_lines[0]))["event"] == "startup.working_set"
+    )
     assert '"run_id": "scheduled-run"' in result.stdout
 
 
