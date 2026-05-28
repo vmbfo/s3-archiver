@@ -63,13 +63,10 @@ def _load_route_settings(decoder: EnvDecoder, raw_config: str) -> tuple[RouteSet
     except json.JSONDecodeError:
         decoder.fail("ARCHIVER_CONFIG_JSON", "ARCHIVER_CONFIG_JSON must be valid JSON")
         return None
-    if not isinstance(parsed, list):
-        _fail_array(decoder)
+    if not isinstance(parsed, list) or len(cast(list[object], parsed)) == 0:
+        decoder.fail("ARCHIVER_CONFIG_JSON", _ARRAY_ERROR)
         return None
     parsed_routes = cast(list[object], parsed)
-    if len(parsed_routes) == 0:
-        _fail_array(decoder)
-        return None
     routes: list[RouteSettings] = []
     names: set[str] = set()
     for index, item in enumerate(parsed_routes):
@@ -85,11 +82,7 @@ def _load_route_settings(decoder: EnvDecoder, raw_config: str) -> tuple[RouteSet
     return tuple(routes)
 
 
-def _fail_array(decoder: EnvDecoder) -> None:
-    decoder.fail(
-        "ARCHIVER_CONFIG_JSON",
-        "ARCHIVER_CONFIG_JSON must be a non-empty JSON array of route objects",
-    )
+_ARRAY_ERROR = "ARCHIVER_CONFIG_JSON must be a non-empty JSON array of route objects"
 
 
 def _load_route(decoder: EnvDecoder, item: object, field: str) -> RouteSettings | None:
@@ -208,6 +201,12 @@ def _load_location(
         if endpoint_text is None
         else _endpoint(decoder, {"endpoint_url": endpoint_text}, f"{field}.endpoint_url")
     )
+    if provider is S3Provider.CUSTOM and endpoint_url is None:
+        decoder.fail(
+            f"{field}.endpoint_url",
+            f"S3_ENDPOINT (or {field}.endpoint_url) is required when provider=custom",
+        )
+        return None
     access_key_id = _location_string(
         decoder, location, "access_key_id", f"{field}.access_key_id", side
     )
