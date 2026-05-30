@@ -126,10 +126,13 @@ def normalize_endpoint_url(raw: str, *, field: str = "S3_ENDPOINT") -> str:
 
 def normalize_endpoint_url_result(raw: str, *, field: str = "S3_ENDPOINT") -> ParseResult[str]:
     parsed = urlsplit(raw)
-    if parsed.scheme == "" or parsed.hostname is None:
+    if parsed.scheme == "":
+        raw = f"https://{raw}"
+        parsed = urlsplit(raw)
+    if parsed.hostname is None:
         return ParseResult(
             None,
-            ParseIssue(field, f"{field} must include a URL scheme and host, got {raw!r}"),
+            ParseIssue(field, f"{field} must include a host, got {raw!r}"),
         )
     if parsed.query != "" or parsed.fragment != "":
         return ParseResult(
