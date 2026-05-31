@@ -70,6 +70,8 @@ class RecordingConfig:
     connect_timeout: int | None
     read_timeout: int | None
     retries: dict[str, object] | None
+    request_checksum_calculation: str | None
+    response_checksum_validation: str | None
 
     def __init__(
         self,
@@ -79,12 +81,16 @@ class RecordingConfig:
         connect_timeout: int | None = None,
         read_timeout: int | None = None,
         retries: dict[str, object] | None = None,
+        request_checksum_calculation: str | None = None,
+        response_checksum_validation: str | None = None,
     ) -> None:
         self.signature_version = signature_version
         self.s3 = s3
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
         self.retries = retries
+        self.request_checksum_calculation = request_checksum_calculation
+        self.response_checksum_validation = response_checksum_validation
 
 
 @pytest.mark.unit()
@@ -126,6 +132,8 @@ def test_build_s3_client_wires_derived_oci_endpoint(
     assert session.client_call["endpoint_url"] == settings.routes[0].source.resolved_endpoint_url()
     assert config.signature_version == "s3v4"
     assert config.s3 == {"addressing_style": "path"}
+    assert config.request_checksum_calculation == "when_required"
+    assert config.response_checksum_validation == "when_required"
 
 
 @pytest.mark.unit()
@@ -219,6 +227,8 @@ def test_build_s3_client_uses_short_localstack_timeouts(
         "max_attempts": s3_module.LOCALSTACK_MAX_ATTEMPTS,
         "mode": "standard",
     }
+    assert config.request_checksum_calculation == "when_required"
+    assert config.response_checksum_validation == "when_required"
 
 
 @pytest.mark.unit()
