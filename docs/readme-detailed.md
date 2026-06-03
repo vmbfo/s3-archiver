@@ -251,6 +251,7 @@ Run all suites with the canonical coverage-gated command:
 - Large source objects emit an `archive.object.large` log before transfer; `ARCHIVER_LARGE_OBJECT_LOG_BYTES` defaults to `1073741824`.
 - Single-object copy/archive-member writes emit `archive.object.long_running` after `ARCHIVER_LONG_OBJECT_LOG_SECONDS`, which defaults to `300`.
 - Oversized object/archive skips are logged as warnings, and completion logs repeat skipped-object counts by reason.
+- `ARCHIVER_TEMP_DIR` is bind-mounted at the same path in Docker Compose. Set `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver` in the default `.env`, or export it alongside `APP_ENV_FILE`, so staged archives use the host `/mnt/data` filesystem instead of the container root filesystem.
 - Inspect the file logs with Docker:
 
 ```bash

@@ -1,3 +1,10 @@
+x-archiver-temp-volume: &archiver-temp-volume
+  type: bind
+  source: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
+  target: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
+  bind:
+    create_host_path: true
+
 services:
   app:
     build:
@@ -17,6 +24,7 @@ services:
       s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
     volumes:
       - app_logs:/var/log/s3-archiver
+      - *archiver-temp-volume
 
   scheduler:
     build:
@@ -38,6 +46,7 @@ services:
     restart: unless-stopped
     volumes:
       - app_logs:/var/log/s3-archiver
+      - *archiver-temp-volume
 
   localstack:
     image: localstack/localstack:4.8.1
