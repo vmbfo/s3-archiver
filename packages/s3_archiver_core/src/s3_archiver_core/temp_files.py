@@ -28,7 +28,38 @@ def prepare_runtime_temp_dir(temp_dir: Path) -> None:
         raise ConfigError(f"ARCHIVER_TEMP_DIR cannot be created: {exc}") from exc
     if not temp_dir.is_dir():
         raise ConfigError("ARCHIVER_TEMP_DIR must be a directory")
-    cleanup_stale_transfer_files(temp_dir)
+    _verify_transfer_temp_file_permissions(temp_dir)
+    try:
+        cleanup_stale_transfer_files(temp_dir)
+    except OSError as exc:
+        raise ConfigError(f"ARCHIVER_TEMP_DIR transfer cleanup failed: {exc}") from exc
+
+
+def _verify_transfer_temp_file_permissions(temp_dir: Path) -> None:
+    probe_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb", delete=False, dir=temp_dir, prefix=TRANSFER_TEMP_PREFIX
+        ) as probe:
+            probe_path = Path(probe.name)
+            _ = probe.write(b"s3-archiver temp probe\n")
+    except OSError as exc:
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                raise ConfigError(
+                    f"ARCHIVER_TEMP_DIR is not usable for transfer temp cleanup: {cleanup_exc}"
+                ) from cleanup_exc
+        raise ConfigError(
+            f"ARCHIVER_TEMP_DIR is not usable for transfer temp files: {exc}"
+        ) from exc
+    try:
+        probe_path.unlink()
+    except OSError as exc:
+        raise ConfigError(
+            f"ARCHIVER_TEMP_DIR is not usable for transfer temp cleanup: {exc}"
+        ) from exc
 
 
 def cleanup_stale_transfer_files(temp_dir: Path) -> None:

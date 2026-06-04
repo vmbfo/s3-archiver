@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -30,6 +31,135 @@ def test_prepare_runtime_temp_dir_removes_stale_archiver_files(tmp_path: Path) -
 
     assert not stale.exists()
     assert unrelated.read_bytes() == b"keep"
+
+
+@pytest.mark.unit()
+def test_prepare_runtime_temp_dir_verifies_transfer_temp_file_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+    calls: list[dict[str, object]] = []
+    named_temporary_file = tempfile.NamedTemporaryFile
+
+    def record_named_temp_file(mode: str, *, delete: bool, dir: Path, prefix: str) -> object:
+        calls.append({"delete": delete, "dir": dir, "prefix": prefix})
+        return named_temporary_file(mode, delete=delete, dir=dir, prefix=prefix)
+
+    monkeypatch.setattr(
+        "s3_archiver_core.temp_files.tempfile.NamedTemporaryFile",
+        record_named_temp_file,
+    )
+
+    prepare_runtime_temp_dir(temp_dir)
+
+    assert calls == [
+        {
+            "delete": False,
+            "dir": temp_dir,
+            "prefix": TRANSFER_TEMP_PREFIX,
+        }
+    ]
+    assert list(temp_dir.glob(f"{TRANSFER_TEMP_PREFIX}*")) == []
+
+
+@pytest.mark.unit()
+def test_prepare_runtime_temp_dir_rejects_unusable_transfer_temp_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+
+    def deny_named_temp_file(_mode: str, *, delete: bool, dir: Path, prefix: str) -> object:
+        _ = (delete, dir, prefix)
+        raise PermissionError(13, "Permission denied", str(temp_dir / "probe"))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.temp_files.tempfile.NamedTemporaryFile",
+        deny_named_temp_file,
+    )
+
+    with pytest.raises(ConfigError, match="ARCHIVER_TEMP_DIR is not usable"):
+        prepare_runtime_temp_dir(temp_dir)
+
+
+@pytest.mark.unit()
+def test_prepare_runtime_temp_dir_rejects_transfer_temp_delete_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+    unlink = Path.unlink
+
+    def deny_probe_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name.startswith(TRANSFER_TEMP_PREFIX):
+            raise PermissionError(13, "Permission denied", str(self))
+        unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", deny_probe_unlink)
+
+    with pytest.raises(ConfigError, match="transfer temp cleanup"):
+        prepare_runtime_temp_dir(temp_dir)
+
+
+@pytest.mark.unit()
+def test_prepare_runtime_temp_dir_rejects_stale_transfer_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+
+    def fail_cleanup(_temp_dir: Path) -> None:
+        raise PermissionError(13, "Permission denied", str(temp_dir))
+
+    monkeypatch.setattr("s3_archiver_core.temp_files.cleanup_stale_transfer_files", fail_cleanup)
+
+    with pytest.raises(ConfigError, match="ARCHIVER_TEMP_DIR transfer cleanup failed"):
+        prepare_runtime_temp_dir(temp_dir)
+
+
+@pytest.mark.unit()
+def test_prepare_runtime_temp_dir_reports_probe_cleanup_failure_after_write_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_dir = tmp_path / "runtime-temp"
+    probe_path = temp_dir / f"{TRANSFER_TEMP_PREFIX}probe"
+
+    class FailingProbe:
+        name: str = str(probe_path)
+
+        def __enter__(self) -> FailingProbe:
+            return self
+
+        def __exit__(
+            self,
+            _exc_type: type[BaseException] | None,
+            _exc: BaseException | None,
+            _traceback: object,
+        ) -> None:
+            return
+
+        def write(self, _payload: bytes) -> int:
+            raise OSError("write failed")
+
+    def fail_named_temp_file(_mode: str, *, delete: bool, dir: Path, prefix: str) -> FailingProbe:
+        _ = (delete, dir, prefix)
+        return FailingProbe()
+
+    def fail_probe_unlink(self: Path, missing_ok: bool = False) -> None:
+        _ = missing_ok
+        if self == probe_path:
+            raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(
+        "s3_archiver_core.temp_files.tempfile.NamedTemporaryFile",
+        fail_named_temp_file,
+    )
+    monkeypatch.setattr(Path, "unlink", fail_probe_unlink)
+
+    with pytest.raises(ConfigError, match="transfer temp cleanup"):
+        prepare_runtime_temp_dir(temp_dir)
 
 
 @pytest.mark.unit()

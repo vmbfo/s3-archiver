@@ -2,7 +2,7 @@
 
 S3-to-S3 archiver that groups source objects into deterministic `.tar.gz`
 archives (or mirrors them as-is). OCI S3-compatible, LocalStack-tested,
-rootless Docker, `uv`-managed Python monorepo.
+unprivileged runtime, `uv`-managed Python monorepo.
 
 ## Deploy (Docker)
 

@@ -32,10 +32,11 @@ RUN groupadd --gid "${APP_GID}" app \
     && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --shell /usr/sbin/nologin app \
     && python -m venv /opt/venv \
     && mkdir -p /var/log/s3-archiver
+COPY scripts/docker-entrypoint.py /usr/local/bin/s3-archiver-entrypoint
 COPY --from=builder /dist /dist
 RUN /opt/venv/bin/pip install --no-cache-dir "pip==${PIP_VERSION}" \
     && /opt/venv/bin/pip install /dist/*.whl \
     && rm -rf /dist \
+    && chmod +x /usr/local/bin/s3-archiver-entrypoint \
     && chown -R app:app /app /var/log/s3-archiver
-USER app:app
-ENTRYPOINT ["s3-archiver"]
+ENTRYPOINT ["s3-archiver-entrypoint"]

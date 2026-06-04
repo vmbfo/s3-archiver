@@ -163,6 +163,7 @@ def test_checked_in_env_example_is_valid_route_config() -> None:
 
     assert settings.routes[0].source.provider.value == "custom"
     assert settings.routes[0].source.endpoint_url == "https://s3.example.com"
+    assert settings.temp_dir == Path("/mnt/data/tmp/s3-archiver")
 
 
 @pytest.mark.unit()

@@ -19,6 +19,7 @@ services:
       - ${APP_ENV_FILE:-.env}
     environment:
       APP_ENV_FILE: ${APP_ENV_FILE:-.env}
+      ARCHIVER_TEMP_DIR: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
       LOG_DIR: /var/log/s3-archiver
     labels:
       s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
@@ -40,6 +41,7 @@ services:
       - ${APP_ENV_FILE:-.env}
     environment:
       APP_ENV_FILE: ${APP_ENV_FILE:-.env}
+      ARCHIVER_TEMP_DIR: ${ARCHIVER_TEMP_DIR:-/tmp/s3-archiver}
       LOG_DIR: /var/log/s3-archiver
     labels:
       s3-archiver.env.ARCHIVER_CONFIG_JSON: env_file
