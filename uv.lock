@@ -7,7 +7,6 @@ members = [
     "s3-archiver-cli",
     "s3-archiver-core",
     "s3-archiver-localstack-support",
-    "s3-archiver-visual-demo",
 ]
 
 [manifest.dependency-groups]
@@ -796,21 +795,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "s3-archiver-core", editable = "packages/s3_archiver_core" }]
-
-[[package]]
-name = "s3-archiver-visual-demo"
-version = "0.1.0"
-source = { editable = "packages/s3_archiver_visual_demo" }
-dependencies = [
-    { name = "s3-archiver-core" },
-    { name = "s3-archiver-localstack-support" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "s3-archiver-core", editable = "packages/s3_archiver_core" },
-    { name = "s3-archiver-localstack-support", editable = "packages/s3_archiver_localstack_support" },
-]
 
 [[package]]
 name = "s3transfer"

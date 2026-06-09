@@ -41,7 +41,6 @@ version_files = [
   "packages/s3_archiver_core/pyproject.toml:^version =",
   "packages/s3_archiver_cli/pyproject.toml:^version =",
   "packages/s3_archiver_localstack_support/pyproject.toml:^version =",
-  "packages/s3_archiver_visual_demo/pyproject.toml:^version =",
 ]
 
 [tool.coverage.run]
@@ -50,7 +49,6 @@ source = [
   "packages/s3_archiver_core/src/s3_archiver_core",
   "packages/s3_archiver_cli/src/s3_archiver_cli",
   "packages/s3_archiver_localstack_support/src/s3_archiver_localstack_support",
-  "packages/s3_archiver_visual_demo/src/s3_archiver_visual_demo",
 ]
 
 [tool.coverage.report]

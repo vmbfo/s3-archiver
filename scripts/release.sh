@@ -25,7 +25,6 @@ version_files=(
   packages/s3_archiver_core/pyproject.toml
   packages/s3_archiver_cli/pyproject.toml
   packages/s3_archiver_localstack_support/pyproject.toml
-  packages/s3_archiver_visual_demo/pyproject.toml
 )
 for file in "${version_files[@]}"; do
   if ! grep -qE "^version = \"${new_version}\"" "$file"; then

@@ -39,18 +39,6 @@ def test_authored_source_files_do_not_exceed_300_lines() -> None:
 
 
 @pytest.mark.unit()
-def test_e2e_suite_does_not_collect_visual_demo() -> None:
-    e2e_files = sorted((REPO_ROOT / "tests" / "e2e").glob("test_*.py"))
-    visual_demo_files = [
-        path.relative_to(REPO_ROOT)
-        for path in e2e_files
-        if "visual" in path.stem or "demo" in path.stem
-    ]
-
-    assert visual_demo_files == []
-
-
-@pytest.mark.unit()
 def test_authored_python_files_do_not_use_any_annotations() -> None:
     for python_file in _authored_python_files():
         module = ast.parse(python_file.read_text(encoding="utf-8"))

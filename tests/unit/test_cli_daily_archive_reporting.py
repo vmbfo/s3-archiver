@@ -9,10 +9,7 @@ from typing import cast
 
 import pytest
 import s3_archiver_cli.error_logging as error_logging
-import s3_archiver_visual_demo.output as visual_demo_output
 from s3_archiver_core.archive import ArchivePhaseResult, ArchiveRunResult
-from s3_archiver_core.archive_manifest import ArchiveManifest
-from s3_archiver_core.payload_utils import JsonValue
 from s3_archiver_core.settings import AppSettings
 
 
@@ -205,48 +202,3 @@ def test_archive_result_payload_reports_direct_entries_as_destinations(
     assert direct_entries[0]["destination_key"] == "raw/live.txt"
     source_objects = cast(list[dict[str, object]], direct_entries[0]["source_objects"])
     assert source_objects[0]["destination_key"] == "raw/live.txt"
-
-
-@pytest.mark.unit()
-def test_visual_demo_describes_daily_candidates_and_result_groups() -> None:
-    entry = SimpleNamespace(
-        key="data/fae/2026-04-13T07-00-00.xml",
-        version_id="v1",
-        size=123,
-        last_modified=datetime(2026, 4, 13, 7, tzinfo=UTC),
-        etag='"etag"',
-        source_bucket="source-bucket",
-        destination_archive_key="data/fae/2026-04-13.tar.gz",
-    )
-    manifest = SimpleNamespace(
-        run_started_at_utc=datetime(2026, 4, 27, 2, tzinfo=UTC),
-        target_day="2026-04-13",
-        entries=(entry,),
-        skipped_objects=(SimpleNamespace(key="bad.txt", reason="no timestamp"),),
-    )
-    archive_payload: dict[str, JsonValue] = {
-        "status": "ok",
-        "target_day": "2026-04-13",
-        "archive_count": 1,
-        "archive_groups": [
-            {
-                "destination_archive_key": "data/fae/2026-04-13.tar.gz",
-                "source_object_count": 1,
-                "skipped_object_count": 1,
-            }
-        ],
-        "phases": {
-            "list": {"status": "ok", "failure_count": 0},
-            "copy": {"status": "ok", "failure_count": 0},
-            "verify": {"status": "ok", "failure_count": 0},
-        },
-    }
-    lines: list[str] = []
-
-    visual_demo_output.emit_manifest(lines.append, cast(ArchiveManifest, cast(object, manifest)))
-    visual_demo_output.emit_archive_result(lines.append, archive_payload)
-
-    assert any(line == "target day: 2026-04-13" for line in lines)
-    assert any("destination_archive_key=data/fae/2026-04-13.tar.gz" in line for line in lines)
-    assert not any("cleanup_status=" in line for line in lines)
-    assert any("SKIP   key=bad.txt reason=no timestamp" in line for line in lines)

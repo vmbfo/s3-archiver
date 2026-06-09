@@ -36,6 +36,8 @@ def test_archive_payload_helpers_cover_legacy_and_empty_fallbacks() -> None:
     assert archive_payloads.manifest_target_day(SimpleNamespace()) == ""
     assert archive_payloads.skipped_object_payloads(SimpleNamespace()) == []
     assert object_list(object()) == []
+    assert object_list(None) == []
+    assert object_list("strings-are-not-object-lists") == []
     assert datetime_text("already text") == "already text"
     assert archive_payloads.archive_group_payload(group)["target_day"] == "2026-04-13"
     assert archive_payloads.archive_group_payload(group)["destination_archive_key"] == (
