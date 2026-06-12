@@ -28,6 +28,8 @@ class AppSettingsFactory[T](Protocol):
         log_dir: Path,
         routes: tuple[RouteSettings, ...],
         cleanup_enabled: bool,
+        whitelist_enabled: bool,
+        bucket_whitelist: tuple[str, ...],
     ) -> T:
         """Build settings from decoded fields."""
         ...

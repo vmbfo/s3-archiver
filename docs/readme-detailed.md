@@ -79,6 +79,11 @@ Size guardrails:
 - `ARCHIVER_MAX_SOURCE_OBJECT_SIZE_MIB` defaults to `102400` MiB. Listed source objects larger than this are skipped before copy.
 - `ARCHIVER_MAX_DESTINATION_ARCHIVE_SIZE_MIB` defaults to `102400` MiB. Archive groups whose estimated staged tar size is larger than this are skipped before local archive creation.
 
+Bucket whitelist:
+
+- `ARCHIVER_BUCKET_WHITELIST_ENABLED` defaults to `false`, leaving the whitelist check off. Set it to `true` to require every source and destination bucket referenced by `ARCHIVER_CONFIG_JSON` to appear in `ARCHIVER_BUCKET_WHITELIST`.
+- `ARCHIVER_BUCKET_WHITELIST` is a JSON array of allowed bucket names, for example `["source-bucket", "archive-bucket"]`. When the check is enabled, startup fails with a `ConfigError` naming the first route, side, and bucket that is not listed. The toggle is independent of the list, so an enabled check with an empty list rejects every bucket and nothing can run.
+
 Parser and copy mode are independent: `parser: direct` means select by S3 `LastModified`, while `copy_mode: direct` means write one destination object per selected source key.
 See `docs/parsers.md` for detailed parser and copy-mode behavior, and
 `docs/parser-copy-mode-matrix.md` for every supported parser × copy_mode

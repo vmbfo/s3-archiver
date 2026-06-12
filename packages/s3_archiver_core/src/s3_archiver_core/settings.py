@@ -40,6 +40,8 @@ class AppSettings:
     log_dir: Path
     routes: tuple[RouteSettings, ...]
     cleanup_enabled: bool = False
+    whitelist_enabled: bool = False
+    bucket_whitelist: tuple[str, ...] = ()
 
     @property
     def archive_lock_path(self) -> Path:
