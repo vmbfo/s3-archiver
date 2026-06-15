@@ -267,6 +267,7 @@ def _run_configured_archive(
         run_started_at_utc=started,
         debug_logger=_cli_payloads.log_transfer_decision if settings.log_level == "DEBUG" else None,
         progress_logger=ArchiveProgressReporter(),
+        date_range=settings.archive_date_range,
     )
 
 

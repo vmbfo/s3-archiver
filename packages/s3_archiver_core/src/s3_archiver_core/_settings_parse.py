@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import cast
+from datetime import date, timedelta
+from typing import Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
+from s3_archiver_core.archive_date_range import ArchiveDateRange, parse_date_bound
 from s3_archiver_core.archive_lock import parse_duration
 from s3_archiver_core.errors import ConfigError
 
@@ -90,6 +91,34 @@ def parse_int_result(
             ParseIssue(key, f"{key} must be greater than or equal to {minimum}"),
         )
     return ParseResult(value)
+
+
+def parse_archive_date_range_result(
+    env: Mapping[str, str],
+) -> ParseResult[ArchiveDateRange]:
+    start = _parse_date_bound_env(env, "ARCHIVER_FROM", "start")
+    if start.issue is not None:
+        return ParseResult(None, start.issue)
+    end = _parse_date_bound_env(env, "ARCHIVER_TO", "end")
+    if end.issue is not None:
+        return ParseResult(None, end.issue)
+    if start.value is not None and end.value is not None and start.value > end.value:
+        return ParseResult(
+            None, ParseIssue("ARCHIVER_TO", "ARCHIVER_TO must be on or after ARCHIVER_FROM")
+        )
+    return ParseResult(ArchiveDateRange(start.value, end.value))
+
+
+def _parse_date_bound_env(
+    env: Mapping[str, str], key: str, bound: Literal["start", "end"]
+) -> ParseResult[date]:
+    raw = env.get(key)
+    if raw is None or raw.strip() == "":
+        return ParseResult(None)
+    try:
+        return ParseResult(parse_date_bound(raw, bound=bound))
+    except ValueError as exc:
+        return ParseResult(None, ParseIssue(key, f"{key} {exc}"))
 
 
 def parse_runtime_duration_result(raw: str, key: str) -> ParseResult[timedelta]:

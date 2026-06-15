@@ -8,6 +8,7 @@ from s3_archiver_core._archive_copy import copy_phase as _copy_phase_impl
 from s3_archiver_core._archive_copy import verify_phase as _verify_phase_impl
 from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core._archive_size_limits import log_skipped_summary
+from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.archive_group_metadata import (
     ARCHIVE_SHA256_METADATA_KEY,
     MANIFEST_SHA256_METADATA_KEY,
@@ -41,6 +42,7 @@ def run_archive(
     run_lock: ArchiveRunLock | None = None,
     debug_logger: DebugLogger | None = None,
     progress_logger: ProgressLogger | None = None,
+    date_range: ArchiveDateRange = NO_DATE_RANGE,
     clock: Callable[[], datetime] | None = None,
 ) -> ArchiveRunResult:
     """Run one archive pass with one execution worker per route."""
@@ -58,7 +60,7 @@ def run_archive(
     try:
         _log_route_temp_storage(routes)
         try:
-            manifest = _build_manifest(routes, started, progress_logger)
+            manifest = _build_manifest(routes, started, progress_logger, date_range)
         except Exception as exc:
             return _finalize_result(
                 ArchiveRunResult(
@@ -151,11 +153,13 @@ def _build_manifest(
     routes: tuple[ArchiveRoute, ...],
     started: datetime,
     progress_logger: ProgressLogger | None,
+    date_range: ArchiveDateRange,
 ) -> ArchiveManifest:
     return build_route_archive_manifest(
         routes,
         run_started_at_utc=started,
         progress_logger=progress_logger,
+        date_range=date_range,
     )
 
 

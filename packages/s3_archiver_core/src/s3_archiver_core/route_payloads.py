@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import cast
 
 from s3_archiver_core.payload_utils import JsonValue, json_list
@@ -47,10 +48,17 @@ def working_set_payload(settings: AppSettings) -> dict[str, JsonValue]:
     """Return the redacted startup working set for this invocation."""
 
     routes = route_payloads(settings)
+    date_range = settings.archive_date_range
     return {
         "route_count": len(routes),
         "routes": json_list(routes),
+        "archive_from": _iso_or_none(date_range.start),
+        "archive_to": _iso_or_none(date_range.end),
     }
+
+
+def _iso_or_none(day: date | None) -> JsonValue:
+    return day.isoformat() if day is not None else None
 
 
 def _string_json_values(items: list[str]) -> list[JsonValue]:

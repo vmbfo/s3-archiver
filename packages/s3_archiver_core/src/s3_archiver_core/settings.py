@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
@@ -15,12 +15,14 @@ from s3_archiver_core._settings_models import (
     StorageLocationIdentity,
 )
 from s3_archiver_core._settings_parse import EnvDecoder
+from s3_archiver_core.archive_date_range import ArchiveDateRange
 from s3_archiver_core.errors import ConfigError
 
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
 
 __all__ = (
     "AppSettings",
+    "ArchiveDateRange",
     "CopyMode",
     "RouteSettings",
     "S3AddressingStyle",
@@ -42,6 +44,7 @@ class AppSettings:
     cleanup_enabled: bool = False
     whitelist_enabled: bool = False
     bucket_whitelist: tuple[str, ...] = ()
+    archive_date_range: ArchiveDateRange = field(default_factory=ArchiveDateRange)
 
     @property
     def archive_lock_path(self) -> Path:

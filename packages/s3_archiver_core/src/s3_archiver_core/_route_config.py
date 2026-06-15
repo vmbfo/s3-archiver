@@ -30,6 +30,7 @@ from s3_archiver_core._settings_models import (
 )
 from s3_archiver_core._settings_parse import (
     EnvDecoder,
+    parse_archive_date_range_result,
     parse_bool_result,
     parse_string_array_result,
 )
@@ -60,11 +61,13 @@ def load_app_settings_from_config_json[T](
     bucket_whitelist = decoder.consume(
         parse_string_array_result(decoder.env, "ARCHIVER_BUCKET_WHITELIST")
     )
+    archive_date_range = decoder.consume(parse_archive_date_range_result(decoder.env))
     if routes is not None and bucket_whitelist is not None and whitelist_enabled:
         _validate_bucket_whitelist(decoder, routes, bucket_whitelist)
     decoder.finish()
     assert routes is not None and run_timeout is not None and cleanup_enabled is not None
     assert whitelist_enabled is not None and bucket_whitelist is not None
+    assert archive_date_range is not None
     return settings_type(
         run_timeout=run_timeout,
         temp_dir=Path(decoder.env.get("ARCHIVER_TEMP_DIR", str(default_temp_dir()))),
@@ -74,6 +77,7 @@ def load_app_settings_from_config_json[T](
         cleanup_enabled=cleanup_enabled,
         whitelist_enabled=whitelist_enabled,
         bucket_whitelist=bucket_whitelist,
+        archive_date_range=archive_date_range,
     )
 
 
@@ -126,19 +130,13 @@ def _load_parser_kind(
     decoder: EnvDecoder, route: Mapping[str, object], field: str
 ) -> ParserKind | None:
     value = _required_string(decoder, route, "parser", field)
-    valid = frozenset({kind.value for kind in registered_parser_kinds()})
+    valid = frozenset({kind.value for kind in _parser_registry.registered_parser_kinds()})
     if value is None:
         return None
     if value not in valid:
         decoder.fail(field, f"{field} must be one of {valid}, got {value!r}")
         return None
     return ParserKind(value)
-
-
-def registered_parser_kinds() -> frozenset[ParserKind]:
-    """Return parser kinds accepted by route configuration."""
-
-    return _parser_registry.registered_parser_kinds()
 
 
 def _load_copy_mode(

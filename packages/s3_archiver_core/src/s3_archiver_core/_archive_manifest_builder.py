@@ -29,6 +29,7 @@ from s3_archiver_core._archive_size_limits import (
     max_source_object_size_bytes,
     source_object_skip_reason,
 )
+from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.parsers.filename_timestamp import (
     archive_root_for_key,
     destination_archive_key,
@@ -51,6 +52,7 @@ def build_archive_manifest(
     destination_path: str = "",
     source_identity: object | None = None,
     destination_identity: object | None = None,
+    date_range: ArchiveDateRange = NO_DATE_RANGE,
 ) -> ArchiveManifest:
     """Build an archive manifest from source object keys."""
 
@@ -68,6 +70,7 @@ def build_archive_manifest(
         destination_path=destination_path,
         source_identity=source_identity,
         destination_identity=destination_identity,
+        date_range=date_range,
     ):
         if isinstance(item, ManifestEntry):
             entries.append(item)
@@ -101,6 +104,7 @@ def iter_archive_manifest_items(
     destination_path: str = "",
     source_identity: object | None = None,
     destination_identity: object | None = None,
+    date_range: ArchiveDateRange = NO_DATE_RANGE,
 ) -> Iterator[ManifestEntry | SkippedObject]:
     """Yield selected and skipped manifest rows without retaining them in memory."""
 
@@ -131,13 +135,24 @@ def iter_archive_manifest_items(
             yield context.skipped_object(listed, selected.reason)
             continue
         timestamp = as_utc(selected.timestamp)
-        if timestamp.date() >= run_started_day:
+        target_day = timestamp.date()
+        if target_day >= run_started_day:
             yield context.skipped_object(
                 listed,
                 "parser timestamp in incomplete UTC day",
                 selected_timestamp=timestamp,
                 timestamp_source=selected.timestamp_source,
-                target_day=timestamp.date(),
+                target_day=target_day,
+                archive_root=selected.archive_root,
+            )
+            continue
+        if not date_range.includes(target_day):
+            yield context.skipped_object(
+                listed,
+                "parser timestamp outside configured date range",
+                selected_timestamp=timestamp,
+                timestamp_source=selected.timestamp_source,
+                target_day=target_day,
                 archive_root=selected.archive_root,
             )
             continue
@@ -145,7 +160,7 @@ def iter_archive_manifest_items(
             listed,
             timestamp,
             selected.timestamp_source,
-            timestamp.date(),
+            target_day,
             archive_root=selected.archive_root,
         )
 

@@ -145,6 +145,37 @@ uv run pytest tests/unit/test_parsers.py tests/unit/test_route_config_settings.p
 
 Removed environment variables are rejected when set. Migrate `ARCHIVER_RETENTION_DAYS`, `ARCHIVER_ENABLE_CLEANUP`, `ARCHIVER_MAX_WORKERS`, `S3_SOURCE_PATH_WHITELIST_ENABLED`, `S3_SOURCE_PATH_WHITELIST`, `S3_SOURCE_PATH_BLACKLIST_ENABLED`, and `S3_SOURCE_PATH_BLACKLIST` into explicit route JSON. Use route `path` values for source selection and destination placement, choose `parser` for object selection behavior, and choose `copy_mode` for archive-vs-direct output behavior.
 
+## Archive Date Range
+
+`ARCHIVER_FROM` and `ARCHIVER_TO` restrict an archive run to objects whose
+parser-selected date falls inside an inclusive day-level window. Matching is on
+the date the route's `parser` reads from each object, not the run date or S3
+`LastModified` (except for the `direct` parser, which uses `LastModified`).
+
+Each bound accepts any of these granularities:
+
+| Value | `ARCHIVER_FROM` resolves to | `ARCHIVER_TO` resolves to |
+| --- | --- | --- |
+| `2019` | `2019-01-01` | `2019-12-31` |
+| `2019-02` | `2019-02-01` | `2019-02-28` |
+| `2019-01-01` | `2019-01-01` | `2019-01-01` |
+| `2019-01-01T10:00:00` | `2019-01-01` | `2019-01-01` |
+
+`ARCHIVER_FROM` expands to the first day of its period and `ARCHIVER_TO` to the
+last; a timestamp bound rounds down to its day. Because matching is day-level, an
+object that only encodes a day (for example `2019-01-01`) is selected by any
+window that touches that day. Either bound may be omitted for an open-ended
+range, and both are unset by default (no restriction). A bound that is not a
+valid date, or a `from` later than `to`, fails startup with a config error.
+
+The window only narrows selection; it does not relax the complete-UTC-day rule,
+so objects in the current incomplete UTC day are still skipped. Cleanup follows
+the window automatically: the cleanup manifest a scoped archive run writes only
+references the in-window objects, so both chained (`CLEANUP=true`) and manual
+`cleanup` delete exactly that set without any extra configuration. The active
+window is reported as `archive_from` / `archive_to` in the startup
+`working_set` log line.
+
 ## Local Development
 
 For host-native OCI smoke checks, create a local env file first:

@@ -26,6 +26,7 @@ from s3_archiver_core._archive_size_limits import (
     filter_archive_groups_by_size,
     max_destination_archive_size_bytes,
 )
+from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.s3 import VersioningState
 
@@ -38,6 +39,7 @@ def build_route_archive_manifest(
     *,
     run_started_at_utc: datetime,
     progress_logger: ProgressLogger | None = None,
+    date_range: ArchiveDateRange = NO_DATE_RANGE,
 ) -> ArchiveManifest:
     """Build a deterministic global manifest for route-based archiving."""
 
@@ -62,6 +64,7 @@ def build_route_archive_manifest(
             destination_path=route.destination_path,
             source_identity=route.source_identity,
             destination_identity=route.destination_identity,
+            date_range=date_range,
         ):
             listed_count += 1
             if progress_logger is not None:

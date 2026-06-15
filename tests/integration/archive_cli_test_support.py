@@ -15,6 +15,7 @@ import s3_archiver_cli.main as cli_module
 from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core.archive import ArchiveRoute, ArchiveRunResult
 from s3_archiver_core.archive import run_archive as run_core_archive
+from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.archive_progress import ProgressLogger
 from s3_archiver_core.s3 import S3Client
 from s3_archiver_localstack_support import (
@@ -118,6 +119,7 @@ def run_archive_command(
         run_lock: ArchiveRunLock | None = None,
         debug_logger: DebugLogger | None = None,
         progress_logger: ProgressLogger | None = None,
+        date_range: ArchiveDateRange = NO_DATE_RANGE,
         clock: Callable[[], datetime] | None = None,
     ) -> ArchiveRunResult:
         _ = (run_started_at_utc, run_lock)
@@ -127,6 +129,7 @@ def run_archive_command(
             run_started_at_utc=FROZEN_ARCHIVE_RUN_STARTED_AT,
             debug_logger=debug_logger,
             progress_logger=progress_logger,
+            date_range=date_range,
             clock=clock,
         )
 
