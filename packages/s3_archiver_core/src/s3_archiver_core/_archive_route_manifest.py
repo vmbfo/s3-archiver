@@ -202,6 +202,11 @@ def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
 
 
 def _archive_size_filter_needed(groups: Iterable[ArchiveGroup]) -> bool:
+    # Each group's reader cursor must be fully consumed here (the sum inside
+    # estimated_archive_size_bytes does this) so no suspended reader cursor
+    # survives into the drop_oversized_groups commit, which would deadlock the
+    # write connection under PRAGMA journal_mode=OFF. Do not switch to indexed
+    # group.entries access, which would leave a cursor open.
     limit = max_destination_archive_size_bytes()
     return any(estimated_archive_size_bytes(group.entries) > limit for group in groups)
 
