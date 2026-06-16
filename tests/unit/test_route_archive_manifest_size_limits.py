@@ -148,6 +148,9 @@ def test_route_manifest_keeps_in_policy_groups_when_others_exceed_size_limit(
     assert [group.destination_archive_key for group in manifest.archive_groups] == [
         "data/fae/2026-04-13.tar.gz"
     ]
+    assert [entry.key for group in manifest.archive_groups for entry in group.entries] == [
+        "data/fae/2026-04-13T03-00-00Z.xml"
+    ]
     assert {item.key for item in manifest.skipped_objects} == {"data/fae/2026-04-12T03-00-00Z.xml"}
 
 

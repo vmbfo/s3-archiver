@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
@@ -125,6 +126,7 @@ def _build_with_store(
     entries_tuple, groups_tuple, skipped_tuple = filter_archive_groups_by_size(
         tuple(store.entries), tuple(store.archive_groups), tuple(store.skipped_objects)
     )
+    groups_tuple = tuple(replace(group, entries=tuple(group.entries)) for group in groups_tuple)
     _reject_duplicate_destinations(entries_tuple, groups_tuple)
     store.cleanup()
     return ArchiveManifest(

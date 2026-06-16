@@ -279,10 +279,11 @@ class SQLiteManifestStore:
         create_schema(self._connection)
 
     def close(self) -> None:
-        self._connection.close()
-        for connection in self._reader_connections.values():
-            connection.close()
-        self._reader_connections.clear()
+        with self._connection_lock:
+            self._connection.close()
+            for connection in self._reader_connections.values():
+                connection.close()
+            self._reader_connections.clear()
 
     def cleanup(self) -> None:
         with suppress(Exception):
