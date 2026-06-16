@@ -160,6 +160,7 @@ def _build_manifest(
         run_started_at_utc=started,
         progress_logger=progress_logger,
         date_range=date_range,
+        temp_dir=routes[0].source.temp_dir,
     )
 
 

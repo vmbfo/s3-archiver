@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from datetime import datetime
 from itertools import chain
+from pathlib import Path
 
 from s3_archiver_core._archive_env import positive_int_env
 from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_manifest_builder import iter_archive_manifest_items
-from s3_archiver_core._archive_manifest_groups import archive_groups
 from s3_archiver_core._archive_manifest_models import (
     ArchiveGroup,
     ArchiveManifest,
+    ArchiveManifestRoute,
     ArchiveManifestRouteSpec,
+    CopyMode,
+    DestinationLocator,
     ManifestEntry,
+    ParserKind,
     SkippedObject,
+    SourceLister,
 )
 from s3_archiver_core._archive_manifest_paths import (
     as_utc,
@@ -29,9 +35,10 @@ from s3_archiver_core._archive_size_limits import (
 from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.s3 import VersioningState
+from s3_archiver_core.temp_files import default_temp_dir
 
-_SQLITE_MANIFEST_ENTRY_THRESHOLD = 100_000
 _DEFAULT_LIST_PROGRESS_ESTIMATE = 2_000_000
+_MANIFEST_INSERT_BATCH = 1000
 
 
 def build_route_archive_manifest(
@@ -40,15 +47,106 @@ def build_route_archive_manifest(
     run_started_at_utc: datetime,
     progress_logger: ProgressLogger | None = None,
     date_range: ArchiveDateRange = NO_DATE_RANGE,
+    temp_dir: Path | None = None,
 ) -> ArchiveManifest:
     """Build a deterministic global manifest for route-based archiving."""
 
     run_started = as_utc(run_started_at_utc)
     route_tuple = tuple(routes)
     _reject_overlapping_source_paths(route_tuple)
-    entries: list[ManifestEntry] = []
-    skipped: list[SkippedObject] = []
-    store: SQLiteManifestStore | None = None
+    store = SQLiteManifestStore.temporary(_resolve_store_dir(temp_dir))
+    try:
+        return _build_with_store(store, route_tuple, run_started, progress_logger, date_range)
+    except Exception:
+        store.cleanup()
+        raise
+
+
+def build_archive_manifest(
+    source: SourceLister,
+    *,
+    run_started_at_utc: datetime,
+    versioning_state: VersioningState,
+    parser_kind: ParserKind,
+    copy_mode: CopyMode,
+    route_name: str = "default",
+    source_path: str = "",
+    destination: DestinationLocator | None = None,
+    destination_path: str = "",
+    source_identity: object | None = None,
+    destination_identity: object | None = None,
+    date_range: ArchiveDateRange = NO_DATE_RANGE,
+    temp_dir: Path | None = None,
+) -> ArchiveManifest:
+    """Build an archive manifest for a single source via the route builder."""
+
+    route = ArchiveManifestRoute(
+        name=route_name,
+        source=source,
+        destination=destination,
+        parser_kind=parser_kind,
+        copy_mode=copy_mode,
+        source_path=source_path,
+        destination_path=destination_path,
+        versioning_state=versioning_state,
+        source_identity=source_identity,
+        destination_identity=destination_identity,
+    )
+    return build_route_archive_manifest(
+        [route],
+        run_started_at_utc=run_started_at_utc,
+        date_range=date_range,
+        temp_dir=temp_dir,
+    )
+
+
+def _build_with_store(
+    store: SQLiteManifestStore,
+    route_tuple: tuple[ArchiveManifestRouteSpec, ...],
+    run_started: datetime,
+    progress_logger: ProgressLogger | None,
+    date_range: ArchiveDateRange,
+) -> ArchiveManifest:
+    _stream_routes_into_store(store, route_tuple, run_started, progress_logger, date_range)
+    store.commit()
+    store.assert_no_duplicate_sources()
+    if not _archive_size_filter_needed(store.archive_groups):
+        store.assert_no_duplicate_destinations()
+        return ArchiveManifest(
+            run_started,
+            store.entries,
+            None,
+            store.archive_groups,
+            store.skipped_objects,
+            "sqlite",
+            store.entry_size_sum(),
+            store=store,
+        )
+    entries_tuple, groups_tuple, skipped_tuple = filter_archive_groups_by_size(
+        tuple(store.entries), tuple(store.archive_groups), tuple(store.skipped_objects)
+    )
+    _reject_duplicate_destinations(entries_tuple, groups_tuple)
+    store.cleanup()
+    return ArchiveManifest(
+        run_started,
+        entries_tuple,
+        None,
+        groups_tuple,
+        skipped_tuple,
+        "sqlite",
+        sum(entry.size for entry in entries_tuple),
+    )
+
+
+def _stream_routes_into_store(
+    store: SQLiteManifestStore,
+    route_tuple: tuple[ArchiveManifestRouteSpec, ...],
+    run_started: datetime,
+    progress_logger: ProgressLogger | None,
+    date_range: ArchiveDateRange,
+) -> None:
+    entry_buffer: list[ManifestEntry] = []
+    skipped_buffer: list[SkippedObject] = []
     listed_count = 0
     list_progress_total = _list_progress_total()
     for route in route_tuple:
@@ -69,67 +167,32 @@ def build_route_archive_manifest(
             listed_count += 1
             if progress_logger is not None:
                 progress_logger(_list_progress(listed_count, list_progress_total))
-            if store is None and len(entries) + len(skipped) >= _SQLITE_MANIFEST_ENTRY_THRESHOLD:
-                store = SQLiteManifestStore.temporary()
-                for entry in entries:
-                    store.add_entry(entry)
-                for skipped_object in skipped:
-                    store.add_skipped(skipped_object)
-                entries.clear()
-                skipped.clear()
             if isinstance(item, ManifestEntry):
-                if store is None:
-                    entries.append(item)
-                else:
-                    store.add_entry(item)
-            elif store is None:
-                skipped.append(item)
+                entry_buffer.append(item)
+                if len(entry_buffer) >= _MANIFEST_INSERT_BATCH:
+                    store.add_entries(entry_buffer)
+                    entry_buffer.clear()
             else:
-                store.add_skipped(item)
+                skipped_buffer.append(item)
+                if len(skipped_buffer) >= _MANIFEST_INSERT_BATCH:
+                    store.add_skipped_objects(skipped_buffer)
+                    skipped_buffer.clear()
+    if entry_buffer:
+        store.add_entries(entry_buffer)
+    if skipped_buffer:
+        store.add_skipped_objects(skipped_buffer)
     if progress_logger is not None:
         progress_logger(ArchiveProgress("list", listed_count, listed_count))
-    if store is not None:
-        store.commit()
-        store.assert_no_duplicate_sources()
-        if not _archive_size_filter_needed(store.archive_groups):
-            store.assert_no_duplicate_destinations()
-            return ArchiveManifest(
-                run_started,
-                store.entries,
-                None,
-                store.archive_groups,
-                store.skipped_objects,
-                "sqlite",
-                store.entry_size_sum(),
-            )
-        entries_tuple, groups_tuple, skipped_tuple = filter_archive_groups_by_size(
-            tuple(store.entries), tuple(store.archive_groups), tuple(store.skipped_objects)
-        )
-        _reject_duplicate_destinations(entries_tuple, groups_tuple)
-        return ArchiveManifest(
-            run_started,
-            entries_tuple,
-            None,
-            groups_tuple,
-            skipped_tuple,
-            "sqlite",
-            sum(entry.size for entry in entries_tuple),
-        )
-    entry_tuple = tuple(entries)
-    _reject_duplicate_sources(entry_tuple)
-    grouped = archive_groups(entry_tuple)
-    entry_tuple, grouped, skipped_tuple = filter_archive_groups_by_size(
-        entry_tuple, grouped, tuple(skipped)
+
+
+def _resolve_store_dir(temp_dir: Path | None) -> Path:
+    store_dir = (
+        temp_dir
+        if temp_dir is not None
+        else Path(os.getenv("ARCHIVER_TEMP_DIR") or str(default_temp_dir()))
     )
-    _reject_duplicate_destinations(entry_tuple, grouped)
-    return ArchiveManifest(
-        run_started,
-        entry_tuple,
-        None,
-        grouped,
-        skipped_tuple,
-        source_byte_count=sum(entry.size for entry in entry_tuple),
-    )
+    store_dir.mkdir(parents=True, exist_ok=True)
+    return store_dir
 
 
 def _reject_overlapping_source_paths(routes: tuple[ArchiveManifestRouteSpec, ...]) -> None:
@@ -164,16 +227,6 @@ def _list_progress_total() -> int:
 
 def _list_progress(completed: int, estimated_total: int) -> ArchiveProgress:
     return ArchiveProgress("list", completed, max(estimated_total, completed + 1))
-
-
-def _reject_duplicate_sources(entries: tuple[ManifestEntry, ...]) -> None:
-    _reject_duplicate_identities(
-        (
-            (entry.source_identity, entry.source_bucket, entry.key, entry.version_id)
-            for entry in entries
-        ),
-        "duplicate source object identity",
-    )
 
 
 def _reject_duplicate_destinations(

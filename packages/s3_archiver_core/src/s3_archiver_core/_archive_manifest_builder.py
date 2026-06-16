@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import cast
 
-from s3_archiver_core._archive_manifest_groups import archive_groups
 from s3_archiver_core._archive_manifest_models import (
-    ArchiveManifest,
     CopyMode,
     DestinationLocator,
     ManifestEntry,
@@ -24,7 +22,6 @@ from s3_archiver_core._archive_manifest_paths import (
 )
 from s3_archiver_core._archive_manifest_selection import select_object
 from s3_archiver_core._archive_size_limits import (
-    filter_archive_groups_by_size,
     log_source_object_skip,
     max_source_object_size_bytes,
     source_object_skip_reason,
@@ -37,58 +34,6 @@ from s3_archiver_core.parsers.filename_timestamp import (
 from s3_archiver_core.parsers.results import SkippedObject as ParserSkippedObject
 from s3_archiver_core.parsers.results import TimestampSource
 from s3_archiver_core.s3 import S3ListedObject, VersioningState
-
-
-def build_archive_manifest(
-    source: SourceLister,
-    *,
-    run_started_at_utc: datetime,
-    versioning_state: VersioningState,
-    parser_kind: ParserKind,
-    copy_mode: CopyMode,
-    route_name: str = "default",
-    source_path: str = "",
-    destination: DestinationLocator | None = None,
-    destination_path: str = "",
-    source_identity: object | None = None,
-    destination_identity: object | None = None,
-    date_range: ArchiveDateRange = NO_DATE_RANGE,
-) -> ArchiveManifest:
-    """Build an archive manifest from source object keys."""
-
-    entries: list[ManifestEntry] = []
-    skipped: list[SkippedObject] = []
-    for item in iter_archive_manifest_items(
-        source,
-        run_started_at_utc=run_started_at_utc,
-        versioning_state=versioning_state,
-        parser_kind=parser_kind,
-        copy_mode=copy_mode,
-        route_name=route_name,
-        source_path=source_path,
-        destination=destination,
-        destination_path=destination_path,
-        source_identity=source_identity,
-        destination_identity=destination_identity,
-        date_range=date_range,
-    ):
-        if isinstance(item, ManifestEntry):
-            entries.append(item)
-        else:
-            skipped.append(item)
-    entry_tuple = tuple(entries)
-    grouped = archive_groups(entry_tuple)
-    entry_tuple, grouped, skipped_tuple = filter_archive_groups_by_size(
-        entry_tuple, grouped, tuple(skipped)
-    )
-    return ArchiveManifest(
-        as_utc(run_started_at_utc),
-        entry_tuple,
-        None,
-        grouped,
-        skipped_tuple,
-        source_byte_count=sum(entry.size for entry in entry_tuple),
-    )
 
 
 def iter_archive_manifest_items(

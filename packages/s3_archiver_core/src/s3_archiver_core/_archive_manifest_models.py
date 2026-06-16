@@ -10,7 +10,7 @@ records, and test doubles all fit without subclassing.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import date, datetime
 from typing import Literal, Protocol
 
@@ -49,6 +49,14 @@ class DestinationLocator(Protocol):
         ...
 
 
+class ManifestCleanup(Protocol):
+    """Storage handle whose backing resources can be reclaimed on demand."""
+
+    def cleanup(self) -> None:
+        """Release the manifest's backing storage resources."""
+        ...
+
+
 class ArchiveManifestRouteSpec(Protocol):
     """Route shape accepted by route manifest construction."""
 
@@ -59,7 +67,7 @@ class ArchiveManifestRouteSpec(Protocol):
     def source(self) -> SourceLister: ...
 
     @property
-    def destination(self) -> DestinationLocator: ...
+    def destination(self) -> DestinationLocator | None: ...
 
     @property
     def parser_kind(self) -> ParserKind: ...
@@ -172,8 +180,15 @@ class ArchiveManifest:
     target_day: date | None = None
     archive_groups: Sequence[ArchiveGroup] = ()
     skipped_objects: Sequence[SkippedObject] = ()
-    manifest_storage: str = "memory"
+    manifest_storage: str = "sqlite"
     source_byte_count: int = 0
+    store: ManifestCleanup | None = field(default=None, compare=False)
+
+    def close(self) -> None:
+        """Reclaim the backing manifest storage when one is held."""
+
+        if self.store is not None:
+            self.store.cleanup()
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,7 +197,7 @@ class ArchiveManifestRoute:
 
     name: str
     source: SourceLister
-    destination: DestinationLocator
+    destination: DestinationLocator | None
     _: KW_ONLY
     parser_kind: ParserKind
     copy_mode: CopyMode

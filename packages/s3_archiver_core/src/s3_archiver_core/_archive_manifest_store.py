@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import suppress
 from pathlib import Path
 from threading import RLock, get_ident
@@ -40,6 +40,42 @@ from s3_archiver_core._archive_manifest_sqlite import (
     unpack_entry,
     unpack_skipped,
 )
+
+_INSERT_ENTRY_SQL = (
+    "INSERT INTO entries (route_name, copy_mode, source_identity, source_bucket, key, "
+    + "version_id, destination_identity, destination_bucket, destination_key, "
+    + "destination_archive_key, target_day, archive_root, size, payload) "
+    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_DUPLICATE_SOURCE_SQL = (
+    "SELECT source_identity, source_bucket, key, version_id FROM entries "
+    + "GROUP BY source_identity, source_bucket, key, version_id "
+    + "HAVING COUNT(*) > 1 LIMIT 1"
+)
+_TARGET_DAYS_SQL = (
+    "SELECT DISTINCT target_day FROM entries "
+    + "WHERE copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz') AND target_day != '' "
+    + "ORDER BY target_day"
+)
+
+
+def _entry_row(entry: ManifestEntry) -> tuple[object, ...]:
+    return (
+        entry.route_name,
+        entry.copy_mode,
+        stable_key(entry.source_identity),
+        entry.source_bucket,
+        entry.key,
+        entry.version_id or "",
+        stable_key(entry.destination_identity),
+        entry.destination_bucket,
+        entry.destination_key,
+        entry.destination_archive_key,
+        "" if entry.target_day is None else entry.target_day.isoformat(),
+        entry.archive_root,
+        entry.size,
+        pack(entry),
+    )
 
 
 @final
@@ -82,30 +118,13 @@ class SQLiteManifestStore:
 
     def add_entry(self, entry: ManifestEntry) -> None:
         with self._connection_lock:
-            _ = self._connection.execute(
-                """
-                INSERT INTO entries (
-                    route_name, copy_mode, source_identity, source_bucket, key, version_id,
-                    destination_identity, destination_bucket, destination_key,
-                    destination_archive_key, target_day, archive_root, size, payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    entry.route_name,
-                    entry.copy_mode,
-                    stable_key(entry.source_identity),
-                    entry.source_bucket,
-                    entry.key,
-                    entry.version_id or "",
-                    stable_key(entry.destination_identity),
-                    entry.destination_bucket,
-                    entry.destination_key,
-                    entry.destination_archive_key,
-                    "" if entry.target_day is None else entry.target_day.isoformat(),
-                    entry.archive_root,
-                    entry.size,
-                    pack(entry),
-                ),
+            _ = self._connection.execute(_INSERT_ENTRY_SQL, _entry_row(entry))
+        self._group_count = None
+
+    def add_entries(self, entries: Iterable[ManifestEntry]) -> None:
+        with self._connection_lock:
+            _ = self._connection.executemany(
+                _INSERT_ENTRY_SQL, [_entry_row(entry) for entry in entries]
             )
         self._group_count = None
 
@@ -114,6 +133,13 @@ class SQLiteManifestStore:
             _ = self._connection.execute(
                 "INSERT INTO skipped (payload) VALUES (?)", (pack(skipped),)
             )
+
+    def add_skipped_objects(self, items: Iterable[SkippedObject]) -> None:
+        with self._connection_lock:
+            _ = self._connection.executemany(
+                "INSERT INTO skipped (payload) VALUES (?)", [(pack(item),) for item in items]
+            )
+        self._group_count = None
 
     def commit(self) -> None:
         with self._connection_lock:
@@ -125,28 +151,17 @@ class SQLiteManifestStore:
     def assert_no_duplicate_sources(self) -> None:
         with self._connection_lock:
             row = optional_row(
-                cast(
-                    object,
-                    self._connection.execute(
-                        """
-                SELECT source_identity, source_bucket, key, version_id
-                FROM entries
-                GROUP BY source_identity, source_bucket, key, version_id
-                HAVING COUNT(*) > 1
-                LIMIT 1
-                """
-                    ).fetchone(),
-                )
+                cast(object, self._connection.execute(_DUPLICATE_SOURCE_SQL).fetchone())
             )
         if row is not None:
             raise ValueError("duplicate source object identity")
 
     def assert_no_duplicate_destinations(self) -> None:
-        if has_duplicate_direct_destination(self._connection) or has_duplicate_archive_destination(
-            self._connection
+        if (
+            has_duplicate_direct_destination(self._connection)
+            or has_duplicate_archive_destination(self._connection)
+            or has_direct_archive_destination_collision(self._connection)
         ):
-            raise ValueError("duplicate destination object identity")
-        if has_direct_archive_destination_collision(self._connection):
             raise ValueError("duplicate destination object identity")
 
     def entry_count(self) -> int:
@@ -176,18 +191,7 @@ class SQLiteManifestStore:
     def target_days(self) -> tuple[str, ...]:
         with self._connection_lock:
             return tuple(
-                str(row[0])
-                for row in iter_sql_rows(
-                    self._connection.execute(
-                        """
-                    SELECT DISTINCT target_day
-                    FROM entries
-                    WHERE copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz')
-                        AND target_day != ''
-                    ORDER BY target_day
-                    """
-                    )
-                )
+                str(row[0]) for row in iter_sql_rows(self._connection.execute(_TARGET_DAYS_SQL))
             )
 
     def entry_size_sum(self) -> int:
