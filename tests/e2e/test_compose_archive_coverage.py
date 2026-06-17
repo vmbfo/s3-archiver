@@ -113,6 +113,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
             )
             print("\\n".join(failures), file=sys.stderr)
             raise SystemExit(1)
+        result.manifest.close()
         files = [] if not temp_dir.exists() else sorted(path.name for path in temp_dir.iterdir())
         payload = {
             "ok": result.ok,

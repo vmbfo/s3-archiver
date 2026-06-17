@@ -239,6 +239,7 @@ def test_archive_core_uses_temp_file_backed_transfer_against_localstack(
         destination_client, localstack_bucket_pair.destination, archive_key
     ) == {key: "temp-file\n"}
     assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
+    result.manifest.close()
     assert not runtime_temp_dir.exists() or list(runtime_temp_dir.iterdir()) == []
 
 
