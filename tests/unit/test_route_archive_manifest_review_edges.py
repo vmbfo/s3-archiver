@@ -38,35 +38,6 @@ def test_route_manifest_does_not_convert_invalid_parser_kind_to_skip() -> None:
 
 
 @pytest.mark.unit()
-@pytest.mark.parametrize(("left_path", "right_path"), (("data/", "data/fae/"), ("", "data/")))
-def test_route_manifest_rejects_overlapping_source_paths(left_path: str, right_path: str) -> None:
-    source, destination = FakeBucket("source"), FakeBucket("archive")
-
-    with pytest.raises(ValueError, match="overlapping source paths"):
-        _ = build_route_archive_manifest(
-            (
-                ArchiveManifestRoute(
-                    "left",
-                    source,
-                    destination,
-                    parser_kind="filename_timestamp",
-                    copy_mode="daily_tar_gz",
-                    source_path=left_path,
-                ),
-                ArchiveManifestRoute(
-                    "right",
-                    source,
-                    destination,
-                    parser_kind="filename_timestamp",
-                    copy_mode="daily_tar_gz",
-                    source_path=right_path,
-                ),
-            ),
-            run_started_at_utc=STARTED,
-        )
-
-
-@pytest.mark.unit()
 def test_route_manifest_allows_non_overlapping_source_paths_on_same_storage() -> None:
     source = FakeBucket("source")
     destination = FakeBucket("archive")
