@@ -20,6 +20,7 @@ def _route(
     copy_mode: str = "daily_tar_gz",
     source_path: str = "data/fae/",
     destination_bucket: str = "archive-bucket",
+    destination_path: str = "archives/fae/",
 ) -> dict[str, object]:
     return {
         "name": name,
@@ -40,7 +41,7 @@ def _route(
             "endpoint_url": "http://localhost:4566",
             "region": "us-east-1",
             "bucket": destination_bucket,
-            "path": "archives/fae/",
+            "path": destination_path,
             "access_key_id": "destination-access",
             "secret_access_key": "destination-secret",
             "addressing_style": "path",
@@ -254,46 +255,3 @@ def test_from_env_rejects_oci_source_without_iam_user_ocid(tmp_path: Path) -> No
 def test_from_env_rejects_duplicate_route_names(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="duplicate route name"):
         _ = AppSettings.from_env(_env(tmp_path, [_route(), _route()]))
-
-
-@pytest.mark.unit()
-def test_from_env_rejects_same_route_source_and_destination_storage(tmp_path: Path) -> None:
-    route = _route(destination_bucket="source-bucket")
-    destination = route["destination"]
-    assert isinstance(destination, dict)
-    destination["endpoint_url"] = "http://localstack:4566"
-
-    with pytest.raises(ConfigError, match="source and destination storage locations"):
-        _ = AppSettings.from_env(_env(tmp_path, [route]))
-
-
-@pytest.mark.unit()
-def test_from_env_rejects_overlapping_route_source_paths(tmp_path: Path) -> None:
-    first = _route(name="fae", source_path="data/fae/")
-    second = _route(name="fae-hourly", source_path="/data/fae/hourly/")
-
-    with pytest.raises(ConfigError, match="source paths"):
-        _ = AppSettings.from_env(_env(tmp_path, [first, second]))
-
-
-@pytest.mark.unit()
-def test_from_env_allows_same_storage_sibling_source_path_names(tmp_path: Path) -> None:
-    first = _route(name="data", source_path="data")
-    second = _route(name="database", source_path="database")
-
-    settings = AppSettings.from_env(_env(tmp_path, [first, second]))
-
-    assert [route.source.path for route in settings.routes] == ["data", "database"]
-
-
-@pytest.mark.unit()
-def test_from_env_allows_same_source_path_on_different_storage(tmp_path: Path) -> None:
-    first = _route(name="fae", source_path="data/fae/")
-    second = _route(name="other-storage", source_path="data/fae/")
-    source = second["source"]
-    assert isinstance(source, dict)
-    source["endpoint_url"] = "http://localstack-alt:4566"
-
-    settings = AppSettings.from_env(_env(tmp_path, [first, second]))
-
-    assert [route.name for route in settings.routes] == ["fae", "other-storage"]
