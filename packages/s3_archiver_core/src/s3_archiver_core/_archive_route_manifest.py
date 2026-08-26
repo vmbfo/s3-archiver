@@ -34,7 +34,7 @@ from s3_archiver_core._archive_size_limits import (
 from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
 from s3_archiver_core.archive_progress import ArchiveProgress, ProgressLogger
 from s3_archiver_core.s3 import VersioningState
-from s3_archiver_core.temp_files import default_temp_dir
+from s3_archiver_core.temp_files import default_temp_dir, ensure_runtime_temp_dir
 
 _DEFAULT_LIST_PROGRESS_ESTIMATE = 2_000_000
 _MANIFEST_INSERT_BATCH = 1000
@@ -184,7 +184,7 @@ def _resolve_store_dir(temp_dir: Path | None) -> Path:
         if temp_dir is not None
         else Path(os.getenv("ARCHIVER_TEMP_DIR") or str(default_temp_dir()))
     )
-    store_dir.mkdir(parents=True, exist_ok=True)
+    ensure_runtime_temp_dir(store_dir)
     return store_dir
 
 
@@ -215,11 +215,6 @@ def _route_versioning_state(route: ArchiveManifestRouteSpec) -> VersioningState:
 
 
 def _archive_size_filter_needed(groups: Iterable[ArchiveGroup]) -> bool:
-    # Each group's reader cursor must be fully consumed here (the sum inside
-    # estimated_archive_size_bytes does this) so no suspended reader cursor
-    # survives into the drop_oversized_groups commit, which would deadlock the
-    # write connection under PRAGMA journal_mode=OFF. Do not switch to indexed
-    # group.entries access, which would leave a cursor open.
     limit = max_destination_archive_size_bytes()
     return any(estimated_archive_size_bytes(group.entries) > limit for group in groups)
 

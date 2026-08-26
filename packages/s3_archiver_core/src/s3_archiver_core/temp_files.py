@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,7 @@ from pathlib import Path
 from s3_archiver_core.errors import ConfigError
 
 TRANSFER_TEMP_PREFIX = "s3-archiver-transfer-"
+_PRIVATE_TEMP_DIR_MODE = 0o700
 
 
 def default_temp_dir() -> Path:
@@ -22,17 +25,45 @@ def default_temp_dir() -> Path:
 def prepare_runtime_temp_dir(temp_dir: Path) -> None:
     """Create the runtime temp directory and remove stale archiver temp files."""
 
-    try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise ConfigError(f"ARCHIVER_TEMP_DIR cannot be created: {exc}") from exc
-    if not temp_dir.is_dir():
-        raise ConfigError("ARCHIVER_TEMP_DIR must be a directory")
+    ensure_runtime_temp_dir(temp_dir)
     _verify_transfer_temp_file_permissions(temp_dir)
     try:
         cleanup_stale_transfer_files(temp_dir)
     except OSError as exc:
         raise ConfigError(f"ARCHIVER_TEMP_DIR transfer cleanup failed: {exc}") from exc
+
+
+def ensure_runtime_temp_dir(temp_dir: Path) -> None:
+    """Create an owner-only runtime temp directory and verify its ownership."""
+
+    try:
+        temp_dir.mkdir(parents=True, mode=_PRIVATE_TEMP_DIR_MODE, exist_ok=True)
+    except OSError as exc:
+        raise ConfigError(f"ARCHIVER_TEMP_DIR cannot be created: {exc}") from exc
+    if not temp_dir.is_dir():
+        raise ConfigError("ARCHIVER_TEMP_DIR must be a directory")
+    if temp_dir.is_symlink():
+        raise ConfigError("ARCHIVER_TEMP_DIR must not be a symbolic link")
+    try:
+        metadata = temp_dir.stat()
+    except OSError as exc:
+        raise ConfigError(f"ARCHIVER_TEMP_DIR cannot be inspected: {exc}") from exc
+    current_uid = os.geteuid()
+    if metadata.st_uid != current_uid:
+        raise ConfigError(
+            "ARCHIVER_TEMP_DIR must be owned by the current user "
+            + f"(expected uid {current_uid}, found uid {metadata.st_uid})"
+        )
+    try:
+        temp_dir.chmod(_PRIVATE_TEMP_DIR_MODE)
+        permissions = stat.S_IMODE(temp_dir.stat().st_mode)
+    except OSError as exc:
+        raise ConfigError(f"ARCHIVER_TEMP_DIR cannot be secured: {exc}") from exc
+    if permissions != _PRIVATE_TEMP_DIR_MODE:
+        raise ConfigError(
+            "ARCHIVER_TEMP_DIR must have owner-only permissions "
+            + f"(expected 0700, found {permissions:04o})"
+        )
 
 
 def _verify_transfer_temp_file_permissions(temp_dir: Path) -> None:

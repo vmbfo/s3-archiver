@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from s3_archiver_core._settings_parse import normalize_endpoint_url as _normalize_endpoint_url
@@ -48,7 +48,7 @@ class S3LocationSettings:
 
     provider: S3Provider
     access_key_id: str
-    secret_access_key: str
+    secret_access_key: str = field(repr=False)
     region: str
     bucket: str
     namespace: str | None

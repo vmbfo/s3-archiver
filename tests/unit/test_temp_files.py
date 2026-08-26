@@ -178,8 +178,13 @@ def test_prepare_runtime_temp_dir_rejects_path_that_is_not_directory_after_creat
 ) -> None:
     temp_dir = tmp_path / "runtime-temp"
 
-    def noop_mkdir(self: Path, parents: bool = False, exist_ok: bool = False) -> None:
-        _ = (self, parents, exist_ok)
+    def noop_mkdir(
+        self: Path,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        _ = (self, mode, parents, exist_ok)
 
     def never_directory(self: Path) -> bool:
         _ = self

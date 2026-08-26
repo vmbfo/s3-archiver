@@ -276,6 +276,7 @@ Run all suites with the canonical coverage-gated command:
 - Single-object copy/archive-member writes emit `archive.object.long_running` after `ARCHIVER_LONG_OBJECT_LOG_SECONDS`, which defaults to `300`.
 - Oversized object/archive skips are logged as warnings, and completion logs repeat skipped-object counts by reason.
 - `ARCHIVER_TEMP_DIR` is bind-mounted at the same path in Docker Compose. Set `ARCHIVER_TEMP_DIR=/mnt/data/tmp/s3-archiver` in the default `.env`, or export it alongside `APP_ENV_FILE`, so staged archives use the host `/mnt/data` filesystem instead of the container root filesystem. The runtime entrypoint repairs ownership of `ARCHIVER_TEMP_DIR` and `LOG_DIR`, then drops to the unprivileged app user before running the archiver.
+- At startup, `ARCHIVER_TEMP_DIR` is restricted to mode `0700` and must be owned by the effective runtime user; the CLI fails closed if another user owns it or the path is a symbolic link.
 - Inspect the file logs with Docker:
 
 ```bash
@@ -319,6 +320,12 @@ The same loop is available in Docker Compose:
 ARCHIVER_SCHEDULE_UTC=02:00 docker compose up -d scheduler
 docker compose logs -f scheduler
 ```
+
+Run exactly one scheduler for each shared `LOG_DIR`/lock volume. Scheduler startup
+deliberately recovers a non-timed-out lock written by a different hostname so that
+container restarts with a new hostname can proceed. Two scheduler replicas that share
+the lock volume can therefore take over one another's live lock during startup and must
+not be used as a high-availability configuration.
 
 For a single on-demand pass without the scheduler loop, use the one-off `archive`
 service. It runs once and exits (no restart policy), is owned by the Docker daemon

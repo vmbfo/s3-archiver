@@ -28,6 +28,25 @@ from s3_archiver_core.settings import S3AddressingStyle, S3LocationSettings, S3P
 
 
 @pytest.mark.unit()
+def test_s3_location_settings_repr_omits_secret_access_key() -> None:
+    secret = "do-not-log-this-secret"
+    location = S3LocationSettings(
+        provider=S3Provider.LOCALSTACK,
+        access_key_id="access",
+        secret_access_key=secret,
+        region="us-east-1",
+        bucket="bucket",
+        namespace=None,
+        iam_user_ocid=None,
+        endpoint_url=None,
+        addressing_style=S3AddressingStyle.PATH,
+    )
+
+    assert secret not in repr(location)
+    assert location.secret_access_key == secret
+
+
+@pytest.mark.unit()
 def test_oci_endpoint_resolution_requires_namespace() -> None:
     location = S3LocationSettings(
         provider=S3Provider.OCI,

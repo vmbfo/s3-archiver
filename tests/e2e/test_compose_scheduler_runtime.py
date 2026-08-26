@@ -173,6 +173,8 @@ def test_compose_archive_recovers_timed_out_prior_container_lock_before_archive_
             "APP_ENV_FILE=/dev/null",
             "-e",
             f"LOG_DIR={log_dir}",
+            "--user",
+            "10001:10001",
             "--entrypoint",
             "sh",
             "app",

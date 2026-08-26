@@ -154,16 +154,16 @@ class SQLiteManifestStore:
             raise ValueError("duplicate source object identity")
 
     def assert_no_duplicate_destinations(self) -> None:
-        if (
-            has_duplicate_direct_destination(self._connection)
-            or has_duplicate_archive_destination(self._connection)
-            or has_direct_archive_destination_collision(self._connection)
-        ):
-            raise ValueError("duplicate destination object identity")
+        with self._connection_lock:
+            if (
+                has_duplicate_direct_destination(self._connection)
+                or has_duplicate_archive_destination(self._connection)
+                or has_direct_archive_destination_collision(self._connection)
+            ):
+                raise ValueError("duplicate destination object identity")
 
     def drop_oversized_groups(self, limit: int) -> int:
         """Drop archive groups whose estimated size exceeds ``limit`` in place."""
-
         with self._connection_lock:
             dropped = drop_oversized_chunks(self._connection, limit)
             if dropped:
