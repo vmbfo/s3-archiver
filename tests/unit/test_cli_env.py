@@ -160,10 +160,41 @@ def test_checked_in_env_example_is_valid_route_config() -> None:
     env = PARSE_ENV_FILE(Path(".env.example"))
 
     settings = AppSettings.from_env(env)
+    routes = {route.name: route for route in settings.routes}
 
     assert settings.routes[0].source.provider.value == "custom"
     assert settings.routes[0].source.endpoint_url == "https://s3.example.com"
     assert settings.temp_dir == Path("/mnt/data/tmp/s3-archiver")
+    assert routes["harmonie"].source.path == "data/harmonie/"
+    assert routes["wrf-web_img"].source.path == "data/wrf/web_img/"
+    assert routes["wrf-web_img"].parser == "folder_timestamp_child"
+    assert routes["wrf-web_img"].copy_mode == "timestamp_child_tar_gz"
+
+
+@pytest.mark.unit()
+def test_checked_in_prod_env_example_is_secret_free_and_valid_route_config() -> None:
+    env = PARSE_ENV_FILE(Path(".env.example-prod"))
+
+    assert "S3_ENDPOINT" not in env
+    assert "S3_ACCESS_KEY" not in env
+    assert "S3_SECRET_KEY" not in env
+
+    settings = AppSettings.from_env(
+        env
+        | {
+            "S3_ENDPOINT": "https://s3.example.com",
+            "S3_ACCESS_KEY": "replace-me",
+            "S3_SECRET_KEY": "replace-me",
+            "S3_REGION": "eu-frankfurt-1",
+        }
+    )
+    routes = {route.name: route for route in settings.routes}
+
+    assert settings.cleanup_enabled is True
+    assert settings.whitelist_enabled is True
+    assert routes["harmonie"].source.path == "data/harmonie/"
+    assert routes["wrf-web_img"].parser == "folder_timestamp_child"
+    assert routes["wrf-web_img"].copy_mode == "timestamp_child_tar_gz"
 
 
 @pytest.mark.unit()
