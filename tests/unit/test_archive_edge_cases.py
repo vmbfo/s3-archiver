@@ -127,7 +127,8 @@ def test_verify_failure_after_copy_fails_run() -> None:
 
         @override
         def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-            self.head_calls += 1
+            if ".members." not in key:
+                self.head_calls += 1
             if self.head_calls >= 3:
                 return None
             return super().head_object(key, version_id)

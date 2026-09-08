@@ -71,7 +71,9 @@ class ArchiveBucket(Protocol):
         """Return source object content."""
         ...
 
-    def read_source_stream(self, key: str, version_id: str | None = None) -> ArchiveReadableBody:
+    def read_source_stream(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> ArchiveReadableBody:
         """Return a streaming source object body."""
         ...
 

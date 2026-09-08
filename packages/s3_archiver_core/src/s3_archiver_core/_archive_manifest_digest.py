@@ -28,14 +28,17 @@ class ManifestDigestBuilder:
             self._first = False
         else:
             self._digest.update(b",")
-        self._digest.update(
-            json.dumps(_digest_row(entry), sort_keys=True, separators=(",", ":")).encode()
-        )
+        self._digest.update(manifest_entry_bytes(entry))
 
     def hexdigest(self) -> str:
         digest = self._digest.copy()
         digest.update(b"]")
         return digest.hexdigest()
+
+
+def manifest_entry_bytes(entry: ManifestEntry) -> bytes:
+    """Canonical member identity, including version/ETag and source namespace."""
+    return json.dumps(_digest_row(entry), sort_keys=True, separators=(",", ":")).encode()
 
 
 def _digest_row(entry: ManifestEntry) -> dict[str, object]:

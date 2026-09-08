@@ -99,7 +99,7 @@ def _single_member_archive(tmp_path: Path, key: str) -> tarfile.TarInfo:
         ),
     )
 
-    write_tar_gz_archive(source, group, archive_path)
+    _ = write_tar_gz_archive(source, group, archive_path)
 
     with (
         gzip.GzipFile(fileobj=io.BytesIO(archive_path.read_bytes()), mode="rb") as gzip_file,

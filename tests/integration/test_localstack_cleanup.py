@@ -17,6 +17,7 @@ from s3_archiver_localstack_support.harness import LocalstackBucketPair
 from s3_archiver_localstack_support.objects import listed_keys, put_test_object
 from typer.testing import CliRunner
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
@@ -64,7 +65,7 @@ def test_cleanup_command_deletes_archived_source_objects(
     assert cleanup_payload["removed_manifest_count"] == 1
     assert cleanup_payload["failure_count"] == 0
     assert listed_keys(source_client, localstack_bucket_pair.source) == set()
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
         TARGET_ARCHIVE_KEY
     }
     assert list(_pending_dir(tmp_path).glob("*.jsonl")) == []

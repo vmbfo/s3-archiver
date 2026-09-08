@@ -131,10 +131,15 @@ class S3ArchiveBucket:
             close_body(body)
         return b"".join(chunks)
 
-    def read_source_stream(self, key: str, version_id: str | None = None) -> ReadableBody:
+    def read_source_stream(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> ReadableBody:
         """Return a streaming source object body."""
         try:
-            response = self.client.get_object(**versioned_kwargs(self.bucket, key, version_id))
+            kwargs = versioned_kwargs(self.bucket, key, version_id)
+            if if_match is not None:
+                kwargs["IfMatch"] = if_match
+            response = self.client.get_object(**kwargs)
         except ClientError as exc:
             if is_not_found_error(exc):
                 raise FileNotFoundError(key) from exc

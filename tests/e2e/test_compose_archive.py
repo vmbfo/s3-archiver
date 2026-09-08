@@ -19,6 +19,7 @@ from s3_archiver_localstack_support.objects import (
     read_tar_gz_members_text,
 )
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.e2e.archive_compose_support import (
     compose_archive_client,
     run_archive_compose,
@@ -72,7 +73,7 @@ def test_compose_archive_writes_daily_archives_without_cleanup_payload(
         "verify": "ok",
     }
     assert payload["destination_archive_keys"] == [archive_key]
-    assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
+    assert listed_payload_keys(destination_client, bucket_pair.destination) == {archive_key}
     assert read_tar_gz_members_text(destination_client, bucket_pair.destination, archive_key) == {
         key: f"payload for {key}\n" for key in source_keys
     }

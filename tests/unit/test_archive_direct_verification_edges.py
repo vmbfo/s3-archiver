@@ -41,7 +41,9 @@ def test_direct_copy_existing_destination_with_matching_metadata_refreshes_corru
     assert failure is None
     assert copied is True
     assert destination.copied == ["data/raw.txt"]
-    assert destination.destination_payload(entry.destination_key) == b"payload:data/raw.txt"
+    assert destination.destination_payload(entry.destination_key) == source.read_source_bytes(
+        entry.key, entry.version_id
+    )
 
 
 @pytest.mark.unit()

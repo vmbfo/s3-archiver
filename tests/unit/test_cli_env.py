@@ -190,7 +190,7 @@ def test_checked_in_prod_env_example_is_secret_free_and_valid_route_config() -> 
     )
     routes = {route.name: route for route in settings.routes}
 
-    assert settings.cleanup_enabled is True
+    assert settings.cleanup_enabled is False
     assert settings.whitelist_enabled is True
     assert routes["harmonie"].source.path == "data/harmonie/"
     assert routes["wrf-web_img"].parser == "folder_timestamp_child"

@@ -5,8 +5,10 @@ from __future__ import annotations
 import gzip
 import hashlib
 import tarfile
+from _hashlib import HASH
 from collections.abc import Callable
 from pathlib import Path
+from typing import BinaryIO, Protocol, cast, final
 
 from s3_archiver_core._archive_object_activity import (
     entry_activity_watchdog,
@@ -20,19 +22,31 @@ ORIGINAL_KEY_PAX_HEADER = "s3-archiver.original-key"
 _SAFE_MEMBER_PREFIX = "s3-archiver-safe/"
 
 
+class _MemberCache(Protocol):
+    members: list[tarfile.TarInfo]
+
+
+def clear_member_cache(tar: tarfile.TarFile) -> None:
+    """Discard headers cached by Python 3.12 tarfile, including in streaming mode."""
+    cast(_MemberCache, cast(object, tar)).members.clear()
+
+
 def write_tar_gz_archive(
     source: ArchiveBucket,
     group: ArchiveGroup,
     path: Path,
     *,
     progress_logger: Callable[[], None] | None = None,
-) -> None:
+) -> str:
     """Write a deterministic tar.gz archive for one archive group."""
 
+    digest = hashlib.sha256()
     with (
         path.open("wb") as raw,
-        gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as gzip_file,
-        tarfile.open(fileobj=gzip_file, mode="w") as tar,
+        gzip.GzipFile(
+            filename="", fileobj=_HashingWriter(raw, digest), mode="wb", mtime=0, compresslevel=1
+        ) as gzip_file,
+        tarfile.TarFile(fileobj=gzip_file, mode="w", copybufsize=S3_CHUNK_BYTES) as tar,
     ):
         for entry in group.entries:
             log_large_entry(
@@ -47,7 +61,9 @@ def write_tar_gz_archive(
                 destination_bucket=group.destination_bucket,
                 destination_key=group.destination_archive_key,
             ):
-                body = source.read_source_stream(entry.key, entry.version_id)
+                if entry.version_id in (None, "null") and not entry.etag:
+                    raise ValueError(f"{entry.key}: unversioned source has no ETag")
+                body = source.read_source_stream(entry.key, entry.version_id, if_match=entry.etag)
                 try:
                     member_name, pax_headers = _member_name(entry.key)
                     info = tarfile.TarInfo(member_name)
@@ -60,10 +76,30 @@ def write_tar_gz_archive(
                     info.gname = ""
                     info.pax_headers = dict(pax_headers)
                     tar.addfile(info, body)
+                    clear_member_cache(tar)
+                    if body.read(1):
+                        raise ValueError(f"{entry.key}: source exceeds listed size")
                     if progress_logger is not None:
                         progress_logger()
                 finally:
                     body.close()
+
+    return digest.hexdigest()
+
+
+@final
+class _HashingWriter:
+    def __init__(self, raw: BinaryIO, digest: HASH) -> None:
+        self.raw = raw
+        self.digest = digest
+
+    def write(self, data: bytes) -> int:
+        written = self.raw.write(data)
+        self.digest.update(data[:written])
+        return written
+
+    def flush(self) -> None:
+        self.raw.flush()
 
 
 def sha256_file(path: Path) -> str:

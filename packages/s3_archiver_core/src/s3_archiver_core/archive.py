@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from s3_archiver_core._archive_copy import copy_phase as _copy_phase_impl
 from s3_archiver_core._archive_copy import verify_phase as _verify_phase_impl
+from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
 from s3_archiver_core._archive_protocols import ArchiveRunLock
 from s3_archiver_core._archive_size_limits import log_skipped_summary
 from s3_archiver_core.archive_date_range import NO_DATE_RANGE, ArchiveDateRange
@@ -90,7 +91,7 @@ def run_archive(
             timed_out,
             time_remaining,
             progress_logger,
-            collect_verified=False,
+            collect_verified=True,
         )
         if _timed_out(now, deadline):
             return _finalize_result(
@@ -101,9 +102,10 @@ def run_archive(
                     _skipped("verify"),
                 )
             )
+        cleanup_store = SQLiteManifestStore.temporary(routes[0].destination.temp_dir)
         verify_result = (
             _skipped("verify")
-            if not copy_result.ok
+            if not verified_groups and not verified_entries and not copy_result.ok
             else _verify_phase_impl(
                 verified_groups,
                 verified_entries,
@@ -111,8 +113,10 @@ def run_archive(
                 timed_out,
                 time_remaining,
                 progress_logger,
+                on_verified=cleanup_store.add_entry,
             )
         )
+        cleanup_store.commit_entries()
         if copy_result.ok and _timed_out(now, deadline):
             return _finalize_result(
                 _run_result(
@@ -128,6 +132,8 @@ def run_archive(
                 manifest,
                 copy_result,
                 verify_result,
+                cleanup_entries=cleanup_store.entries,
+                cleanup_store=cleanup_store,
             )
         )
     finally:

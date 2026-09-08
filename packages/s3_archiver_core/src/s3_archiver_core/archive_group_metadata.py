@@ -14,6 +14,7 @@ TARGET_DAY_METADATA_KEY = "s3-archiver-target-day"
 SOURCE_COUNT_METADATA_KEY = "s3-archiver-source-count"
 SCHEMA_VERSION_METADATA_KEY = "s3-archiver-schema-version"
 ARCHIVE_SCHEMA_VERSION = "2"
+ARCHIVE_SIZE_METADATA_KEY = "s3-archiver-archive-size"
 
 
 def group_metadata(group: ArchiveGroup) -> Mapping[str, str]:
@@ -43,15 +44,23 @@ def existing_archive_verified(
     return archive_sha256 is not None
 
 
-def existing_archive_refreshable(existing: Mapping[str, str], expected: Mapping[str, str]) -> bool:
-    """Return whether a mismatched existing archive may be replaced."""
+def existing_archive_refreshable(
+    existing: Mapping[str, str],
+    expected: Mapping[str, str],
+    *,
+    destination: ArchiveBucket | None = None,
+    group: ArchiveGroup | None = None,
+) -> bool:
+    """Require an authenticated superset of the previous archive's exact identities."""
+    from s3_archiver_core.archive_membership import contains_previous_membership
 
     return (
-        existing.get(SCHEMA_VERSION_METADATA_KEY) == ARCHIVE_SCHEMA_VERSION
+        destination is not None
+        and group is not None
+        and existing.get(SCHEMA_VERSION_METADATA_KEY) == ARCHIVE_SCHEMA_VERSION
         and existing.get(ARCHIVE_SHA256_METADATA_KEY) is not None
         and existing.get(TARGET_DAY_METADATA_KEY) == expected.get(TARGET_DAY_METADATA_KEY)
-        and existing.get(SOURCE_COUNT_METADATA_KEY) is not None
-        and existing.get(SOURCE_COUNT_METADATA_KEY) != expected.get(SOURCE_COUNT_METADATA_KEY)
+        and contains_previous_membership(destination, group, existing)
     )
 
 
@@ -63,9 +72,8 @@ def uploaded_archive_verified(
 ) -> bool:
     """Return whether a just-uploaded destination archive carries expected metadata."""
 
-    # Re-reading archive payloads for SHA-256 verification is not viable at production scale.
-    # The upload path computes and stores the archive hash before upload; S3 stores that marker
-    # atomically with the object metadata.
+    # This checks metadata only. The caller also checks ContentLength; multipart
+    # uploads send Content-MD5 for provider-side transport integrity validation.
     _ = (destination, destination_key)
     return metadata_matches(existing, expected)
 

@@ -17,6 +17,7 @@ from s3_archiver_localstack_support.objects import (
     read_tar_gz_members_text,
 )
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.integration.archive_cli_test_support import (
     FROZEN_ARCHIVE_RUN_STARTED_AT,
     ArchiveCommandPayload,
@@ -58,7 +59,7 @@ def test_archive_command_archives_target_day_keys_without_deleting_sources(
         "copy": "ok",
         "verify": "ok",
     }
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
         TARGET_ARCHIVE_KEY
     }
     assert read_tar_gz_members_text(
@@ -89,7 +90,7 @@ def test_archive_command_route_source_and_destination_paths_control_daily_archiv
 
     assert payload["status"] == "ok"
     assert payload["source_object_count"] == 2
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
         f"routed/{TARGET_DAY}.tar.gz",
         f"routed/nested/{TARGET_DAY}.tar.gz",
     }
@@ -145,7 +146,7 @@ def test_archive_command_direct_route_copies_source_path_without_deleting_source
 
     assert payload["status"] == "ok"
     assert payload["source_object_count"] == len(copied_keys)
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
         f"mirror/{key}" for key in copied_keys
     }
     for key in copied_keys:
@@ -181,7 +182,7 @@ def test_archive_command_filename_parser_skips_incomplete_utc_day(
     assert payload["status"] == "ok"
     assert payload["source_object_count"] == 0
     assert payload["skipped_object_count"] == len(seed_keys)
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == set()
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == set()
     assert listed_keys(source_client, localstack_bucket_pair.source) == seed_keys
 
 
@@ -234,12 +235,14 @@ def test_archive_core_uses_temp_file_backed_transfer_against_localstack(
 
     assert result.ok is True
     assert decisions == ["deterministic_tar_gzip"]
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {archive_key}
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
+        archive_key
+    }
     assert read_tar_gz_members_text(
         destination_client, localstack_bucket_pair.destination, archive_key
     ) == {key: "temp-file\n"}
     assert listed_keys(source_client, localstack_bucket_pair.source) == {key}
-    result.manifest.close()
+    result.close()
     assert not runtime_temp_dir.exists() or list(runtime_temp_dir.iterdir()) == []
 
 

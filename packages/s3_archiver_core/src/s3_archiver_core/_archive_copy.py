@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from pathlib import Path
 from threading import Lock
 
+from s3_archiver_core._archive_copy_group import archive_size_matches
+from s3_archiver_core._archive_copy_group import copy_group as copy_group
 from s3_archiver_core._archive_copy_routes import (
     archive_groups_for_route,
     direct_entries_for_route,
@@ -13,6 +13,7 @@ from s3_archiver_core._archive_copy_routes import (
 )
 from s3_archiver_core._archive_identity import stable_identity_value
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ArchiveManifest, ManifestEntry
+from s3_archiver_core._archive_manifest_store import SQLiteManifestStore
 from s3_archiver_core._archive_object_activity import (
     entry_activity_watchdog,
     log_large_entry,
@@ -20,29 +21,22 @@ from s3_archiver_core._archive_object_activity import (
 from s3_archiver_core._archive_parallel import run_parallel_items
 from s3_archiver_core._archive_phase_progress import PhaseProgress
 from s3_archiver_core._archive_protocols import ArchiveBucket
-from s3_archiver_core._archive_size_limits import estimated_archive_size_bytes
 from s3_archiver_core._archive_verify_direct import verify_direct_entry
 from s3_archiver_core.archive_group_metadata import (
-    ARCHIVE_SHA256_METADATA_KEY,
-    existing_archive_refreshable,
     existing_archive_verified,
     group_metadata,
-    uploaded_archive_verified,
 )
 from s3_archiver_core.archive_progress import ProgressLogger
 from s3_archiver_core.archive_result import ArchivePhaseResult
 from s3_archiver_core.archive_routes import ArchiveRoute, DebugLogger
-from s3_archiver_core.archive_tar import sha256_file, write_tar_gz_archive
 from s3_archiver_core.archive_transfer import (
     archive_metadata,
     fingerprint_from_metadata,
     select_transfer_strategy,
 )
 from s3_archiver_core.s3 import S3ObjectProperties
-from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX, ensure_temp_storage_available
 
 type GroupIdentity = tuple[object | None, str, str]
-type EntryIdentity = tuple[object | None, str, str, str | None]
 type ProgressAdvance = Callable[[int], None]
 
 
@@ -57,9 +51,13 @@ def copy_phase(
 ) -> tuple[ArchivePhaseResult, Sequence[ArchiveGroup], Sequence[ManifestEntry]]:
     """Copy direct entries and daily archive groups with one worker per route."""
 
+    if not routes_by_name:
+        return ArchivePhaseResult("copy"), (), ()
     progress = PhaseProgress("copy", len(manifest.entries), progress_logger)
     verified: dict[GroupIdentity, ArchiveGroup] = {}
-    verified_entries: dict[EntryIdentity, ManifestEntry] = {}
+    verified_entries = SQLiteManifestStore.temporary(
+        next(iter(routes_by_name.values())).destination.temp_dir
+    )
     result_lock = Lock()
     route_names = tuple(route.name for route in routes_by_name.values())
 
@@ -74,7 +72,7 @@ def copy_phase(
                 continue
             if copied and collect_verified:
                 with result_lock:
-                    verified_entries[_entry_identity(entry)] = entry
+                    verified_entries.add_entry(entry)
         for group in archive_groups_for_route(manifest.archive_groups, route_name):
             failure, copied = copy_group(
                 route.source,
@@ -100,12 +98,15 @@ def copy_phase(
         return phase, (), ()
     with result_lock:
         verified_keys = frozenset(verified)
-        entry_keys = frozenset(verified_entries)
+        verified_entries.commit_entries()
     verified_groups = (
         group for group in manifest.archive_groups if _group_identity(group) in verified_keys
     )
-    direct_entries = (entry for entry in manifest.entries if _entry_identity(entry) in entry_keys)
-    return phase, tuple(verified_groups), tuple(direct_entries)
+    return (
+        phase,
+        tuple(verified_groups),
+        verified_entries.entries if len(verified_entries.entries) else (),
+    )
 
 
 def copy_direct_entry(
@@ -158,62 +159,6 @@ def copy_direct_entry(
     return f"{destination_key}: {verified.detail}", False
 
 
-def copy_group(
-    source: ArchiveBucket,
-    destination: ArchiveBucket,
-    group: ArchiveGroup,
-    debug_logger: DebugLogger | None,
-    *,
-    progress_logger: ProgressAdvance | None = None,
-) -> tuple[str | None, bool]:
-    destination_key = group.destination_archive_key
-    metadata = group_metadata(group)
-    existing = destination.head_object(destination_key)
-    if existing is not None:
-        if existing_archive_verified(destination, destination_key, existing.metadata, metadata):
-            _advance_group_progress(group, progress_logger)
-            return None, True
-        if not existing_archive_refreshable(existing.metadata, metadata):
-            return f"{destination_key}: archive verification failed", False
-    archive_path: Path | None = None
-    try:
-        if debug_logger is not None:
-            for entry in group.entries:
-                debug_logger(entry, "deterministic_tar_gzip")
-        _ = ensure_temp_storage_available(
-            destination.temp_dir,
-            required_bytes=estimated_archive_size_bytes(group.entries),
-            source_key=_group_source_key(group),
-            destination_key=destination_key,
-            operation="archive_group_staging",
-        )
-        destination.temp_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            "wb", delete=False, dir=destination.temp_dir, prefix=TRANSFER_TEMP_PREFIX
-        ) as archive_file:
-            archive_path = Path(archive_file.name)
-        write_tar_gz_archive(
-            source,
-            group,
-            archive_path,
-            progress_logger=None if progress_logger is None else lambda: progress_logger(1),
-        )
-        upload_metadata = dict(metadata)
-        upload_metadata[ARCHIVE_SHA256_METADATA_KEY] = sha256_file(archive_path)
-        destination.upload_archive_file(destination_key, archive_path, upload_metadata)
-    except Exception as exc:
-        return f"{destination_key}: {exc}", False
-    finally:
-        if archive_path is not None:  # pragma: no branch
-            archive_path.unlink(missing_ok=True)
-    verified = destination.head_object(destination_key)
-    if verified is None:
-        return f"{destination_key}: destination missing", False
-    if uploaded_archive_verified(destination, destination_key, verified.metadata, upload_metadata):
-        return None, True
-    return f"{destination_key}: archive verification failed", False
-
-
 def verify_phase(
     groups: Sequence[ArchiveGroup],
     entries: Sequence[ManifestEntry],
@@ -221,6 +166,7 @@ def verify_phase(
     timed_out: Callable[[], bool],
     time_remaining: Callable[[], float],
     progress_logger: ProgressLogger | None = None,
+    on_verified: Callable[[ManifestEntry], None] | None = None,
 ) -> ArchivePhaseResult:
     route_names = tuple(route.name for route in routes_by_name.values())
     progress = PhaseProgress("verify", len(groups) + direct_entry_count(entries), progress_logger)
@@ -229,22 +175,33 @@ def verify_phase(
         route = routes_by_name[route_name]
         failures: list[str] = []
         for group in archive_groups_for_route(groups, route_name):
-            metadata = group_metadata(group)
-            existing = route.destination.head_object(group.destination_archive_key)
-            if existing is None:
-                failures.append(f"{group.destination_archive_key}: destination missing")
-            elif not existing_archive_verified(
-                route.destination, group.destination_archive_key, existing.metadata, metadata
-            ):
-                failures.append(f"{group.destination_archive_key}: archive verification failed")
+            try:
+                metadata = group_metadata(group)
+                existing = route.destination.head_object(group.destination_archive_key)
+                if existing is None:
+                    failures.append(f"{group.destination_archive_key}: destination missing")
+                elif not archive_size_matches(existing) or not existing_archive_verified(
+                    route.destination, group.destination_archive_key, existing.metadata, metadata
+                ):
+                    failures.append(f"{group.destination_archive_key}: archive verification failed")
+                elif on_verified is not None:
+                    for entry in group.entries:
+                        on_verified(entry)
+            except Exception as exc:
+                failures.append(f"{group.destination_archive_key}: {exc}")
             progress.advance()
         for entry in direct_entries_for_route(entries, route_name):
-            hydrated = _entry_with_current_source_properties(route.source, entry)
-            verified = verify_direct_entry(
-                route, hydrated, route.destination.head_object(entry.destination_key)
-            )
-            if not verified.ok:
-                failures.append(f"{entry.destination_key}: {verified.detail}")
+            try:
+                hydrated = _entry_with_current_source_properties(route.source, entry)
+                verified = verify_direct_entry(
+                    route, hydrated, route.destination.head_object(entry.destination_key)
+                )
+                if not verified.ok:
+                    failures.append(f"{entry.destination_key}: {verified.detail}")
+                elif on_verified is not None:
+                    on_verified(entry)
+            except Exception as exc:
+                failures.append(f"{entry.destination_key}: {exc}")
             progress.advance()
         return tuple(failures)
 
@@ -273,26 +230,5 @@ def _direct_destination_refreshable(entry: ManifestEntry, existing: S3ObjectProp
     )
 
 
-def _advance_group_progress(group: ArchiveGroup, progress_logger: ProgressAdvance | None) -> None:
-    if progress_logger is None:
-        return
-    progress_logger(group.source_count or len(group.entries))
-
-
-def _group_source_key(group: ArchiveGroup) -> str:
-    if group.entries:
-        return group.entries[0].key
-    return "<empty archive group>"
-
-
 def _group_identity(group: ArchiveGroup) -> GroupIdentity:
     return (group.destination_identity, group.destination_bucket, group.destination_archive_key)
-
-
-def _entry_identity(entry: ManifestEntry) -> EntryIdentity:
-    return (
-        entry.destination_identity,
-        entry.destination_bucket,
-        entry.destination_key,
-        entry.version_id,
-    )

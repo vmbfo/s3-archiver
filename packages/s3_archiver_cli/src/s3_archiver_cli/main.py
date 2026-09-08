@@ -28,6 +28,7 @@ from s3_archiver_cli import archive_run_records as _run_records
 from s3_archiver_cli import cleanup_commands as _cleanup_commands
 from s3_archiver_cli import cli_payloads as _cli_payloads
 from s3_archiver_cli import error_logging as _error_logging
+from s3_archiver_cli.archive_inspection_commands import app as inspection_app
 from s3_archiver_cli.archive_lock_reporting import log_lock_recovery as _log_lock_recovery
 from s3_archiver_cli.archive_progress_reporting import ArchiveProgressReporter
 from s3_archiver_cli.cleanup_runtime import run_cleanup_subprocess
@@ -54,6 +55,7 @@ LOGGING_ERROR_EXIT_CODE = _cli_payloads.LOGGING_ERROR_EXIT_CODE
 
 
 app: typer.Typer = typer.Typer(add_completion=False, invoke_without_command=True)
+app.add_typer(inspection_app, name="archive-tools")
 
 
 @app.callback()
@@ -135,11 +137,7 @@ def cleanup(
         typer.Option(help="Clean one specific manifest instead of all pending manifests."),
     ] = None,
 ) -> None:
-    """Delete and verify the source objects recorded in cleanup manifests.
-
-    Always runs regardless of the ``CLEANUP`` env var, via a timeout-enforced
-    child process that shares the archive run lock.
-    """
+    """Delete archived sources via a locked, timeout-enforced child, regardless of CLEANUP."""
 
     def run_child(settings: AppSettings, log_file: Path) -> int:
         return run_cleanup_subprocess(
@@ -264,7 +262,7 @@ def _run_archive(settings: AppSettings, log_file: Path) -> dict[str, JsonValue]:
         return payload
     finally:
         if result is not None:
-            result.manifest.close()
+            result.close()
 
 
 def _run_archive_command(settings: AppSettings, log_file: Path) -> int:

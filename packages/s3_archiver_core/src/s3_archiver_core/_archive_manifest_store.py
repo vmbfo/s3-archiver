@@ -24,6 +24,7 @@ from s3_archiver_core._archive_manifest_group_queries import (
     rebuild_archive_chunks,
 )
 from s3_archiver_core._archive_manifest_models import ArchiveGroup, ManifestEntry, SkippedObject
+from s3_archiver_core._archive_manifest_rows import entry_row as _entry_row
 from s3_archiver_core._archive_manifest_sequences import (
     ArchiveGroupSequence,
     EntrySequence,
@@ -37,7 +38,6 @@ from s3_archiver_core._archive_manifest_sqlite import (
     pack,
     required_row,
     single_value,
-    stable_key,
     unpack_entry,
     unpack_skipped,
 )
@@ -59,25 +59,6 @@ _TARGET_DAYS_SQL = (
     + "WHERE copy_mode IN ('daily_tar_gz', 'timestamp_child_tar_gz') AND target_day != '' "
     + "ORDER BY target_day"
 )
-
-
-def _entry_row(entry: ManifestEntry) -> tuple[object, ...]:
-    return (
-        entry.route_name,
-        entry.copy_mode,
-        stable_key(entry.source_identity),
-        entry.source_bucket,
-        entry.key,
-        entry.version_id or "",
-        stable_key(entry.destination_identity),
-        entry.destination_bucket,
-        entry.destination_key,
-        entry.destination_archive_key,
-        "" if entry.target_day is None else entry.target_day.isoformat(),
-        entry.archive_root,
-        entry.size,
-        pack(entry),
-    )
 
 
 @final
@@ -144,6 +125,12 @@ class SQLiteManifestStore:
             self._connection.commit()
             self._committed = True
         self._group_count = self._calculate_group_count()
+
+    def commit_entries(self) -> None:
+        """Commit a result journal without rebuilding archive groups."""
+        with self._connection_lock:
+            self._connection.commit()
+            self._committed = True
 
     def assert_no_duplicate_sources(self) -> None:
         with self._connection_lock:
@@ -269,7 +256,8 @@ class SQLiteManifestStore:
                 self._reader_connections[thread_id] = connection
                 _ = weakref.finalize(
                     threading.current_thread(),
-                    self._reap_reader_connection,
+                    self._reap_thread_reader,
+                    weakref.ref(self),
                     thread_id,
                 )
             return connection
@@ -280,6 +268,14 @@ class SQLiteManifestStore:
         if connection is not None:
             with suppress(Exception):
                 connection.close()
+
+    @staticmethod
+    def _reap_thread_reader(
+        store_ref: weakref.ReferenceType[SQLiteManifestStore], thread_id: int
+    ) -> None:
+        store = store_ref()
+        if store is not None:
+            store._reap_reader_connection(thread_id)
 
     def _create_schema(self) -> None:
         create_schema(self._connection)

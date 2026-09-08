@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import override
@@ -140,4 +141,7 @@ class _CorruptArchiveMetadataBucket(FakeBucket):
         self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]
     ) -> None:
         super().upload_archive_file(destination_key, archive_path, metadata)
-        self._destination[destination_key] = _properties(metadata={})
+        if ".members." not in destination_key:
+            self._destination[destination_key] = replace(
+                self._destination[destination_key], metadata={}
+            )

@@ -10,10 +10,10 @@ import pytest
 from s3_archiver_localstack_support import last_json_object
 from s3_archiver_localstack_support.harness import LocalstackBucketPair
 from s3_archiver_localstack_support.objects import (
-    listed_keys,
     read_tar_gz_members_text,
 )
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.e2e.archive_compose_support import (
     compose_archive_client,
     run_archive_compose,
@@ -113,7 +113,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
             )
             print("\\n".join(failures), file=sys.stderr)
             raise SystemExit(1)
-        result.manifest.close()
+        result.close()
         files = [] if not temp_dir.exists() else sorted(path.name for path in temp_dir.iterdir())
         payload = {
             "ok": result.ok,
@@ -142,7 +142,7 @@ def test_compose_runtime_probe_executes_temp_file_backed_transfer(
     assert payload["strategy"] == "deterministic_tar_gzip"
     assert payload["temp_dir_files"] == []
     destination_client = compose_archive_client(tmp_path, compose_env, bucket_pair, "destination")
-    assert listed_keys(destination_client, bucket_pair.destination) == {archive_key}
+    assert listed_payload_keys(destination_client, bucket_pair.destination) == {archive_key}
     assert read_tar_gz_members_text(
         destination_client,
         bucket_pair.destination,

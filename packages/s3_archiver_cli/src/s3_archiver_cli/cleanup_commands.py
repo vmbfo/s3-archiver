@@ -41,15 +41,15 @@ def export_and_chain_cleanup(
     started: datetime,
     log_file: Path,
 ) -> dict[str, JsonValue] | None:
-    """Export the cleanup manifest after a clean run and optionally chain cleanup.
+    """Export verified entries and optionally chain cleanup, including partial runs.
 
-    The cleanup-input manifest is written whenever the run fully succeeds (so a
-    later manual ``cleanup`` can consume it) and re-validated immediately, hard
+    The cleanup-input manifest contains only individually verified groups/objects
+    (so a later manual ``cleanup`` can consume it) and is re-validated, hard
     failing the run if the on-disk manifest is mangled. Automatic cleanup runs
     in-process under the same archive lock only when ``CLEANUP=true``.
     """
 
-    if not result.ok:
+    if not result.ok and result.cleanup_entries is None:
         return None
     _ = write_result_manifest(settings, result)
     if not settings.cleanup_enabled:
@@ -63,9 +63,13 @@ def export_and_chain_cleanup(
 
 
 def write_result_manifest(settings: AppSettings, result: ArchiveRunResult) -> Path | None:
-    """Write and re-validate the cleanup-input manifest for a successful run."""
+    """Write and re-validate the cleanup-input manifest for verified entries."""
 
-    entries = result.manifest.entries
+    entries = result.cleanup_entries
+    if entries is None:
+        if not result.ok:
+            return None
+        entries = result.manifest.entries
     if len(entries) == 0:
         return None
     path = settings.cleanup_pending_dir / f"{result.run_id}.jsonl"

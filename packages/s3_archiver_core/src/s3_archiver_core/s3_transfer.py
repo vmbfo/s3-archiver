@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import tempfile
 from collections.abc import Mapping
@@ -16,6 +18,7 @@ from s3_archiver_core._archive_s3_helpers import (
     versioned_kwargs,
 )
 from s3_archiver_core.s3 import S3_CHUNK_BYTES, S3Client, S3ObjectProperties, TransferStrategy
+from s3_archiver_core.s3_multipart_parts import copy_parts, upload_file_parts
 from s3_archiver_core.temp_files import TRANSFER_TEMP_PREFIX, ensure_temp_storage_available
 
 S3_MAX_MULTIPART_PARTS = 10_000
@@ -111,18 +114,7 @@ def upload_s3_file(
         return
     upload_id = _upload_id(client.create_multipart_upload(**kwargs))
     try:
-        parts: list[dict[str, object]] = []
-        number = 1
-        with path.open("rb") as file:
-            while True:
-                chunk = file.read(_multipart_chunk_size(size))
-                if chunk == b"":
-                    break
-                response = client.upload_part(
-                    Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=number, Body=chunk
-                )
-                parts.append(_part(number, response))
-                number += 1
+        parts = upload_file_parts(client, bucket, key, upload_id, path, _multipart_chunk_size(size))
         _complete(client, bucket, key, upload_id, parts)
     except Exception:
         _safe_abort_multipart(client, bucket, key, upload_id)
@@ -141,9 +133,11 @@ def _multipart_copy(
         client.create_multipart_upload(**_object_kwargs(bucket, key, properties, metadata))
     )
     try:
-        parts: list[dict[str, object]] = []
-        for number, start in enumerate(range(0, properties.size, S3_CHUNK_BYTES), 1):
-            end = min(start + S3_CHUNK_BYTES, properties.size) - 1
+        chunk_size = _multipart_chunk_size(properties.size)
+
+        def copy_part(part: tuple[int, int]) -> dict[str, object]:
+            number, start = part
+            end = min(start + chunk_size, properties.size) - 1
             response = client.upload_part_copy(
                 Bucket=bucket,
                 Key=key,
@@ -151,8 +145,11 @@ def _multipart_copy(
                 PartNumber=number,
                 CopySource=source,
                 CopySourceRange=f"bytes={start}-{end}",
+                **({"CopySourceIfMatch": properties.etag} if properties.etag else {}),
             )
-            parts.append(_part(number, response))
+            return _part(number, response)
+
+        parts = copy_parts(copy_part, enumerate(range(0, properties.size, chunk_size), 1))
         _complete(client, bucket, key, upload_id, parts)
     except Exception:
         _safe_abort_multipart(client, bucket, key, upload_id)
@@ -179,11 +176,16 @@ def _upload_stream(
         parts: list[dict[str, object]] = []
         number = 1
         while True:
-            chunk = body.read(S3_CHUNK_BYTES)
+            chunk = body.read(_multipart_chunk_size(properties.size))
             if chunk == b"":
                 break
             response = client.upload_part(
-                Bucket=bucket, Key=key, UploadId=upload_id, PartNumber=number, Body=chunk
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=number,
+                Body=chunk,
+                ContentMD5=base64.b64encode(hashlib.md5(chunk).digest()).decode("ascii"),
             )
             parts.append(_part(number, response))
             number += 1

@@ -99,7 +99,7 @@ class FakeArchiveClient:
         body = kwargs["Body"]
         assert isinstance(body, bytes)
         self.upload_part_sizes.append(len(body))
-        return {"ETag": f'"part-{len(self.upload_part_sizes)}"'}
+        return {"ETag": f'"part-{kwargs["PartNumber"]}"'}
 
     def complete_multipart_upload(self, **kwargs: object) -> Mapping[str, object]:
         return self._record(self.complete_calls, kwargs, {})

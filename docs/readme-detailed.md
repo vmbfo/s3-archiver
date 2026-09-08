@@ -354,7 +354,7 @@ Archive result payloads are compact by default for production-scale runs: they i
 phase status, archive days, and route summaries, but omit per-object destination lists. Set
 `ARCHIVER_PAYLOAD_DETAIL=full` only for small debugging runs or the visual demo.
 
-Large manifests spill from memory into a temporary SQLite database after 100,000 manifest rows.
+Source manifests and verified-entry journals are streamed into temporary SQLite databases.
 Daily `tar.gz` archive groups are capped by both source bytes and object count so temporary archive
 files stay bounded. The defaults are 100 GiB and 2,000,000 source objects; override them with
 `ARCHIVER_ARCHIVE_GROUP_MAX_BYTES` and `ARCHIVER_ARCHIVE_GROUP_MAX_OBJECTS` if a deployment needs
@@ -366,7 +366,7 @@ Cleanup deletes source objects only after they have been safely archived, in two
 auditable steps:
 
 1. **Archive** copies and verifies source objects, then writes a durable
-   *cleanup-input manifest* — one per successful run — to
+   *cleanup-input manifest* of individually verified groups and direct copies to
    `LOG_DIR/cleanup/pending/<run_id>.jsonl`. A valid manifest is the proof that
    those source objects landed in the destination, so it doubles as the
    delete-list. Each manifest carries a `sha256` digest over its records;
@@ -389,7 +389,8 @@ ENV_FILE=.env ./scripts/run_archive.sh cleanup            # host-native wrapper
 
 Run cleanup **automatically** by setting `CLEANUP=true` (default `false`). Each
 scheduled/automatic archive then chains cleanup in the same process, under the
-same lock, immediately after a successful archive.
+same lock, after verification. A failed group keeps the run in an error state, while
+verified groups can still drain. `CLEANUP=false` is also the production template default.
 
 - **Mutual exclusion.** Cleanup acquires the same `archive.lock` (in `LOG_DIR`)
   as archiving, so a cleanup and an archive can never run at the same time; the

@@ -157,7 +157,10 @@ class FakeBucket:
         self._versions = {(item.key, item.version_id): item for item in chain(objects, versions)}
         self._destination = dict(destination or {})
         self._payloads = {
-            key: (payloads or {}).get(key, f"payload:{key}".encode()) for key in self._objects
+            key: (payloads or {}).get(
+                key, f"payload:{key}".encode()[: item.size].ljust(min(item.size, 1024), b"x")
+            )
+            for key, item in self._objects.items()
         }
         self._version_payloads = {
             (key, version_id): (version_payloads or {}).get(
@@ -220,13 +223,19 @@ class FakeBucket:
         payload = (
             self._version_payloads.get((key, version_id))
             if version_id is not None
-            else self._payloads.get(key)
+            else self._payloads.get(key, self._destination_payloads.get(key))
         )
         if payload is None:
             raise FileNotFoundError(key)
         return payload
 
-    def read_source_stream(self, key: str, version_id: str | None = None) -> FakeReadableBody:
+    def read_source_stream(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> FakeReadableBody:
+        if if_match is not None:
+            current = self.head_object(key, version_id)
+            if current is None or current.etag != if_match:
+                raise RuntimeError("read precondition failed")
         return FakeReadableBody(self.read_source_bytes(key, version_id))
 
     def upload_archive_file(
@@ -235,7 +244,8 @@ class FakeBucket:
         if self.fail_copy:
             raise RuntimeError("copy failed")
         payload = archive_path.read_bytes()
-        self.uploaded.append(destination_key)
+        if ".members." not in destination_key:
+            self.uploaded.append(destination_key)
         self._destination[destination_key] = object_properties(
             size=len(payload), metadata=metadata, last_modified=datetime(2024, 4, 20, tzinfo=UTC)
         )

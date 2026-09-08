@@ -176,7 +176,7 @@ def test_s3_archive_bucket_upload_archive_file_uses_multipart_upload(tmp_path: P
         "Metadata": {"kind": "daily"},
         "ContentType": "application/gzip",
     }
-    assert client.upload_part_sizes == [S3_CHUNK_BYTES, 1]
+    assert sorted(client.upload_part_sizes) == [1, S3_CHUNK_BYTES]
     assert client.complete_calls[0]["MultipartUpload"] == {
         "Parts": [{"ETag": '"part-1"', "PartNumber": 1}, {"ETag": '"part-2"', "PartNumber": 2}]
     }

@@ -38,6 +38,7 @@ docker compose run --rm app cleanup    # delete the archived source objects
 docker compose logs -f scheduler       # tail the scheduler loop
 ```
 
+Automatic cleanup defaults to `CLEANUP=false`, including the production template.
 Set `CLEANUP=true` to delete archived source objects automatically after each
 scheduled archive run; the manual `cleanup` command always cleans up regardless.
 
@@ -59,3 +60,6 @@ uv run s3-archiver check
 - [`docs/readme-detailed.md`](docs/readme-detailed.md) — full guide: layout, compose flows, local dev, logging, tests, scheduling, releases, amd64 builds.
 - [`docs/parsers.md`](docs/parsers.md) — parser and copy-mode behavior.
 - [`docs/parser-copy-mode-matrix.md`](docs/parser-copy-mode-matrix.md) — every `parser` × `copy_mode` combination with destination-path examples.
+
+See [archive safety, capacity planning, and restore commands](docs/archive-safety.md)
+for large weather-model archives and late arrivals.

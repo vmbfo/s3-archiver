@@ -12,6 +12,7 @@ from s3_archiver_localstack_support.objects import (
     read_object_text,
 )
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.integration.archive_cli_test_support import archive_client as _client
 from tests.integration.archive_cli_test_support import archive_env as _archive_env
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
@@ -72,7 +73,7 @@ def test_archive_command_groups_wrf_layout_by_timestamp_child_folder(
 
     assert payload["status"] == "ok"
     assert payload["source_object_count"] == len(ALL_SOURCE_KEYS)
-    assert listed_keys(destination_client, destination_bucket) == EXPECTED_ARCHIVE_KEYS
+    assert listed_payload_keys(destination_client, destination_bucket) == EXPECTED_ARCHIVE_KEYS
 
     d01_hour_00 = read_deterministic_archive(
         destination_client, destination_bucket, HOUR_00_D01_ARCHIVE_KEY

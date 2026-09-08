@@ -197,7 +197,8 @@ def test_s3_archive_bucket_read_source_bytes_reads_and_closes_stream() -> None:
 class MissingAfterUploadBucket(FakeBucket):
     @override
     def head_object(self, key: str, version_id: str | None = None) -> S3ObjectProperties | None:
-        _ = (key, version_id)
+        if ".members." in key:
+            return super().head_object(key, version_id)
         return None
 
 

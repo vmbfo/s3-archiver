@@ -46,8 +46,10 @@ class EmptyBucket:
     def read_source_bytes(self, key: str, version_id: str | None = None) -> bytes:
         raise AssertionError(f"empty manifest must not read {key!r} {version_id!r}")
 
-    def read_source_stream(self, key: str, version_id: str | None = None) -> ArchiveReadableBody:
-        raise AssertionError(f"empty manifest must not read {key!r} {version_id!r}")
+    def read_source_stream(
+        self, key: str, version_id: str | None = None, *, if_match: str | None = None
+    ) -> ArchiveReadableBody:
+        raise AssertionError(f"empty manifest must not read {key!r} {version_id!r} {if_match!r}")
 
     def upload_archive_file(
         self, destination_key: str, archive_path: Path, metadata: Mapping[str, str]

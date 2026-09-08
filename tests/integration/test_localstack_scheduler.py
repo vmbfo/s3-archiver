@@ -28,6 +28,7 @@ from s3_archiver_localstack_support.objects import (
     read_tar_gz_members_text,
 )
 
+from tests.archive_payload_keys import listed_payload_keys
 from tests.integration.archive_cli_test_support import run_archive_command as _run_archive
 from tests.integration.scheduler_timeout_probe import timeout_probe_script
 
@@ -189,7 +190,9 @@ def test_schedule_retries_after_timeout_on_next_tick(
             )
             retry_seeded = True
             return
-        if retry_archive_key in listed_keys(destination_client, localstack_bucket_pair.destination):
+        if retry_archive_key in listed_payload_keys(
+            destination_client, localstack_bucket_pair.destination
+        ):
             assert retry_seeded
             assert read_tar_gz_members_text(
                 destination_client,
@@ -234,7 +237,7 @@ def test_schedule_retries_after_timeout_on_next_tick(
     assert error_payload["timed_out"] is True
     assert command_calls >= 2
     assert retry_key in listed_keys(source_client, localstack_bucket_pair.source)
-    assert listed_keys(destination_client, localstack_bucket_pair.destination) == {
+    assert listed_payload_keys(destination_client, localstack_bucket_pair.destination) == {
         timeout_archive_key,
         retry_archive_key,
     }
